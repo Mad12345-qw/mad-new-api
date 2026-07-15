@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Mad API</title>
+  <rect width="64" height="64" rx="12" fill="#0A0D0C"/>
+  <path d="M13 45V19h8l11 15 11-15h8v26h-8V31L32 45 21 31v14z" fill="#70E8D2"/>
+  <path d="M13 49h38" stroke="#C7F36B" stroke-width="3"/>
+</svg>

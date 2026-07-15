@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Mad API - 统一接入 OpenAI、xAI 与多模型能力的 API 中转服务。"
+    />
+    <title>Mad API</title>
+    <link rel="icon" href="/mad-home/assets/mad-logo.svg" />
+    <link rel="stylesheet" href="/mad-home/styles.css?v=20260715-1" />
+  </head>
+  <body>
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <canvas id="networkCanvas" aria-hidden="true"></canvas>
+        <div class="hero-noise" aria-hidden="true"></div>
+        <div class="shell hero-content">
+          <div class="hero-copy">
+            <p class="eyebrow">UNIFIED MODEL GATEWAY</p>
+            <h1 id="hero-title">Mad API</h1>
+            <p class="hero-summary">
+              一个入口，连接 GPT、Grok 与图像生成模型。统一鉴权、统一账单、统一调用格式。
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="/console" target="_top">进入控制台</a>
+              <a class="button button-secondary" href="/pricing" target="_top">查看模型价格</a>
+            </div>
+          </div>
+
+          <div class="endpoint-panel" aria-label="API 接入地址">
+            <div class="endpoint-heading">
+              <span>API BASE URL</span>
+              <span class="status-dot"><i></i> ONLINE</span>
+            </div>
+            <div class="endpoint-value">
+              <code id="apiBaseUrl">https://mad.myddns.me/v1</code>
+              <button id="copyApiUrl" type="button" aria-label="复制 API 地址">复制</button>
+            </div>
+            <div class="endpoint-meta">
+              <span>OpenAI Compatible</span>
+              <span>HTTPS</span>
+              <span>Streaming</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="model-rail" aria-label="当前接入模型">
+          <div class="shell model-rail-inner">
+            <span>gpt-5.5</span>
+            <span>gpt-5.6-luna</span>
+            <span>gpt-5.6-terra</span>
+            <span>gpt-5.6-sol</span>
+            <span>grok-4.5</span>
+            <span>gpt-image-2</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="service-band">
+        <div class="shell service-grid">
+          <div class="section-intro">
+            <p class="eyebrow dark">ONE KEY, MULTIPLE MODELS</p>
+            <h2>调用路径保持简单</h2>
+          </div>
+          <div class="service-list">
+            <article>
+              <span class="service-index">01</span>
+              <div>
+                <h3>统一接口</h3>
+                <p>兼容主流 OpenAI SDK 与客户端，减少不同模型之间的接入改造。</p>
+              </div>
+            </article>
+            <article>
+              <span class="service-index">02</span>
+              <div>
+                <h3>透明计费</h3>
+                <p>模型价格、调用额度和消费记录集中展示，余额变化随时可查。</p>
+              </div>
+            </article>
+            <article>
+              <span class="service-index">03</span>
+              <div>
+                <h3>持续可用</h3>
+                <p>服务进程自动守护，支付核验与 API 网关相互隔离运行。</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="routes-band" aria-labelledby="routes-title">
+        <div class="shell routes-layout">
+          <div class="routes-copy">
+            <p class="eyebrow">ROUTES</p>
+            <h2 id="routes-title">覆盖文本与图像调用</h2>
+            <p>创建 API 密钥后，即可使用下列标准路径。</p>
+            <a class="text-link" href="/console/token" target="_top">管理 API 密钥 <span>→</span></a>
+          </div>
+          <div class="route-table">
+            <div class="route-row">
+              <span class="method">POST</span>
+              <code>/v1/chat/completions</code>
+              <span>Chat</span>
+            </div>
+            <div class="route-row">
+              <span class="method">POST</span>
+              <code>/v1/responses</code>
+              <span>Responses</span>
+            </div>
+            <div class="route-row">
+              <span class="method image">POST</span>
+              <code>/v1/images/generations</code>
+              <span>Image</span>
+            </div>
+            <div class="route-row">
+              <span class="method image">POST</span>
+              <code>/v1/images/edits</code>
+              <span>Edit</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-band">
+        <div class="shell cta-layout">
+          <div>
+            <p class="eyebrow dark">START BUILDING</p>
+            <h2>从一把密钥开始</h2>
+          </div>
+          <div class="cta-actions">
+            <a class="button button-dark" href="/register" target="_top">注册账户</a>
+            <a class="button button-light" href="/login" target="_top">登录</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="shell footer-inner">
+        <div class="footer-brand">
+          <img src="/mad-home/assets/mad-logo.svg" alt="" />
+          <span>Mad API</span>
+        </div>
+        <span>Unified AI model gateway</span>
+      </div>
+    </footer>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/mad-home/app.js"></script>
+  </body>
+</html>

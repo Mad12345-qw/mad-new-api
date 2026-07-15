@@ -1,0 +1,55 @@
+name: Build Mad New API
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * 0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mad-new-api-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out build configuration
+        uses: actions/checkout@v4
+
+      - name: Check out upstream New API
+        uses: actions/checkout@v4
+        with:
+          repository: QuantumNous/new-api
+          ref: main
+          path: source
+          fetch-depth: 1
+
+      - name: Apply Mad API patch
+        run: git -C source apply --check ../patches/mad-email-verification.patch && git -C source apply ../patches/mad-email-verification.patch
+
+      - name: Build image
+        run: docker build --pull --tag mad-new-api:latest source
+
+      - name: Export image
+        run: |
+          docker save mad-new-api:latest | gzip -1 > mad-new-api.tar.gz
+          sha256sum mad-new-api.tar.gz > mad-new-api.tar.gz.sha256
+          git -C source rev-parse HEAD > upstream-commit.txt
+
+      - name: Publish stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete build-latest --cleanup-tag --yes || true
+          gh release create build-latest \
+            mad-new-api.tar.gz \
+            mad-new-api.tar.gz.sha256 \
+            upstream-commit.txt \
+            --title "Mad New API latest build" \
+            --notes "Automated build from the latest upstream New API source with the Mad API email verification patch."
+

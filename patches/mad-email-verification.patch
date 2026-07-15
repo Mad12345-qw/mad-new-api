@@ -1,0 +1,75 @@
+diff --git a/common/verification.go b/common/verification.go
+index 41fd3c9..3273646 100644
+--- a/common/verification.go
++++ b/common/verification.go
+@@ -1,6 +1,9 @@
+ package common
+ 
+ import (
++	"crypto/rand"
++	"fmt"
++	"math/big"
+ 	"strings"
+ 	"sync"
+ 	"time"
+@@ -32,6 +35,18 @@ func GenerateVerificationCode(length int) string {
+ 	return code[:length]
+ }
+ 
++func GenerateNumericVerificationCode(length int) (string, error) {
++	if length <= 0 {
++		return "", fmt.Errorf("verification code length must be positive")
++	}
++	limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(length)), nil)
++	number, err := rand.Int(rand.Reader, limit)
++	if err != nil {
++		return "", err
++	}
++	return fmt.Sprintf("%0*d", length, number.Int64()), nil
++}
++
+ func RegisterVerificationCodeWithKey(key string, code string, purpose string) {
+ 	verificationMutex.Lock()
+ 	defer verificationMutex.Unlock()
+diff --git a/controller/misc.go b/controller/misc.go
+index fb20298..d7478b2 100644
+--- a/controller/misc.go
++++ b/controller/misc.go
+@@ -4,6 +4,7 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
++	"html"
+ 	"net/http"
+ 	"strings"
+ 
+@@ -280,13 +281,23 @@ func SendEmailVerification(c *gin.Context) {
+ 		common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+ 		return
+ 	}
+-	code := common.GenerateVerificationCode(6)
++	code, err := common.GenerateNumericVerificationCode(4)
++	if err != nil {
++		common.ApiError(c, err)
++		return
++	}
+ 	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
+-	subject := fmt.Sprintf("%s邮箱验证邮件", common.SystemName)
+-	content := fmt.Sprintf("<p>您好，你正在进行%s邮箱验证。</p>"+
+-		"<p>您的验证码为: <strong>%s</strong></p>"+
+-		"<p>验证码 %d 分钟内有效，如果不是本人操作，请忽略。</p>", common.SystemName, code, common.VerificationValidMinutes)
+-	err := common.SendEmail(subject, email, content)
++	systemName := html.EscapeString(common.SystemName)
++	subject := fmt.Sprintf("您的 %s 验证码是 %s", common.SystemName, code)
++	content := fmt.Sprintf(`<!doctype html>
++<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s 邮箱验证</title></head>
++<body style="margin:0;padding:0;background:#f4f4f5;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',Arial,sans-serif;">
++<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="padding:32px 16px;">
++<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#fff;border:1px solid #e5e7eb;"><tr><td style="padding:28px 32px 18px;border-bottom:1px solid #eee;"><table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td width="34" height="34" align="center" style="background:#111;color:#fff;font-size:18px;font-weight:800;line-height:34px;">M</td><td style="padding-left:12px;font-size:20px;font-weight:700;">%s</td></tr></table></td></tr>
++<tr><td style="padding:42px 32px 38px;"><div style="font-size:30px;line-height:1.3;font-weight:750;">您的验证码</div><div style="margin-top:24px;font-size:58px;line-height:1;font-weight:800;letter-spacing:12px;">%s</div><div style="margin-top:34px;font-size:16px;line-height:1.8;color:#3f3f46;">%s 需要通过此验证码验证您的邮箱地址。</div><div style="margin-top:22px;font-size:15px;line-height:1.8;color:#71717a;">验证码将在 %d 分钟后失效，请勿与他人分享。</div></td></tr>
++<tr><td style="padding:18px 32px;background:#fafafa;border-top:1px solid #eee;font-size:12px;line-height:1.7;color:#a1a1aa;">如果这不是您本人发起的操作，请忽略此邮件。</td></tr></table>
++</td></tr></table></body></html>`, systemName, systemName, code, systemName, common.VerificationValidMinutes)
++	err = common.SendEmail(subject, email, content)
+ 	if err != nil {
+ 		common.ApiError(c, err)
+ 		return

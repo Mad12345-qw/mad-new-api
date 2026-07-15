@@ -23,9 +23,4 @@
     document.documentElement.classList.remove("light")
     document.documentElement.classList.add("dark")
   }
-
-  var style = document.createElement("style")
-  style.id = "mad-solid-public-header"
-  style.textContent = 'header[class*="fixed"] nav { background-color: #1d1d1d !important; }'
-  document.head.appendChild(style)
 })()

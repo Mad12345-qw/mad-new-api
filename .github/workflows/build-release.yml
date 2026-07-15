@@ -31,7 +31,7 @@ jobs:
 
       - name: Apply Mad API patches
         run: |
-          for patch in ../patches/*.patch; do
+          for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done

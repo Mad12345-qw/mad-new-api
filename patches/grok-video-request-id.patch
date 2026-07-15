@@ -1,0 +1,22 @@
+diff --git a/relay/channel/task/sora/adaptor.go b/relay/channel/task/sora/adaptor.go
+index e9029aa..1fac333 100644
+--- a/relay/channel/task/sora/adaptor.go
++++ b/relay/channel/task/sora/adaptor.go
+@@ -41,6 +41,7 @@ type ImageURL struct {
+ type responseTask struct {
+ 	ID                 string `json:"id"`
+ 	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
++	RequestID          string `json:"request_id,omitempty"`
+ 	Object             string `json:"object"`
+ 	Model              string `json:"model"`
+ 	Status             string `json:"status"`
+@@ -244,6 +245,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
+ 	if upstreamID == "" {
+ 		upstreamID = dResp.TaskID
+ 	}
++	if upstreamID == "" {
++		upstreamID = dResp.RequestID
++	}
+ 	if upstreamID == "" {
+ 		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+ 		return

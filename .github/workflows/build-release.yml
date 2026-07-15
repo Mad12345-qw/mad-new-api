@@ -29,8 +29,12 @@ jobs:
           path: source
           fetch-depth: 1
 
-      - name: Apply Mad API patch
-        run: git -C source apply --check ../patches/mad-email-verification.patch && git -C source apply ../patches/mad-email-verification.patch
+      - name: Apply Mad API patches
+        run: |
+          for patch in ../patches/*.patch; do
+            git -C source apply --check "$patch"
+            git -C source apply "$patch"
+          done
 
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
@@ -52,4 +56,3 @@ jobs:
             upstream-commit.txt \
             --title "Mad New API latest build" \
             --notes "Automated build from the latest upstream New API source with the Mad API email verification patch."
-

@@ -258,12 +258,8 @@ h1 {
 }
 
 .service-band {
-  background: var(--ink);
-  color: var(--text);
-}
-
-.service-band .eyebrow.dark {
-  color: var(--cyan);
+  background: var(--paper);
+  color: var(--dark-text);
 }
 
 .service-grid {
@@ -282,7 +278,7 @@ h2 {
 }
 
 .service-list {
-  border-top: 1px solid var(--line-dark);
+  border-top: 1px solid var(--line-light);
 }
 
 .service-list article {
@@ -290,11 +286,11 @@ h2 {
   grid-template-columns: 56px minmax(0, 1fr);
   gap: 18px;
   padding: 26px 0;
-  border-bottom: 1px solid var(--line-dark);
+  border-bottom: 1px solid var(--line-light);
 }
 
 .service-index {
-  color: #8ba49d;
+  color: #668078;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
 }
@@ -308,7 +304,7 @@ h2 {
 .routes-copy p {
   max-width: 580px;
   margin: 8px 0 0;
-  color: var(--muted);
+  color: #5d6662;
   font-size: 15px;
   line-height: 1.75;
 }

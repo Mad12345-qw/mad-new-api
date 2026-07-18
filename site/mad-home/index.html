@@ -429,6 +429,7 @@
         align-items: center;
         gap: 7px;
         flex: 0 0 auto;
+        margin-left: auto;
         color: var(--gold-bright);
         font-size: 10px;
         font-weight: 800;
@@ -445,17 +446,19 @@
       }
 
       .endpoint code {
-        flex: 1;
+        position: absolute;
+        left: 50%;
         min-width: 0;
         overflow: hidden;
         color: var(--text);
         font-family: inherit;
-        font-size: 10px;
+        font-size: 11px;
         font-weight: 800;
         line-height: 1;
         letter-spacing: 1.4px;
         text-align: center;
         text-overflow: ellipsis;
+        transform: translateX(-50%);
         white-space: nowrap;
       }
 
@@ -679,7 +682,13 @@
         }
 
         .endpoint code {
-          font-size: 10px;
+          position: static;
+          font-size: 11px;
+          transform: none;
+        }
+
+        .online {
+          margin-left: 0;
         }
 
         .copy {

@@ -28,7 +28,7 @@ index 0000000..9b2983b
 +import { Dialog } from '@/components/dialog'
 +import { Button } from '@/components/ui/button'
 +
-+const TELEGRAM_URL = 'https://t.me/+zJPiao-85hs0YWM1'
++const TELEGRAM_URL = 'https://t.me/madapimyddnsme'
 +const CLOSE_DATE_KEY = 'mad_telegram_announcement_close_date'
 +const SESSION_SEEN_KEY = 'mad_telegram_announcement_seen'
 +

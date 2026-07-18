@@ -1,0 +1,99 @@
+diff --git a/web/default/src/components/layout/components/public-header.tsx b/web/default/src/components/layout/components/public-header.tsx
+index 43a7e9c..85e134a 100644
+--- a/web/default/src/components/layout/components/public-header.tsx
++++ b/web/default/src/components/layout/components/public-header.tsx
+@@ -58,6 +58,7 @@ export interface PublicHeaderProps {
+   showNavigation?: boolean
+   showAuthButtons?: boolean
+   showNotifications?: boolean
++  scrolledOverride?: boolean
+   className?: string
+ }
+ 
+@@ -75,7 +76,7 @@ export function PublicHeader(props: PublicHeaderProps) {
+ 
+   const { t } = useTranslation()
+   const navigate = useNavigate()
+-  const [scrolled, setScrolled] = useState(false)
++  const [windowScrolled, setWindowScrolled] = useState(false)
+   const [mobileOpen, setMobileOpen] = useState(false)
+   const [authPromptTarget, setAuthPromptTarget] =
+     useState<AuthPromptTarget | null>(null)
+@@ -92,6 +93,7 @@ export function PublicHeader(props: PublicHeaderProps) {
+   const notifications = useNotifications()
+   const routerState = useRouterState()
+   const pathname = routerState.location.pathname
++  const scrolled = props.scrolledOverride ?? windowScrolled
+ 
+   const user = auth.user
+   const isAuthenticated = !!user
+@@ -99,7 +101,7 @@ export function PublicHeader(props: PublicHeaderProps) {
+   const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
+ 
+   useEffect(() => {
+-    const onScroll = () => setScrolled(window.scrollY > 20)
++    const onScroll = () => setWindowScrolled(window.scrollY > 20)
+     onScroll()
+     window.addEventListener('scroll', onScroll, { passive: true })
+     return () => window.removeEventListener('scroll', onScroll)
+diff --git a/web/default/src/features/home/index.tsx b/web/default/src/features/home/index.tsx
+index c157d35..85d01e0 100644
+--- a/web/default/src/features/home/index.tsx
++++ b/web/default/src/features/home/index.tsx
+@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { useCallback, useEffect, useRef } from 'react'
++import { useCallback, useEffect, useRef, useState } from 'react'
+ import { useTranslation } from 'react-i18next'
+ 
+ import { PublicLayout } from '@/components/layout'
+@@ -36,6 +36,7 @@ export function Home() {
+   const { auth } = useAuthStore()
+   const isAuthenticated = !!auth.user
+   const { content, isLoaded, isUrl } = useHomePageContent()
++  const [embeddedHomeScrolled, setEmbeddedHomeScrolled] = useState(false)
+ 
+   const syncIframePreferences = useCallback(() => {
+     try {
+@@ -58,6 +59,27 @@ export function Home() {
+     }
+   }, [isUrl, syncIframePreferences])
+ 
++  useEffect(() => {
++    if (!isUrl) {
++      setEmbeddedHomeScrolled(false)
++      return
++    }
++
++    const onMessage = (event: MessageEvent<unknown>) => {
++      if (event.source !== iframeRef.current?.contentWindow) return
++      if (!event.data || typeof event.data !== 'object') return
++
++      const message = event.data as { type?: unknown; scrolled?: unknown }
++      if (message.type !== 'mad-home:scroll') return
++      if (typeof message.scrolled !== 'boolean') return
++
++      setEmbeddedHomeScrolled(message.scrolled)
++    }
++
++    window.addEventListener('message', onMessage)
++    return () => window.removeEventListener('message', onMessage)
++  }, [isUrl])
++
+   if (!isLoaded) {
+     return (
+       <PublicLayout showMainContainer={false}>
+@@ -71,7 +93,10 @@ export function Home() {
+   if (content) {
+     if (isUrl) {
+       return (
+-        <PublicLayout showMainContainer={false}>
++        <PublicLayout
++          showMainContainer={false}
++          headerProps={{ scrolledOverride: embeddedHomeScrolled }}
++        >
+           {/*
+             allow-top-navigation-by-user-activation: the custom home page URL is
+             admin-configured (trusted); this lets its target="_top" nav/menu links

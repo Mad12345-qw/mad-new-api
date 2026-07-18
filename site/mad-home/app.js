@@ -9,6 +9,17 @@
   var width = 0
   var height = 0
   var pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
+  var lastReportedScrollState = null
+
+  function reportScrollState() {
+    var scrolled = window.scrollY > 20
+    if (scrolled === lastReportedScrollState) return
+    lastReportedScrollState = scrolled
+    window.parent.postMessage(
+      { type: 'mad-home:scroll', scrolled: scrolled },
+      '*'
+    )
+  }
 
   function createPoints() {
     var count = Math.max(24, Math.min(54, Math.floor(width / 30)))
@@ -84,24 +95,67 @@
     }, 1800)
   }
 
-  document.getElementById('copyApiUrl').addEventListener('click', function () {
-    var value = document.getElementById('apiBaseUrl').textContent
-    navigator.clipboard.writeText(value).then(
-      function () {
-        showToast('API 地址已复制')
-      },
-      function () {
-        showToast('复制失败，请手动选择地址')
-      }
-    )
-  })
+  function fallbackCopyText(value) {
+    var input = document.createElement('textarea')
+    input.value = value
+    input.setAttribute('readonly', '')
+    input.setAttribute('aria-hidden', 'true')
+    input.style.position = 'fixed'
+    input.style.top = '0'
+    input.style.left = '-9999px'
+    input.style.fontSize = '16px'
+    input.style.opacity = '0'
+    document.body.appendChild(input)
+
+    input.focus()
+    input.select()
+    input.setSelectionRange(0, input.value.length)
+
+    var copied = false
+    try {
+      copied = document.execCommand('copy')
+    } catch (error) {
+      copied = false
+    }
+    document.body.removeChild(input)
+    return copied
+  }
+
+  function copyText(value) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(value).catch(function () {
+        if (fallbackCopyText(value)) return
+        throw new Error('Clipboard access denied')
+      })
+    }
+
+    if (fallbackCopyText(value)) return Promise.resolve()
+    return Promise.reject(new Error('Clipboard API unavailable'))
+  }
+
+  var copyApiUrl = document.getElementById('copyApiUrl')
+  if (copyApiUrl) {
+    copyApiUrl.addEventListener('click', function () {
+      var value = document.getElementById('apiBaseUrl').textContent.trim()
+      copyText(value).then(
+        function () {
+          showToast('API 地址已复制')
+        },
+        function () {
+          showToast('复制失败，请手动选择地址')
+        }
+      )
+    })
+  }
 
   window.addEventListener('resize', function () {
     window.cancelAnimationFrame(frameId)
     resizeCanvas()
     draw()
   })
+  window.addEventListener('scroll', reportScrollState, { passive: true })
 
   resizeCanvas()
   draw()
+  reportScrollState()
 })()

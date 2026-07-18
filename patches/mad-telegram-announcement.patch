@@ -1,9 +1,9 @@
 diff --git a/web/default/src/components/mad-telegram-announcement.tsx b/web/default/src/components/mad-telegram-announcement.tsx
 new file mode 100644
-index 0000000..9b2983b
+index 0000000..e5bb0ed
 --- /dev/null
 +++ b/web/default/src/components/mad-telegram-announcement.tsx
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,127 @@
 +/*
 +Copyright (C) 2023-2026 QuantumNous
 +
@@ -71,7 +71,7 @@ index 0000000..9b2983b
 +      }}
 +      title={
 +        <span className='flex items-center gap-2 text-zinc-950'>
-+          <Bell className='size-4 text-blue-600' />
++          <Bell className='size-4 text-[#9b793b]' />
 +          系统公告
 +        </span>
 +      }
@@ -79,59 +79,55 @@ index 0000000..9b2983b
 +        <>
 +          <Button
 +            type='button'
-+            variant='secondary'
-+            className='bg-zinc-100 text-blue-600 hover:bg-zinc-200'
++            variant='ghost'
++            size='sm'
++            className='h-8 flex-1 rounded-lg px-3 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900'
 +            onClick={closeForToday}
 +          >
 +            今日关闭
 +          </Button>
 +          <Button
 +            type='button'
-+            variant='secondary'
-+            className='bg-zinc-100 text-blue-600 hover:bg-zinc-200'
++            variant='ghost'
++            size='sm'
++            className='h-8 flex-1 rounded-lg px-3 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900'
 +            onClick={closeForSession}
 +          >
 +            关闭公告
 +          </Button>
 +        </>
 +      }
-+      contentClassName='border-zinc-200 bg-white text-zinc-950 sm:max-w-4xl'
-+      headerClassName='border-b border-zinc-100 pb-4'
-+      bodyClassName='py-3 sm:py-5'
-+      footerClassName='border-t border-zinc-100 bg-white'
++      contentClassName='gap-3 border-zinc-200 bg-white p-4 text-zinc-950 sm:max-w-[400px] sm:p-4'
++      headerClassName='border-b border-zinc-100 pb-3'
++      bodyClassName='py-0'
++      footerClassName='-mx-4 -mb-4 border-t border-zinc-100 bg-white px-4 py-3 sm:-mx-4 sm:-mb-4 sm:p-3'
 +      contentHeight='auto'
 +      showCloseButton
 +    >
-+      <div className='mx-auto w-full max-w-sm overflow-hidden rounded-2xl border border-zinc-100 bg-white shadow-[0_18px_55px_-28px_rgba(15,23,42,0.4)]'>
++      <div className='flex items-center gap-3'>
 +        <img
-+          src='/mad-home/assets/mad-tg-announcement.webp'
-+          alt='Mad API Telegram community'
-+          className='aspect-[3/2] w-full object-cover'
++          src='/mad-home/assets/mad-logo.svg'
++          alt='Mad API'
++          className='size-14 shrink-0 rounded-xl border border-[#4a391d] bg-[#090907] shadow-[0_10px_26px_-16px_rgba(142,106,49,0.85)]'
 +        />
-+        <div className='px-6 py-5 text-center'>
-+          <div className='mx-auto flex size-12 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-600/25'>
-+            <Send className='size-6' />
-+          </div>
-+          <h2 className='mt-4 text-lg font-bold'>Mad API 官方频道</h2>
-+          <p className='mt-1.5 text-sm leading-6 text-zinc-500'>
++        <div className='min-w-0 text-left'>
++          <h2 className='text-sm font-semibold text-zinc-950'>
++            Mad API 官方频道
++          </h2>
++          <p className='mt-1 text-xs leading-5 text-zinc-500'>
 +            Telegram 频道入口，获取最新公告、模型更新与使用通知
 +          </p>
-+          <Button
-+            render={
-+              <a
-+                href={TELEGRAM_URL}
-+                target='_blank'
-+                rel='noreferrer noopener'
-+              />
-+            }
-+            size='lg'
-+            className='mt-4 rounded-full bg-blue-600 px-6 text-white hover:bg-blue-700'
-+          >
-+            <Send className='size-4' />
-+            立即加入
-+          </Button>
 +        </div>
 +      </div>
++      <Button
++        render={
++          <a href={TELEGRAM_URL} target='_blank' rel='noreferrer noopener' />
++        }
++        className='mt-3 h-10 w-full rounded-xl bg-[#c8a96a] text-[#15120d] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] hover:bg-[#d4b978]'
++      >
++        <Send className='size-4' />
++        立即加入
++      </Button>
 +    </Dialog>
 +  )
 +}

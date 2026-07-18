@@ -1,6 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
   <title id="title">Mad API</title>
-  <rect width="64" height="64" rx="12" fill="#0A0D0C"/>
-  <path d="M13 45V19h8l11 15 11-15h8v26h-8V31L32 45 21 31v14z" fill="#70E8D2"/>
-  <path d="M13 49h38" stroke="#C7F36B" stroke-width="3"/>
+  <defs>
+    <linearGradient id="gold" x1="12" y1="12" x2="52" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F6E7BD"/>
+      <stop offset="0.32" stop-color="#C5A461"/>
+      <stop offset="0.62" stop-color="#8E6A31"/>
+      <stop offset="1" stop-color="#E5CB8A"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="11.25" fill="#090907" stroke="#4A391D" stroke-width="1.5"/>
+  <path d="M13 45V19h8l11 15 11-15h8v26h-8V31L32 45 21 31v14z" fill="url(#gold)"/>
+  <path d="M13 49h38" stroke="#D8B96F" stroke-width="3" stroke-linecap="round"/>
 </svg>

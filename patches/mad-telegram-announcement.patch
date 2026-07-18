@@ -1,0 +1,157 @@
+diff --git a/web/default/src/components/mad-telegram-announcement.tsx b/web/default/src/components/mad-telegram-announcement.tsx
+new file mode 100644
+index 0000000..9b2983b
+--- /dev/null
++++ b/web/default/src/components/mad-telegram-announcement.tsx
+@@ -0,0 +1,131 @@
++/*
++Copyright (C) 2023-2026 QuantumNous
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU Affero General Public License as
++published by the Free Software Foundation, either version 3 of the
++License, or (at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++GNU Affero General Public License for more details.
++
++You should have received a copy of the GNU Affero General Public License
++along with this program. If not, see <https://www.gnu.org/licenses/>.
++
++For commercial licensing, please contact support@quantumnous.com
++*/
++import { Bell, Send } from 'lucide-react'
++import { useEffect, useState } from 'react'
++
++import { Dialog } from '@/components/dialog'
++import { Button } from '@/components/ui/button'
++
++const TELEGRAM_URL = 'https://t.me/+zJPiao-85hs0YWM1'
++const CLOSE_DATE_KEY = 'mad_telegram_announcement_close_date'
++const SESSION_SEEN_KEY = 'mad_telegram_announcement_seen'
++
++export function MadTelegramAnnouncement() {
++  const [open, setOpen] = useState(false)
++
++  useEffect(() => {
++    if (window.location.pathname.startsWith('/setup')) return
++
++    const today = new Date().toDateString()
++    const closedToday = window.localStorage.getItem(CLOSE_DATE_KEY) === today
++    const seenThisSession =
++      window.sessionStorage.getItem(SESSION_SEEN_KEY) === 'true'
++
++    if (!closedToday && !seenThisSession) {
++      setOpen(true)
++    }
++  }, [])
++
++  const closeForSession = () => {
++    window.sessionStorage.setItem(SESSION_SEEN_KEY, 'true')
++    setOpen(false)
++  }
++
++  const closeForToday = () => {
++    window.localStorage.setItem(CLOSE_DATE_KEY, new Date().toDateString())
++    window.sessionStorage.setItem(SESSION_SEEN_KEY, 'true')
++    setOpen(false)
++  }
++
++  return (
++    <Dialog
++      open={open}
++      onOpenChange={(nextOpen) => {
++        if (!nextOpen) {
++          closeForSession()
++          return
++        }
++        setOpen(true)
++      }}
++      title={
++        <span className='flex items-center gap-2 text-zinc-950'>
++          <Bell className='size-4 text-blue-600' />
++          系统公告
++        </span>
++      }
++      footer={
++        <>
++          <Button
++            type='button'
++            variant='secondary'
++            className='bg-zinc-100 text-blue-600 hover:bg-zinc-200'
++            onClick={closeForToday}
++          >
++            今日关闭
++          </Button>
++          <Button
++            type='button'
++            variant='secondary'
++            className='bg-zinc-100 text-blue-600 hover:bg-zinc-200'
++            onClick={closeForSession}
++          >
++            关闭公告
++          </Button>
++        </>
++      }
++      contentClassName='border-zinc-200 bg-white text-zinc-950 sm:max-w-4xl'
++      headerClassName='border-b border-zinc-100 pb-4'
++      bodyClassName='py-3 sm:py-5'
++      footerClassName='border-t border-zinc-100 bg-white'
++      contentHeight='auto'
++      showCloseButton
++    >
++      <div className='mx-auto w-full max-w-sm overflow-hidden rounded-2xl border border-zinc-100 bg-white shadow-[0_18px_55px_-28px_rgba(15,23,42,0.4)]'>
++        <img
++          src='/mad-home/assets/mad-tg-announcement.webp'
++          alt='Mad API Telegram community'
++          className='aspect-[3/2] w-full object-cover'
++        />
++        <div className='px-6 py-5 text-center'>
++          <div className='mx-auto flex size-12 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-600/25'>
++            <Send className='size-6' />
++          </div>
++          <h2 className='mt-4 text-lg font-bold'>Mad API 官方频道</h2>
++          <p className='mt-1.5 text-sm leading-6 text-zinc-500'>
++            Telegram 频道入口，获取最新公告、模型更新与使用通知
++          </p>
++          <Button
++            render={
++              <a
++                href={TELEGRAM_URL}
++                target='_blank'
++                rel='noreferrer noopener'
++              />
++            }
++            size='lg'
++            className='mt-4 rounded-full bg-blue-600 px-6 text-white hover:bg-blue-700'
++          >
++            <Send className='size-4' />
++            立即加入
++          </Button>
++        </div>
++      </div>
++    </Dialog>
++  )
++}
+diff --git a/web/default/src/routes/__root.tsx b/web/default/src/routes/__root.tsx
+index 3ed4fbb..d345449 100644
+--- a/web/default/src/routes/__root.tsx
++++ b/web/default/src/routes/__root.tsx
+@@ -26,6 +26,7 @@ import {
+ import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+ import { useEffect } from 'react'
+ 
++import { MadTelegramAnnouncement } from '@/components/mad-telegram-announcement'
+ import { NavigationProgress } from '@/components/navigation-progress'
+ import { Toaster } from '@/components/ui/sonner'
+ import { ThemeCustomizationProvider } from '@/context/theme-customization-provider'
+@@ -50,6 +51,7 @@ function RootComponent() {
+     <ThemeCustomizationProvider>
+       <NavigationProgress />
+       <Outlet />
++      <MadTelegramAnnouncement />
+       <Toaster closeButton duration={5000} position='top-center' richColors />
+       {import.meta.env.MODE === 'development' && (
+         <>

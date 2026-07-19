@@ -893,7 +893,7 @@ index 30fd955..7be072b 100644
 +  );
  }
 diff --git a/web/default/src/features/wallet/components/recharge-form-card.tsx b/web/default/src/features/wallet/components/recharge-form-card.tsx
-index 43b3630..7271ec6 100644
+index 43b3630..0afd829 100644
 --- a/web/default/src/features/wallet/components/recharge-form-card.tsx
 +++ b/web/default/src/features/wallet/components/recharge-form-card.tsx
 @@ -16,71 +16,89 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -1282,7 +1282,7 @@ index 43b3630..7271ec6 100644
 +                          )}
 +                          <div className="flex w-full items-start justify-between gap-2">
 +                            <div>
-+                              <div className="text-lg font-bold sm:text-xl">
++                              <div className="text-base font-semibold sm:text-lg">
 +                                ¥{preset.value}
                                </div>
 +                              <div className="text-muted-foreground mt-1 text-xs">
@@ -1309,7 +1309,7 @@ index 43b3630..7271ec6 100644
 -                                • Save {formatCurrency(savedAmount)}
 +                          <div className="mt-3 grid w-full grid-cols-[auto_1fr_auto] items-end gap-2">
 +                            {promotion.bonus > 0 ? (
-+                              <span className="font-semibold text-[#e0bd70] [text-shadow:0_1px_0_#000]">
++                              <span className="text-lg font-bold text-[#e0bd70] [text-shadow:0_1px_0_#000] sm:text-xl">
 +                                赠 ¥
 +                                {formatNumber(
 +                                  promotion.bonus * usdExchangeRate,
@@ -1320,12 +1320,12 @@ index 43b3630..7271ec6 100644
 +                                无赠送
                                </span>
                              )}
-+                            <span className="text-center text-[10px] font-semibold text-[#f0dca8] sm:text-xs">
++                            <span className="text-center text-xs font-semibold text-[#f0dca8] sm:text-sm">
 +                              {preset.value === 6 && newUserSixEligible
 +                                ? "每个账户限 1 次"
 +                                : ""}
 +                            </span>
-+                            <span className="text-xs font-medium text-foreground">
++                            <span className="text-sm font-semibold text-foreground sm:text-base">
 +                              到账 ¥
 +                              {formatNumber(
 +                                promotion.credited * usdExchangeRate,
@@ -1408,37 +1408,37 @@ index 43b3630..7271ec6 100644
 +                      onChange={(e) => handleAmountChange(e.target.value)}
 +                      min={minTopup}
 +                      placeholder={`最低充值 ${minTopup} 元`}
-+                      className="h-full min-h-16 pl-10 text-base sm:text-lg"
++                      className="h-full min-h-20 pl-10 text-lg sm:text-xl"
 +                    />
 +                  </div>
-+                  <div className="bg-muted/30 grid min-h-16 grid-cols-[repeat(3,minmax(0,1fr))_auto] items-center gap-3 rounded-md border px-4 py-3">
++                  <div className="bg-muted/30 grid min-h-20 grid-cols-[repeat(3,minmax(0,1fr))_auto] items-center gap-4 rounded-md border px-5 py-3">
 +                    <div>
-+                      <span className="text-muted-foreground block truncate text-[10px]">
++                      <span className="text-muted-foreground block text-xs font-medium sm:text-sm">
 +                        实付金额
                        </span>
 -                    )}
 +                      {calculating ? (
 +                        <Skeleton className="h-5 w-16" />
 +                      ) : (
-+                        <span className="text-sm font-semibold">
++                        <span className="text-lg font-bold sm:text-xl">
 +                          ¥{formatCurrency(paymentAmount)}
 +                        </span>
 +                      )}
 +                    </div>
 +                    <div>
-+                      <span className="text-muted-foreground block truncate text-[10px]">
++                      <span className="text-muted-foreground block text-xs font-medium sm:text-sm">
 +                        赠送额度
 +                      </span>
-+                      <span className="text-sm font-semibold text-[#e0bd70]">
++                      <span className="text-xl font-bold text-[#e0bd70] sm:text-2xl">
 +                        +¥
 +                        {formatNumber(currentPromotion.bonus * usdExchangeRate)}
 +                      </span>
 +                    </div>
 +                    <div>
-+                      <span className="text-muted-foreground block truncate text-[10px]">
++                      <span className="text-muted-foreground block text-xs font-medium sm:text-sm">
 +                        预计到账
 +                      </span>
-+                      <span className="text-sm font-semibold">
++                      <span className="text-lg font-bold sm:text-xl">
 +                        ¥
 +                        {formatNumber(
 +                          currentPromotion.credited * usdExchangeRate,
@@ -1452,7 +1452,7 @@ index 43b3630..7271ec6 100644
 +                        defaultPaymentMethod &&
 +                        onPaymentMethodSelect(defaultPaymentMethod)
 +                      }
-+                      className="h-10 min-w-28 border border-[#e0bd70] bg-[#d9ba6f] font-semibold text-[#17140f] hover:bg-[#e7c979]"
++                      className="h-14 min-w-40 border border-[#e0bd70] bg-[#d9ba6f] px-7 text-base font-bold text-[#17140f] shadow-[0_8px_20px_rgba(217,186,111,0.16)] hover:bg-[#e7c979]"
 +                    >
 +                      {paymentLoading === defaultPaymentMethod?.type ? (
 +                        <Loader2 className="size-4 animate-spin" />

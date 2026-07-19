@@ -892,7 +892,7 @@ index 30fd955..7be072b 100644
 +  );
  }
 diff --git a/web/default/src/features/wallet/components/recharge-form-card.tsx b/web/default/src/features/wallet/components/recharge-form-card.tsx
-index 43b3630..5c0dd61 100644
+index 43b3630..6f93c96 100644
 --- a/web/default/src/features/wallet/components/recharge-form-card.tsx
 +++ b/web/default/src/features/wallet/components/recharge-form-card.tsx
 @@ -16,71 +16,89 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -1324,7 +1324,7 @@ index 43b3630..5c0dd61 100644
 +                            {badge && (
 +                              <span
 +                                className={cn(
-+                                  "min-h-8 shrink-0 whitespace-nowrap rounded-full border border-[#8b6a2c]/55 bg-[#17140f] px-3 py-2 text-xs leading-none font-semibold text-[#e0bd70]",
++                                  "min-h-[29px] shrink-0 whitespace-nowrap rounded-full border border-[#8b6a2c]/55 bg-[#17140f] px-3 py-[7px] text-[11px] leading-none font-semibold text-[#e0bd70]",
 +                                  selectedPreset === preset.value && "mr-6",
 +                                )}
 +                              >

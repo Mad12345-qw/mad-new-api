@@ -36,6 +36,10 @@ jobs:
             git -C source apply "$patch"
           done
 
+      - name: Verify protected Mad API customizations
+        working-directory: source
+        run: sha256sum --check "$GITHUB_WORKSPACE/guards/customizations.sha256"
+
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
 

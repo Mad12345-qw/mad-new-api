@@ -893,7 +893,7 @@ index 30fd955..7be072b 100644
 +  );
  }
 diff --git a/web/default/src/features/wallet/components/recharge-form-card.tsx b/web/default/src/features/wallet/components/recharge-form-card.tsx
-index 43b3630..929229b 100644
+index 43b3630..0bb829b 100644
 --- a/web/default/src/features/wallet/components/recharge-form-card.tsx
 +++ b/web/default/src/features/wallet/components/recharge-form-card.tsx
 @@ -16,71 +16,89 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -1139,10 +1139,11 @@ index 43b3630..929229b 100644
 -            <div className='space-y-3'>
 -              <Skeleton className='h-3 w-16' />
 -              <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
+-                {Array.from({ length: 8 }, (_, index) => `preset-${index}`).map(
 +            <div className="space-y-3">
 +              <Skeleton className="h-3 w-16" />
-+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                 {Array.from({ length: 8 }, (_, index) => `preset-${index}`).map(
++              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
++                {Array.from({ length: 6 }, (_, index) => `preset-${index}`).map(
                    (key) => (
 -                    <Skeleton key={key} className='h-[72px] rounded-lg' />
 -                  )
@@ -1250,7 +1251,7 @@ index 43b3630..929229b 100644
 +                      最高加赠 25%，升档越多额度越高
 +                    </span>
 +                  </div>
-+                  <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
++                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
                      {presetAmounts.map((preset) => {
 -                      const discount =
 -                        preset.discount ||
@@ -1439,7 +1440,7 @@ index 43b3630..929229b 100644
 +                      className="h-full min-h-16 pl-10 text-lg sm:text-xl"
 +                    />
 +                  </div>
-+                  <div className="bg-muted/30 grid min-h-16 grid-cols-[repeat(3,minmax(0,1fr))_auto] items-center gap-4 rounded-md border px-4 py-2">
++                  <div className="bg-muted/30 grid min-h-16 grid-cols-3 items-center gap-3 rounded-md border px-4 py-2 sm:grid-cols-[repeat(3,minmax(0,1fr))_auto] sm:gap-4">
 +                    <div>
 +                      <span className="text-muted-foreground block text-xs font-medium sm:text-sm">
 +                        实付金额
@@ -1480,7 +1481,7 @@ index 43b3630..929229b 100644
 +                        defaultPaymentMethod &&
 +                        onPaymentMethodSelect(defaultPaymentMethod)
 +                      }
-+                      className="h-12 min-w-40 border border-[#e0bd70] bg-[#d9ba6f] px-7 text-base font-bold text-[#17140f] shadow-[0_8px_20px_rgba(217,186,111,0.16)] hover:bg-[#e7c979]"
++                      className="col-span-3 h-12 w-full min-w-40 border border-[#e0bd70] bg-[#d9ba6f] px-7 text-base font-bold text-[#17140f] shadow-[0_8px_20px_rgba(217,186,111,0.16)] hover:bg-[#e7c979] sm:col-span-1 sm:w-auto"
 +                    >
 +                      {paymentLoading === defaultPaymentMethod?.type ? (
 +                        <Loader2 className="size-4 animate-spin" />

@@ -1,5 +1,5 @@
 diff --git a/web/default/src/features/wallet/components/subscription-plans-card.tsx b/web/default/src/features/wallet/components/subscription-plans-card.tsx
-index 5c7dd54..a457a68 100644
+index 5c7dd54..d93d0ae 100644
 --- a/web/default/src/features/wallet/components/subscription-plans-card.tsx
 +++ b/web/default/src/features/wallet/components/subscription-plans-card.tsx
 @@ -243,7 +243,7 @@ export function SubscriptionPlansCard({
@@ -11,7 +11,102 @@ index 5c7dd54..a457a68 100644
              {['first', 'second', 'third'].map((key) => (
                <Skeleton key={key} className='h-48 w-full' />
              ))}
-@@ -523,7 +523,7 @@ export function SubscriptionPlansCard({
+@@ -450,24 +450,24 @@ export function SubscriptionPlansCard({
+                       key={subscription?.id}
+                       className='bg-background rounded-md border p-3 text-xs'
+                     >
+-                      <div className='flex items-center justify-between'>
+-                        <div className='flex items-center gap-2'>
+-                          <span className='font-medium'>
+-                            {planTitle
+-                              ? `${planTitle} · ${t('Subscription')} #${subscription?.id}`
+-                              : `${t('Subscription')} #${subscription?.id}`}
+-                          </span>
++                      <div className='min-w-0 space-y-1.5'>
++                        <div className='break-words font-medium leading-4'>
++                          {planTitle
++                            ? `${planTitle} · ${t('Subscription')} #${subscription?.id}`
++                            : `${t('Subscription')} #${subscription?.id}`}
++                        </div>
++                        <div className='flex items-center justify-between gap-2'>
+                           {statusBadge}
++                          {isActive && (
++                            <span className='text-muted-foreground whitespace-nowrap'>
++                              {t('{{count}} days remaining', {
++                                count: remainDays,
++                              })}
++                            </span>
++                          )}
+                         </div>
+-                        {isActive && (
+-                          <span className='text-muted-foreground'>
+-                            {t('{{count}} days remaining', {
+-                              count: remainDays,
+-                            })}
+-                          </span>
+-                        )}
+                       </div>
+-                      <div className='text-muted-foreground mt-1.5'>
++                      <div className='text-muted-foreground mt-2 break-words leading-4'>
+                         {endTimeLabel}{' '}
+                         {new Date(
+                           (subscription?.end_time || 0) * 1000
+@@ -479,29 +479,33 @@ export function SubscriptionPlansCard({
+                           {new Date(nextResetTime * 1000).toLocaleString()}
+                         </div>
+                       )}
+-                      <div className='text-muted-foreground mt-1'>
+-                        {t('Total Quota')}:{' '}
++                      <div className='text-muted-foreground mt-1.5 space-y-1'>
+                         {totalAmount > 0 ? (
+-                          <Tooltip>
+-                            <TooltipTrigger
+-                              render={<span className='cursor-help' />}
+-                            >
+-                              {formatQuota(usedAmount)}/
+-                              {formatQuota(totalAmount)} · {t('Remaining')}{' '}
+-                              {formatQuota(remainAmount)}
+-                            </TooltipTrigger>
+-                            <TooltipContent>
+-                              {t('Raw Quota')}: {usedAmount}/{totalAmount} ·{' '}
+-                              {t('Remaining')} {remainAmount}
+-                            </TooltipContent>
+-                          </Tooltip>
++                          <>
++                            <Tooltip>
++                              <TooltipTrigger
++                                render={<div className='cursor-help' />}
++                              >
++                                {t('Total Quota')}: {formatQuota(usedAmount)}/
++                                {formatQuota(totalAmount)}
++                              </TooltipTrigger>
++                              <TooltipContent>
++                                {t('Raw Quota')}: {usedAmount}/{totalAmount}
++                              </TooltipContent>
++                            </Tooltip>
++                            <div className='flex flex-wrap items-center justify-between gap-x-2 gap-y-1'>
++                              <span>
++                                {t('Remaining')} {formatQuota(remainAmount)}
++                              </span>
++                              <span>
++                                {t('Used')} {usagePercent}%
++                              </span>
++                            </div>
++                          </>
+                         ) : (
+-                          t('Unlimited')
+-                        )}
+-                        {totalAmount > 0 && (
+-                          <span className='ml-2'>
+-                            {t('Used')} {usagePercent}%
+-                          </span>
++                          <div>
++                            {t('Total Quota')}: {t('Unlimited')}
++                          </div>
+                         )}
+                       </div>
+                       {totalAmount > 0 && isActive && (
+@@ -523,7 +527,7 @@ export function SubscriptionPlansCard({
  
          {/* Available plans grid */}
          {plans.length > 0 ? (

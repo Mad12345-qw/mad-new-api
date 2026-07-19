@@ -892,7 +892,7 @@ index 30fd955..7be072b 100644
 +  );
  }
 diff --git a/web/default/src/features/wallet/components/recharge-form-card.tsx b/web/default/src/features/wallet/components/recharge-form-card.tsx
-index 43b3630..6f93c96 100644
+index 43b3630..f075a9a 100644
 --- a/web/default/src/features/wallet/components/recharge-form-card.tsx
 +++ b/web/default/src/features/wallet/components/recharge-form-card.tsx
 @@ -16,71 +16,89 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -1451,7 +1451,7 @@ index 43b3630..6f93c96 100644
 +                      {calculating ? (
 +                        <Skeleton className="h-5 w-16" />
 +                      ) : (
-+                        <span className="text-sm font-bold sm:text-base">
++                        <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
 +                          ¥{formatCurrency(paymentAmount)}
 +                        </span>
 +                      )}
@@ -1460,7 +1460,7 @@ index 43b3630..6f93c96 100644
 +                      <span className="text-muted-foreground block text-[10px] font-medium sm:text-xs">
 +                        赠送额度
 +                      </span>
-+                      <span className="text-lg font-bold text-[#e0bd70] sm:text-xl">
++                      <span className="whitespace-nowrap text-base font-bold text-[#e0bd70] sm:text-lg">
 +                        +¥
 +                        {formatNumber(currentPromotion.bonus * usdExchangeRate)}
 +                      </span>
@@ -1469,7 +1469,7 @@ index 43b3630..6f93c96 100644
 +                      <span className="text-muted-foreground block text-[10px] font-medium sm:text-xs">
 +                        预计到账
 +                      </span>
-+                      <span className="text-sm font-bold sm:text-base">
++                      <span className="whitespace-nowrap text-xs font-bold sm:text-sm">
 +                        ¥
 +                        {formatNumber(
 +                          currentPromotion.credited * usdExchangeRate,

@@ -1,0 +1,10 @@
+diff --git a/web/default/src/features/wallet/components/subscription-plans-card.tsx b/web/default/src/features/wallet/components/subscription-plans-card.tsx
+index 5c7dd54..a457a68 100644
+--- a/web/default/src/features/wallet/components/subscription-plans-card.tsx
++++ b/web/default/src/features/wallet/components/subscription-plans-card.tsx
+@@ -246 +246 @@ export function SubscriptionPlansCard({
+-          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3'>
++          <div className='grid grid-cols-1 gap-4'>
+@@ -526 +526 @@ export function SubscriptionPlansCard({
+-          <div className='grid grid-cols-1 gap-3 2xl:grid-cols-2 2xl:gap-4'>
++          <div className='grid grid-cols-1 gap-3'>

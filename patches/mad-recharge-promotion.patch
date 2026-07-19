@@ -2237,7 +2237,7 @@ index 8fb4b1a..593aa05 100644
 +  };
  }
 diff --git a/web/default/src/features/wallet/index.tsx b/web/default/src/features/wallet/index.tsx
-index 048e033..5dd529f 100644
+index 048e033..c07592b 100644
 --- a/web/default/src/features/wallet/index.tsx
 +++ b/web/default/src/features/wallet/index.tsx
 @@ -16,23 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -2638,7 +2638,7 @@ index 048e033..5dd529f 100644
                  showSubscriptionPanel
 -                  ? 'grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:items-start'
 -                  : 'grid gap-4'
-+                  ? "grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:items-start"
++                  ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start"
 +                  : "grid gap-4"
                }
              >

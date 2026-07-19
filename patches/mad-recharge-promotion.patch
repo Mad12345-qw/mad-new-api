@@ -1,0 +1,2951 @@
+diff --git a/controller/topup.go b/controller/topup.go
+index 69e1b5e..aafe129 100644
+--- a/controller/topup.go
++++ b/controller/topup.go
+@@ -23,6 +23,13 @@ import (
+ 
+ func GetTopUpInfo(c *gin.Context) {
+ 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
++	newUserSixEligible := false
++	if userId := c.GetInt("id"); userId > 0 {
++		claimed, err := model.HasTopUpPromotionClaim(userId, model.NewUserSixPromotionCode)
++		if err == nil {
++			newUserSixEligible = !claimed
++		}
++	}
+ 
+ 	// 获取支付方式
+ 	payMethods := operation_setting.PayMethods
+@@ -118,7 +125,11 @@ func GetTopUpInfo(c *gin.Context) {
+ 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
+ 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
+ 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
+-		"topup_link":              common.TopUpLink,
++		"recharge_promotion": gin.H{
++			"new_user_six_eligible": newUserSixEligible,
++			"amount_options":        []int{6, 30, 68, 128, 328, 648},
++		},
++		"topup_link": common.TopUpLink,
+ 	}
+ 	common.ApiSuccess(c, data)
+ }
+@@ -214,6 +225,18 @@ func RequestEpay(c *gin.Context) {
+ 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付方式不存在"})
+ 		return
+ 	}
++	amount := req.Amount
++	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
++		dAmount := decimal.NewFromInt(amount)
++		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
++		amount = dAmount.Div(dQuotaPerUnit).IntPart()
++	}
++	quote, err := model.GetTopUpPromotionQuote(id, amount)
++	if err != nil {
++		logger.LogError(c.Request.Context(), fmt.Sprintf("failed to calculate topup promotion user_id=%d amount=%d error=%q", id, amount, err.Error()))
++		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "Failed to calculate recharge bonus"})
++		return
++	}
+ 
+ 	callBackAddress := service.GetCallbackAddress()
+ 	returnUrl, _ := url.Parse(paymentReturnPath("/console/log"))
+@@ -239,16 +262,13 @@ func RequestEpay(c *gin.Context) {
+ 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
+ 		return
+ 	}
+-	amount := req.Amount
+-	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+-		dAmount := decimal.NewFromInt(int64(amount))
+-		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+-		amount = dAmount.Div(dQuotaPerUnit).IntPart()
+-	}
+ 	topUp := &model.TopUp{
+ 		UserId:          id,
+ 		Amount:          amount,
+ 		Money:           payMoney,
++		CreditedQuota:   quote.CreditedQuota,
++		BonusQuota:      quote.BonusQuota,
++		PromotionCode:   quote.PromotionCode,
+ 		TradeNo:         tradeNo,
+ 		PaymentMethod:   req.PaymentMethod,
+ 		PaymentProvider: model.PaymentProviderEpay,
+@@ -351,13 +371,7 @@ func EpayNotify(c *gin.Context) {
+ 		return
+ 	}
+ 	verifyInfo, err := client.Verify(params)
+-	if err == nil && verifyInfo.VerifyStatus {
+-		logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 验签成功 trade_no=%s callback_type=%s trade_status=%s client_ip=%s verify_info=%q", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP(), common.GetJsonString(verifyInfo)))
+-		_, err := c.Writer.Write([]byte("success"))
+-		if err != nil {
+-			logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 webhook 响应写入失败 trade_no=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, c.ClientIP(), err.Error()))
+-		}
+-	} else {
++	if err != nil || !verifyInfo.VerifyStatus {
+ 		_, err := c.Writer.Write([]byte("fail"))
+ 		if err != nil {
+ 			logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 webhook 响应写入失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
+@@ -369,46 +383,26 @@ func EpayNotify(c *gin.Context) {
+ 		}
+ 		return
+ 	}
++	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 验签成功 trade_no=%s callback_type=%s trade_status=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP()))
+ 
+ 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
+ 		LockOrder(verifyInfo.ServiceTradeNo)
+ 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
+-		topUp := model.GetTopUpByTradeNo(verifyInfo.ServiceTradeNo)
+-		if topUp == nil {
+-			logger.LogWarn(c.Request.Context(), fmt.Sprintf("易支付 回调订单不存在 trade_no=%s callback_type=%s client_ip=%s verify_info=%q", verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP(), common.GetJsonString(verifyInfo)))
+-			return
+-		}
+-		if topUp.PaymentProvider != model.PaymentProviderEpay {
+-			logger.LogWarn(c.Request.Context(), fmt.Sprintf("易支付 订单支付网关不匹配 trade_no=%s order_provider=%s callback_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, topUp.PaymentProvider, verifyInfo.Type, c.ClientIP()))
++		completion, completeErr := model.CompleteEpayTopUp(verifyInfo.ServiceTradeNo, verifyInfo.Type)
++		if completeErr != nil {
++			logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 充值完成失败 trade_no=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, c.ClientIP(), completeErr.Error()))
++			_, _ = c.Writer.Write([]byte("fail"))
+ 			return
+ 		}
+-		if topUp.Status == common.TopUpStatusPending {
+-			if topUp.PaymentMethod != verifyInfo.Type {
+-				logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 实际支付方式与订单不同 trade_no=%s order_payment_method=%s actual_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, topUp.PaymentMethod, verifyInfo.Type, c.ClientIP()))
+-				topUp.PaymentMethod = verifyInfo.Type
+-			}
+-			topUp.Status = common.TopUpStatusSuccess
+-			err := topUp.Update()
+-			if err != nil {
+-				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 更新充值订单失败 trade_no=%s user_id=%d client_ip=%s error=%q topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), err.Error(), common.GetJsonString(topUp)))
+-				return
+-			}
+-			//user, _ := model.GetUserById(topUp.UserId, false)
+-			//user.Quota += topUp.Amount * 500000
+-			dAmount := decimal.NewFromInt(int64(topUp.Amount))
+-			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+-			quotaToAdd := int(dAmount.Mul(dQuotaPerUnit).IntPart())
+-			err = model.IncreaseUserQuota(topUp.UserId, quotaToAdd, true)
+-			if err != nil {
+-				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 更新用户额度失败 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d error=%q topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, err.Error(), common.GetJsonString(topUp)))
+-				return
+-			}
+-			logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值成功 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d money=%.2f topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, topUp.Money, common.GetJsonString(topUp)))
+-			model.RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), c.ClientIP(), topUp.PaymentMethod, "epay")
++		if !completion.AlreadyCompleted {
++			topUp := completion.TopUp
++			logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值成功 trade_no=%s user_id=%d client_ip=%s credited_quota=%d bonus_quota=%d money=%.2f", topUp.TradeNo, topUp.UserId, c.ClientIP(), completion.CreditedQuota, completion.BonusQuota, topUp.Money))
++			model.RecordTopupLog(topUp.UserId, fmt.Sprintf("在线充值成功，到账额度：%v，赠送额度：%v，支付金额：%.2f", logger.LogQuota(int(completion.CreditedQuota)), logger.LogQuota(int(completion.BonusQuota)), topUp.Money), c.ClientIP(), topUp.PaymentMethod, "epay")
+ 		}
+ 	} else {
+ 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 忽略事件 trade_no=%s callback_type=%s trade_status=%s client_ip=%s verify_info=%q", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP(), common.GetJsonString(verifyInfo)))
+ 	}
++	_, _ = c.Writer.Write([]byte("success"))
+ }
+ 
+ func RequestAmount(c *gin.Context) {
+diff --git a/model/main.go b/model/main.go
+index 76f98a5..2d28048 100644
+--- a/model/main.go
++++ b/model/main.go
+@@ -279,6 +279,7 @@ func migrateDB() error {
+ 		&Log{},
+ 		&Midjourney{},
+ 		&TopUp{},
++		&TopUpPromotionClaim{},
+ 		&QuotaData{},
+ 		&Task{},
+ 		&Model{},
+@@ -333,6 +334,7 @@ func migrateDBFast() error {
+ 		{&Log{}, "Log"},
+ 		{&Midjourney{}, "Midjourney"},
+ 		{&TopUp{}, "TopUp"},
++		{&TopUpPromotionClaim{}, "TopUpPromotionClaim"},
+ 		{&QuotaData{}, "QuotaData"},
+ 		{&Task{}, "Task"},
+ 		{&Model{}, "Model"},
+diff --git a/model/task_cas_test.go b/model/task_cas_test.go
+index 91ca28f..58cdd2d 100644
+--- a/model/task_cas_test.go
++++ b/model/task_cas_test.go
+@@ -46,6 +46,7 @@ func TestMain(m *testing.M) {
+ 		&QuotaData{},
+ 		&Ability{},
+ 		&TopUp{},
++		&TopUpPromotionClaim{},
+ 		&SubscriptionPlan{},
+ 		&SubscriptionOrder{},
+ 		&UserSubscription{},
+@@ -76,6 +77,7 @@ func truncateTables(t *testing.T) {
+ 		DB.Exec("DELETE FROM quota_data")
+ 		DB.Exec("DELETE FROM abilities")
+ 		DB.Exec("DELETE FROM top_ups")
++		DB.Exec("DELETE FROM top_up_promotion_claims")
+ 		DB.Exec("DELETE FROM subscription_orders")
+ 		DB.Exec("DELETE FROM subscription_plans")
+ 		DB.Exec("DELETE FROM user_subscriptions")
+diff --git a/model/topup.go b/model/topup.go
+index 92cb276..bc6beb2 100644
+--- a/model/topup.go
++++ b/model/topup.go
+@@ -16,6 +16,9 @@ type TopUp struct {
+ 	UserId          int     `json:"user_id" gorm:"index"`
+ 	Amount          int64   `json:"amount"`
+ 	Money           float64 `json:"money"`
++	CreditedQuota   int64   `json:"credited_quota" gorm:"default:0"`
++	BonusQuota      int64   `json:"bonus_quota" gorm:"default:0"`
++	PromotionCode   string  `json:"promotion_code" gorm:"type:varchar(64);default:''"`
+ 	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+ 	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
+ 	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+@@ -321,6 +324,22 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
+ 	if tradeNo == "" {
+ 		return errors.New("未提供订单号")
+ 	}
++	if topUp := GetTopUpByTradeNo(tradeNo); topUp != nil && topUp.PaymentProvider == PaymentProviderEpay {
++		completion, err := CompleteEpayTopUp(tradeNo, topUp.PaymentMethod)
++		if err != nil {
++			return err
++		}
++		if !completion.AlreadyCompleted {
++			RecordTopupLog(
++				completion.TopUp.UserId,
++				fmt.Sprintf("管理员补单成功，到账额度：%v，赠送额度：%v，支付金额：%.2f", logger.FormatQuota(int(completion.CreditedQuota)), logger.FormatQuota(int(completion.BonusQuota)), completion.TopUp.Money),
++				callerIp,
++				completion.TopUp.PaymentMethod,
++				"admin",
++			)
++		}
++		return nil
++	}
+ 
+ 	refCol := "`trade_no`"
+ 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+diff --git a/model/topup_promotion.go b/model/topup_promotion.go
+new file mode 100644
+index 0000000..ca7f6ea
+--- /dev/null
++++ b/model/topup_promotion.go
+@@ -0,0 +1,192 @@
++package model
++
++import (
++	"errors"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/shopspring/decimal"
++	"gorm.io/gorm"
++	"gorm.io/gorm/clause"
++)
++
++const NewUserSixPromotionCode = "new_user_6_to_8"
++
++var ErrTopUpAmountInvalid = errors.New("invalid topup amount")
++
++type TopUpPromotionClaim struct {
++	Id            int    `json:"id"`
++	UserId        int    `json:"user_id" gorm:"uniqueIndex:idx_topup_promotion_user_code"`
++	PromotionCode string `json:"promotion_code" gorm:"type:varchar(64);uniqueIndex:idx_topup_promotion_user_code"`
++	TradeNo       string `json:"trade_no" gorm:"type:varchar(255);uniqueIndex"`
++	CreateTime    int64  `json:"create_time"`
++}
++
++type TopUpPromotionQuote struct {
++	CreditedQuota int64
++	BonusQuota    int64
++	PromotionCode string
++}
++
++type TopUpCompletion struct {
++	TopUp            *TopUp
++	CreditedQuota    int64
++	BonusQuota       int64
++	AlreadyCompleted bool
++}
++
++func quotaForTopUpAmount(amount int64, multiplier string) int64 {
++	return decimal.NewFromInt(amount).
++		Mul(decimal.RequireFromString(multiplier)).
++		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
++		IntPart()
++}
++
++func baseQuotaForTopUpAmount(amount int64) int64 {
++	return quotaForTopUpAmount(amount, "1")
++}
++
++func HasTopUpPromotionClaim(userId int, promotionCode string) (bool, error) {
++	var count int64
++	err := DB.Model(&TopUpPromotionClaim{}).
++		Where("user_id = ? AND promotion_code = ?", userId, promotionCode).
++		Count(&count).Error
++	return count > 0, err
++}
++
++func topUpPromotionQuoteForAmount(amount int64, includeSixPromotion bool) (TopUpPromotionQuote, error) {
++	if amount < 1 {
++		return TopUpPromotionQuote{}, ErrTopUpAmountInvalid
++	}
++
++	baseQuota := baseQuotaForTopUpAmount(amount)
++	quote := TopUpPromotionQuote{CreditedQuota: baseQuota}
++
++	switch amount {
++	case 6:
++		if includeSixPromotion {
++			quote.CreditedQuota = quotaForTopUpAmount(8, "1")
++			quote.BonusQuota = quote.CreditedQuota - baseQuota
++			quote.PromotionCode = NewUserSixPromotionCode
++		}
++	case 30:
++		quote.CreditedQuota = quotaForTopUpAmount(amount, "1.05")
++	case 68:
++		quote.CreditedQuota = quotaForTopUpAmount(amount, "1.08")
++	case 128:
++		quote.CreditedQuota = quotaForTopUpAmount(amount, "1.12")
++	case 328:
++		quote.CreditedQuota = quotaForTopUpAmount(amount, "1.18")
++	case 648:
++		quote.CreditedQuota = quotaForTopUpAmount(amount, "1.25")
++	}
++
++	if quote.BonusQuota == 0 {
++		quote.BonusQuota = quote.CreditedQuota - baseQuota
++	}
++	return quote, nil
++}
++
++func GetTopUpPromotionQuote(userId int, amount int64) (TopUpPromotionQuote, error) {
++	includeSixPromotion := false
++	if amount == 6 {
++		claimed, err := HasTopUpPromotionClaim(userId, NewUserSixPromotionCode)
++		if err != nil {
++			return TopUpPromotionQuote{}, err
++		}
++		includeSixPromotion = !claimed
++	}
++	return topUpPromotionQuoteForAmount(amount, includeSixPromotion)
++}
++
++func CompleteEpayTopUp(tradeNo string, actualPaymentMethod string) (*TopUpCompletion, error) {
++	if tradeNo == "" {
++		return nil, ErrTopUpNotFound
++	}
++
++	refCol := "`trade_no`"
++	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
++		refCol = `"trade_no"`
++	}
++
++	result := &TopUpCompletion{}
++	err := DB.Transaction(func(tx *gorm.DB) error {
++		topUp := &TopUp{}
++		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
++			return ErrTopUpNotFound
++		}
++		if topUp.PaymentProvider != PaymentProviderEpay {
++			return ErrPaymentMethodMismatch
++		}
++		if topUp.Status == common.TopUpStatusSuccess {
++			result.TopUp = topUp
++			result.CreditedQuota = topUp.CreditedQuota
++			result.BonusQuota = topUp.BonusQuota
++			result.AlreadyCompleted = true
++			return nil
++		}
++		if topUp.Status != common.TopUpStatusPending {
++			return ErrTopUpStatusInvalid
++		}
++
++		baseQuota := baseQuotaForTopUpAmount(topUp.Amount)
++		creditedQuota := topUp.CreditedQuota
++		bonusQuota := topUp.BonusQuota
++		promotionCode := topUp.PromotionCode
++		if creditedQuota <= 0 {
++			quote, err := topUpPromotionQuoteForAmount(topUp.Amount, topUp.Amount == 6)
++			if err != nil {
++				return err
++			}
++			creditedQuota = quote.CreditedQuota
++			bonusQuota = quote.BonusQuota
++			promotionCode = quote.PromotionCode
++		}
++
++		if promotionCode != "" {
++			claim := &TopUpPromotionClaim{
++				UserId:        topUp.UserId,
++				PromotionCode: promotionCode,
++				TradeNo:       topUp.TradeNo,
++				CreateTime:    common.GetTimestamp(),
++			}
++			claimResult := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(claim)
++			if claimResult.Error != nil {
++				return claimResult.Error
++			}
++			if claimResult.RowsAffected == 0 {
++				creditedQuota = baseQuota
++				bonusQuota = 0
++				promotionCode = ""
++			}
++		}
++
++		if creditedQuota <= 0 {
++			return ErrTopUpAmountInvalid
++		}
++		if actualPaymentMethod != "" {
++			topUp.PaymentMethod = actualPaymentMethod
++		}
++		topUp.CreditedQuota = creditedQuota
++		topUp.BonusQuota = bonusQuota
++		topUp.PromotionCode = promotionCode
++		topUp.CompleteTime = common.GetTimestamp()
++		topUp.Status = common.TopUpStatusSuccess
++		if err := tx.Save(topUp).Error; err != nil {
++			return err
++		}
++		if err := tx.Model(&User{}).
++			Where("id = ?", topUp.UserId).
++			Update("quota", gorm.Expr("quota + ?", creditedQuota)).Error; err != nil {
++			return err
++		}
++
++		result.TopUp = topUp
++		result.CreditedQuota = creditedQuota
++		result.BonusQuota = bonusQuota
++		return nil
++	})
++	if err != nil {
++		return nil, err
++	}
++	return result, nil
++}
+diff --git a/model/topup_promotion_test.go b/model/topup_promotion_test.go
+new file mode 100644
+index 0000000..fff1ae2
+--- /dev/null
++++ b/model/topup_promotion_test.go
+@@ -0,0 +1,148 @@
++package model
++
++import (
++	"fmt"
++	"sync"
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func createPromotionTestUser(t *testing.T, username string) *User {
++	t.Helper()
++	user := &User{Username: username, Status: common.UserStatusEnabled}
++	require.NoError(t, DB.Create(user).Error)
++	return user
++}
++
++func createPromotionTestTopUp(t *testing.T, userId int, tradeNo string, amount int64) *TopUp {
++	t.Helper()
++	quote, err := GetTopUpPromotionQuote(userId, amount)
++	require.NoError(t, err)
++	topUp := &TopUp{
++		UserId:          userId,
++		Amount:          amount,
++		Money:           float64(amount),
++		CreditedQuota:   quote.CreditedQuota,
++		BonusQuota:      quote.BonusQuota,
++		PromotionCode:   quote.PromotionCode,
++		TradeNo:         tradeNo,
++		PaymentMethod:   "alipay",
++		PaymentProvider: PaymentProviderEpay,
++		Status:          common.TopUpStatusPending,
++		CreateTime:      common.GetTimestamp(),
++	}
++	require.NoError(t, topUp.Insert())
++	return topUp
++}
++
++func readPromotionTestQuota(t *testing.T, userId int) int {
++	t.Helper()
++	var user User
++	require.NoError(t, DB.First(&user, userId).Error)
++	return user.Quota
++}
++
++func TestNewUserSixPromotionOnlyAppliesOnce(t *testing.T) {
++	truncateTables(t)
++	user := createPromotionTestUser(t, "six-once")
++
++	first := createPromotionTestTopUp(t, user.Id, "six-first", 6)
++	assert.Equal(t, NewUserSixPromotionCode, first.PromotionCode)
++	firstCompletion, err := CompleteEpayTopUp(first.TradeNo, "alipay")
++	require.NoError(t, err)
++	assert.Equal(t, quotaForTopUpAmount(8, "1"), firstCompletion.CreditedQuota)
++	assert.Equal(t, quotaForTopUpAmount(2, "1"), firstCompletion.BonusQuota)
++
++	second := createPromotionTestTopUp(t, user.Id, "six-second", 6)
++	assert.Empty(t, second.PromotionCode)
++	secondCompletion, err := CompleteEpayTopUp(second.TradeNo, "alipay")
++	require.NoError(t, err)
++	assert.Equal(t, baseQuotaForTopUpAmount(6), secondCompletion.CreditedQuota)
++	assert.Zero(t, secondCompletion.BonusQuota)
++	assert.Equal(t, quotaForTopUpAmount(14, "1"), int64(readPromotionTestQuota(t, user.Id)))
++}
++
++func TestCompleteEpayTopUpIsIdempotent(t *testing.T) {
++	truncateTables(t)
++	user := createPromotionTestUser(t, "idempotent")
++	topUp := createPromotionTestTopUp(t, user.Id, "duplicate-callback", 30)
++
++	first, err := CompleteEpayTopUp(topUp.TradeNo, "alipay")
++	require.NoError(t, err)
++	second, err := CompleteEpayTopUp(topUp.TradeNo, "alipay")
++	require.NoError(t, err)
++	assert.False(t, first.AlreadyCompleted)
++	assert.True(t, second.AlreadyCompleted)
++	assert.Equal(t, int(first.CreditedQuota), readPromotionTestQuota(t, user.Id))
++}
++
++func TestConcurrentSixPromotionClaimsOnlyOneBonus(t *testing.T) {
++	truncateTables(t)
++	user := createPromotionTestUser(t, "six-concurrent")
++	first := createPromotionTestTopUp(t, user.Id, "six-concurrent-a", 6)
++	second := createPromotionTestTopUp(t, user.Id, "six-concurrent-b", 6)
++
++	orders := []*TopUp{first, second}
++	completions := make([]*TopUpCompletion, len(orders))
++	errs := make([]error, len(orders))
++	var wg sync.WaitGroup
++	for index, order := range orders {
++		wg.Add(1)
++		go func(index int, tradeNo string) {
++			defer wg.Done()
++			completions[index], errs[index] = CompleteEpayTopUp(tradeNo, "alipay")
++		}(index, order.TradeNo)
++	}
++	wg.Wait()
++
++	bonusCount := 0
++	for index, err := range errs {
++		require.NoError(t, err)
++		if completions[index].BonusQuota > 0 {
++			bonusCount++
++		}
++	}
++	assert.Equal(t, 1, bonusCount)
++	assert.Equal(t, quotaForTopUpAmount(14, "1"), int64(readPromotionTestQuota(t, user.Id)))
++}
++
++func TestTopUpPromotionTierCalculations(t *testing.T) {
++	truncateTables(t)
++	user := createPromotionTestUser(t, "tier-calculations")
++	tests := []struct {
++		amount     int64
++		multiplier string
++	}{
++		{30, "1.05"},
++		{68, "1.08"},
++		{128, "1.12"},
++		{328, "1.18"},
++		{648, "1.25"},
++	}
++	for _, test := range tests {
++		t.Run(fmt.Sprintf("amount_%d", test.amount), func(t *testing.T) {
++			quote, err := GetTopUpPromotionQuote(user.Id, test.amount)
++			require.NoError(t, err)
++			assert.Equal(t, quotaForTopUpAmount(test.amount, test.multiplier), quote.CreditedQuota)
++			assert.Equal(t, quote.CreditedQuota-baseQuotaForTopUpAmount(test.amount), quote.BonusQuota)
++		})
++	}
++}
++
++func TestCustomAmountsUnderThirtyDoNotReceiveBonus(t *testing.T) {
++	truncateTables(t)
++	user := createPromotionTestUser(t, "custom-no-bonus")
++	for amount := int64(1); amount < 30; amount++ {
++		if amount == 6 {
++			continue
++		}
++		quote, err := GetTopUpPromotionQuote(user.Id, amount)
++		require.NoError(t, err)
++		assert.Equal(t, baseQuotaForTopUpAmount(amount), quote.CreditedQuota, "amount=%d", amount)
++		assert.Zero(t, quote.BonusQuota, "amount=%d", amount)
++		assert.Empty(t, quote.PromotionCode, "amount=%d", amount)
++	}
++}
+diff --git a/web/default/src/components/ui/icon-badge.tsx b/web/default/src/components/ui/icon-badge.tsx
+index 494889b..ac32b95 100644
+--- a/web/default/src/components/ui/icon-badge.tsx
++++ b/web/default/src/components/ui/icon-badge.tsx
+@@ -16,58 +16,60 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { cva, type VariantProps } from 'class-variance-authority'
+-import type { ReactNode } from 'react'
++import { cva, type VariantProps } from "class-variance-authority";
++import type { ReactNode } from "react";
+ 
+-import { cn } from '@/lib/utils'
++import { cn } from "@/lib/utils";
+ 
+ const iconBadgeVariants = cva(
+-  'flex shrink-0 items-center justify-center [&>svg]:shrink-0',
++  "flex shrink-0 items-center justify-center [&>svg]:shrink-0",
+   {
+     variants: {
+       tone: {
+-        neutral: 'bg-muted text-muted-foreground',
+-        primary: 'bg-primary/10 text-primary',
+-        success: 'bg-success/10 text-success',
+-        warning: 'bg-warning/10 text-warning',
+-        info: 'bg-info/10 text-info',
+-        destructive: 'bg-destructive/10 text-destructive',
+-        'chart-1': 'bg-chart-1/10 text-chart-1',
+-        'chart-2': 'bg-chart-2/10 text-chart-2',
+-        'chart-3': 'bg-chart-3/10 text-chart-3',
+-        'chart-4': 'bg-chart-4/10 text-chart-4',
+-        'chart-5': 'bg-chart-5/10 text-chart-5',
++        neutral: "bg-muted text-muted-foreground",
++        primary: "bg-primary/10 text-primary",
++        success: "bg-success/10 text-success",
++        premium:
++          "border border-[#8b6a2c]/55 bg-[#17140f] text-[#e0bd70] shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_4px_14px_rgba(0,0,0,0.16)]",
++        warning: "bg-warning/10 text-warning",
++        info: "bg-info/10 text-info",
++        destructive: "bg-destructive/10 text-destructive",
++        "chart-1": "bg-chart-1/10 text-chart-1",
++        "chart-2": "bg-chart-2/10 text-chart-2",
++        "chart-3": "bg-chart-3/10 text-chart-3",
++        "chart-4": "bg-chart-4/10 text-chart-4",
++        "chart-5": "bg-chart-5/10 text-chart-5",
+       },
+       size: {
+-        xs: 'size-5 rounded-md [&>svg]:size-3',
+-        sm: 'size-7 rounded-md [&>svg]:size-3.5',
+-        md: 'size-8 rounded-lg [&>svg]:size-4',
+-        title: 'size-8 rounded-lg sm:size-9 [&>svg]:size-4',
+-        lg: 'size-10 rounded-xl [&>svg]:size-5',
+-        stat: 'size-5 rounded-md sm:size-7 [&>svg]:size-3 sm:[&>svg]:size-3.5',
++        xs: "size-5 rounded-md [&>svg]:size-3",
++        sm: "size-7 rounded-md [&>svg]:size-3.5",
++        md: "size-8 rounded-lg [&>svg]:size-4",
++        title: "size-8 rounded-lg sm:size-9 [&>svg]:size-4",
++        lg: "size-10 rounded-xl [&>svg]:size-5",
++        stat: "size-5 rounded-md sm:size-7 [&>svg]:size-3 sm:[&>svg]:size-3.5",
+       },
+     },
+     defaultVariants: {
+-      tone: 'neutral',
+-      size: 'md',
++      tone: "neutral",
++      size: "md",
+     },
+-  }
+-)
++  },
++);
+ 
+ export type IconBadgeTone = NonNullable<
+-  VariantProps<typeof iconBadgeVariants>['tone']
+->
++  VariantProps<typeof iconBadgeVariants>["tone"]
++>;
+ 
+ export type IconBadgeSize = NonNullable<
+-  VariantProps<typeof iconBadgeVariants>['size']
+->
++  VariantProps<typeof iconBadgeVariants>["size"]
++>;
+ 
+ interface IconBadgeProps {
+-  children?: ReactNode
+-  tone?: IconBadgeTone
+-  size?: IconBadgeSize
+-  className?: string
+-  decorative?: boolean
++  children?: ReactNode;
++  tone?: IconBadgeTone;
++  size?: IconBadgeSize;
++  className?: string;
++  decorative?: boolean;
+ }
+ 
+ export function IconBadge(props: IconBadgeProps) {
+@@ -75,11 +77,11 @@ export function IconBadge(props: IconBadgeProps) {
+     <span
+       className={cn(
+         iconBadgeVariants({ tone: props.tone, size: props.size }),
+-        props.className
++        props.className,
+       )}
+       aria-hidden={props.decorative ?? true}
+     >
+       {props.children}
+     </span>
+-  )
++  );
+ }
+diff --git a/web/default/src/features/wallet/components/dialogs/payment-confirm-dialog.tsx b/web/default/src/features/wallet/components/dialogs/payment-confirm-dialog.tsx
+index 30fd955..7be072b 100644
+--- a/web/default/src/features/wallet/components/dialogs/payment-confirm-dialog.tsx
++++ b/web/default/src/features/wallet/components/dialogs/payment-confirm-dialog.tsx
+@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { Loader2 } from 'lucide-react'
+-import { useTranslation } from 'react-i18next'
++import { Loader2 } from "lucide-react";
++import { useTranslation } from "react-i18next";
+ 
+ import {
+   AlertDialog,
+@@ -28,25 +28,27 @@ import {
+   AlertDialogFooter,
+   AlertDialogHeader,
+   AlertDialogTitle,
+-} from '@/components/ui/alert-dialog'
+-import { Skeleton } from '@/components/ui/skeleton'
+-import { formatLocalCurrencyAmount } from '@/lib/currency'
++} from "@/components/ui/alert-dialog";
++import { Skeleton } from "@/components/ui/skeleton";
++import { formatLocalCurrencyAmount } from "@/lib/currency";
+ 
+-import { DEFAULT_DISCOUNT_RATE } from '../../constants'
+-import { formatCurrency, getPaymentIcon } from '../../lib'
+-import type { PaymentMethod } from '../../types'
++import { DEFAULT_DISCOUNT_RATE } from "../../constants";
++import { formatCurrency, getPaymentIcon } from "../../lib";
++import type { PaymentMethod } from "../../types";
+ 
+ interface PaymentConfirmDialogProps {
+-  open: boolean
+-  onOpenChange: (open: boolean) => void
+-  onConfirm: () => void
+-  topupAmount: number
+-  paymentAmount: number
+-  paymentMethod: PaymentMethod | undefined
+-  calculating: boolean
+-  processing: boolean
+-  discountRate?: number
+-  usdExchangeRate?: number
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  onConfirm: () => void;
++  topupAmount: number;
++  paymentAmount: number;
++  paymentMethod: PaymentMethod | undefined;
++  calculating: boolean;
++  processing: boolean;
++  discountRate?: number;
++  usdExchangeRate?: number;
++  creditedAmount?: number;
++  bonusAmount?: number;
+ }
+ 
+ export function PaymentConfirmDialog({
+@@ -60,30 +62,32 @@ export function PaymentConfirmDialog({
+   processing,
+   discountRate = DEFAULT_DISCOUNT_RATE,
+   usdExchangeRate = 1,
++  creditedAmount = topupAmount,
++  bonusAmount = 0,
+ }: PaymentConfirmDialogProps) {
+-  const { t } = useTranslation()
+-  const hasDiscount = discountRate > 0 && discountRate < 1 && paymentAmount > 0
+-  const originalAmount = hasDiscount ? paymentAmount / discountRate : 0
+-  const discountAmount = hasDiscount ? originalAmount - paymentAmount : 0
++  const { t } = useTranslation();
++  const hasDiscount = discountRate > 0 && discountRate < 1 && paymentAmount > 0;
++  const originalAmount = hasDiscount ? paymentAmount / discountRate : 0;
++  const discountAmount = hasDiscount ? originalAmount - paymentAmount : 0;
+ 
+   return (
+     <AlertDialog open={open} onOpenChange={onOpenChange}>
+-      <AlertDialogContent className='max-sm:w-[calc(100vw-1.5rem)] sm:max-w-md'>
++      <AlertDialogContent className="max-sm:w-[calc(100vw-1.5rem)] sm:max-w-md">
+         <AlertDialogHeader>
+-          <AlertDialogTitle className='text-xl font-semibold'>
+-            {t('Confirm Payment')}
++          <AlertDialogTitle className="text-xl font-semibold">
++            {t("Confirm Payment")}
+           </AlertDialogTitle>
+           <AlertDialogDescription>
+-            {t('Review your payment details')}
++            {t("Review your payment details")}
+           </AlertDialogDescription>
+         </AlertDialogHeader>
+ 
+-        <div className='space-y-3 py-3 sm:space-y-4 sm:py-4'>
+-          <div className='flex items-center justify-between'>
+-            <span className='text-muted-foreground text-sm'>
+-              {t('Topup Amount')}
++        <div className="space-y-3 py-3 sm:space-y-4 sm:py-4">
++          <div className="flex items-center justify-between">
++            <span className="text-muted-foreground text-sm">
++              {t("Topup Amount")}
+             </span>
+-            <span className='text-lg font-semibold'>
++            <span className="text-lg font-semibold">
+               {formatLocalCurrencyAmount(topupAmount * usdExchangeRate, {
+                 digitsLarge: 2,
+                 digitsSmall: 2,
+@@ -92,19 +96,36 @@ export function PaymentConfirmDialog({
+             </span>
+           </div>
+ 
+-          <div className='flex items-center justify-between'>
+-            <span className='text-muted-foreground text-sm'>
+-              {t('You Pay')}
++          {bonusAmount > 0 && (
++            <div className="rounded-lg border border-[#8b6a2c]/45 bg-[#17140f] p-3">
++              <div className="flex items-center justify-between text-sm">
++                <span className="text-muted-foreground">赠送额度</span>
++                <span className="font-semibold text-[#e0bd70]">
++                  +¥{formatCurrency(bonusAmount)}
++                </span>
++              </div>
++              <div className="mt-2 flex items-center justify-between text-sm">
++                <span className="text-muted-foreground">预计到账</span>
++                <span className="font-semibold text-[#f0dca8]">
++                  ¥{formatCurrency(creditedAmount)}
++                </span>
++              </div>
++            </div>
++          )}
++
++          <div className="flex items-center justify-between">
++            <span className="text-muted-foreground text-sm">
++              {t("You Pay")}
+             </span>
+             {calculating ? (
+-              <Skeleton className='h-6 w-24' />
++              <Skeleton className="h-6 w-24" />
+             ) : (
+-              <div className='flex items-baseline gap-2'>
+-                <span className='text-2xl font-semibold'>
++              <div className="flex items-baseline gap-2">
++                <span className="text-2xl font-semibold">
+                   {formatCurrency(paymentAmount)}
+                 </span>
+                 {hasDiscount && (
+-                  <span className='text-muted-foreground text-sm line-through'>
++                  <span className="text-muted-foreground text-sm line-through">
+                     {formatCurrency(originalAmount)}
+                   </span>
+                 )}
+@@ -113,44 +134,44 @@ export function PaymentConfirmDialog({
+           </div>
+ 
+           {hasDiscount && !calculating && (
+-            <div className='bg-muted/50 rounded-lg p-3'>
+-              <div className='flex items-center justify-between text-sm'>
+-                <span className='text-muted-foreground'>{t('You save')}</span>
+-                <span className='font-semibold text-green-600'>
++            <div className="bg-muted/50 rounded-lg p-3">
++              <div className="flex items-center justify-between text-sm">
++                <span className="text-muted-foreground">{t("You save")}</span>
++                <span className="font-semibold text-green-600">
+                   {formatCurrency(discountAmount)}
+                 </span>
+               </div>
+             </div>
+           )}
+ 
+-          <div className='border-t pt-4'>
+-            <div className='flex items-center justify-between'>
+-              <span className='text-muted-foreground text-sm'>
+-                {t('Payment Method')}
++          <div className="border-t pt-4">
++            <div className="flex items-center justify-between">
++              <span className="text-muted-foreground text-sm">
++                {t("Payment Method")}
+               </span>
+-              <div className='flex items-center gap-2'>
++              <div className="flex items-center gap-2">
+                 {getPaymentIcon(
+                   paymentMethod?.type,
+-                  'h-4 w-4',
++                  "h-4 w-4",
+                   paymentMethod?.icon,
+-                  paymentMethod?.name
++                  paymentMethod?.name,
+                 )}
+-                <span className='font-medium'>{paymentMethod?.name}</span>
++                <span className="font-medium">{paymentMethod?.name}</span>
+               </div>
+             </div>
+           </div>
+         </div>
+ 
+-        <AlertDialogFooter className='grid grid-cols-2 gap-2 sm:flex'>
++        <AlertDialogFooter className="grid grid-cols-2 gap-2 sm:flex">
+           <AlertDialogCancel disabled={processing}>
+-            {t('Cancel')}
++            {t("Cancel")}
+           </AlertDialogCancel>
+           <AlertDialogAction onClick={onConfirm} disabled={processing}>
+-            {processing && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
+-            {t('Confirm Payment')}
++            {processing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
++            {t("Confirm Payment")}
+           </AlertDialogAction>
+         </AlertDialogFooter>
+       </AlertDialogContent>
+     </AlertDialog>
+-  )
++  );
+ }
+diff --git a/web/default/src/features/wallet/components/recharge-form-card.tsx b/web/default/src/features/wallet/components/recharge-form-card.tsx
+index 43b3630..75387eb 100644
+--- a/web/default/src/features/wallet/components/recharge-form-card.tsx
++++ b/web/default/src/features/wallet/components/recharge-form-card.tsx
+@@ -16,71 +16,88 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
+-import { useState, useEffect } from 'react'
+-import { useTranslation } from 'react-i18next'
++import {
++  Gift,
++  ExternalLink,
++  Loader2,
++  Receipt,
++  WalletCards,
++} from "lucide-react";
++import { useState, useEffect } from "react";
++import { useTranslation } from "react-i18next";
+ 
+-import { Alert, AlertDescription } from '@/components/ui/alert'
+-import { Button } from '@/components/ui/button'
+-import { Card, CardContent, CardHeader } from '@/components/ui/card'
+-import { IconBadge } from '@/components/ui/icon-badge'
+-import { Input } from '@/components/ui/input'
+-import { Label } from '@/components/ui/label'
+-import { Skeleton } from '@/components/ui/skeleton'
+-import { TitledCard } from '@/components/ui/titled-card'
++import { Alert, AlertDescription } from "@/components/ui/alert";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent, CardHeader } from "@/components/ui/card";
++import { IconBadge } from "@/components/ui/icon-badge";
++import { Input } from "@/components/ui/input";
++import { Label } from "@/components/ui/label";
++import { Skeleton } from "@/components/ui/skeleton";
++import { TitledCard } from "@/components/ui/titled-card";
+ import {
+   Tooltip,
+   TooltipContent,
+   TooltipProvider,
+   TooltipTrigger,
+-} from '@/components/ui/tooltip'
+-import { formatNumber } from '@/lib/format'
+-import { cn } from '@/lib/utils'
++} from "@/components/ui/tooltip";
++import { formatNumber } from "@/lib/format";
++import { cn } from "@/lib/utils";
+ 
+-import {
+-  formatCurrency,
+-  getDiscountLabel,
+-  getPaymentIcon,
+-  getMinTopupAmount,
+-  calculatePresetPricing,
+-} from '../lib'
++import { formatCurrency, getPaymentIcon, getMinTopupAmount } from "../lib";
+ import type {
+   PaymentMethod,
+   PresetAmount,
+   TopupInfo,
+   CreemProduct,
+   WaffoPayMethod,
+-} from '../types'
+-import { CreemProductsSection } from './creem-products-section'
++} from "../types";
++import { CreemProductsSection } from "./creem-products-section";
+ 
+ interface RechargeFormCardProps {
+-  topupInfo: TopupInfo | null
+-  presetAmounts: PresetAmount[]
+-  selectedPreset: number | null
+-  onSelectPreset: (preset: PresetAmount) => void
+-  topupAmount: number
+-  onTopupAmountChange: (amount: number) => void
+-  paymentAmount: number
+-  calculating: boolean
+-  onPaymentMethodSelect: (method: PaymentMethod) => void
+-  paymentLoading: string | null
+-  redemptionCode: string
+-  onRedemptionCodeChange: (code: string) => void
+-  onRedeem: () => void
+-  redeeming: boolean
+-  topupLink?: string
+-  loading?: boolean
+-  priceRatio?: number
+-  usdExchangeRate?: number
+-  onOpenBilling?: () => void
+-  creemProducts?: CreemProduct[]
+-  enableCreemTopup?: boolean
+-  onCreemProductSelect?: (product: CreemProduct) => void
+-  enableWaffoTopup?: boolean
+-  waffoPayMethods?: WaffoPayMethod[]
+-  waffoMinTopup?: number
+-  onWaffoMethodSelect?: (method: WaffoPayMethod, index: number) => void
+-  enableWaffoPancakeTopup?: boolean
++  topupInfo: TopupInfo | null;
++  presetAmounts: PresetAmount[];
++  selectedPreset: number | null;
++  onSelectPreset: (preset: PresetAmount) => void;
++  topupAmount: number;
++  onTopupAmountChange: (amount: number) => void;
++  paymentAmount: number;
++  calculating: boolean;
++  onPaymentMethodSelect: (method: PaymentMethod) => void;
++  paymentLoading: string | null;
++  redemptionCode: string;
++  onRedemptionCodeChange: (code: string) => void;
++  onRedeem: () => void;
++  redeeming: boolean;
++  topupLink?: string;
++  loading?: boolean;
++  priceRatio?: number;
++  usdExchangeRate?: number;
++  onOpenBilling?: () => void;
++  creemProducts?: CreemProduct[];
++  enableCreemTopup?: boolean;
++  onCreemProductSelect?: (product: CreemProduct) => void;
++  enableWaffoTopup?: boolean;
++  waffoPayMethods?: WaffoPayMethod[];
++  waffoMinTopup?: number;
++  onWaffoMethodSelect?: (method: WaffoPayMethod, index: number) => void;
++  enableWaffoPancakeTopup?: boolean;
++}
++
++const PROMOTION_RATES: Record<number, number> = {
++  30: 0.05,
++  68: 0.08,
++  128: 0.12,
++  328: 0.18,
++  648: 0.25,
++};
++
++function getPromotionDetails(amount: number, newUserSixEligible: boolean) {
++  if (amount === 6 && newUserSixEligible) {
++    return { bonus: 2, credited: 8, rate: 2 / 6 };
++  }
++  const rate = PROMOTION_RATES[amount] || 0;
++  const bonus = amount * rate;
++  return { bonus, credited: amount + bonus, rate };
+ }
+ 
+ export function RechargeFormCard({
+@@ -112,226 +129,312 @@ export function RechargeFormCard({
+   onWaffoMethodSelect,
+   enableWaffoPancakeTopup,
+ }: RechargeFormCardProps) {
+-  const { t } = useTranslation()
+-  const [localAmount, setLocalAmount] = useState(topupAmount.toString())
++  const { t } = useTranslation();
++  const [localAmount, setLocalAmount] = useState(topupAmount.toString());
+ 
+   useEffect(() => {
+-    setLocalAmount(topupAmount.toString())
+-  }, [topupAmount])
++    setLocalAmount(topupAmount.toString());
++  }, [topupAmount]);
+ 
+   const handleAmountChange = (value: string) => {
+-    setLocalAmount(value)
+-    const numValue = Number.parseInt(value) || 0
++    setLocalAmount(value);
++    const numValue = Number.parseInt(value) || 0;
+     if (numValue >= 0) {
+-      onTopupAmountChange(numValue)
++      onTopupAmountChange(numValue);
+     }
+-  }
++  };
+ 
+   const hasConfigurableTopup =
+     topupInfo?.enable_online_topup ||
+     topupInfo?.enable_stripe_topup ||
+     enableWaffoTopup ||
+-    enableWaffoPancakeTopup
+-  const hasAnyTopup = hasConfigurableTopup || enableCreemTopup
++    enableWaffoPancakeTopup;
++  const hasAnyTopup = hasConfigurableTopup || enableCreemTopup;
+   const hasStandardPaymentMethods =
+-    Array.isArray(topupInfo?.pay_methods) && topupInfo.pay_methods.length > 0
++    Array.isArray(topupInfo?.pay_methods) && topupInfo.pay_methods.length > 0;
+   const hasWaffoPaymentMethods =
+-    Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
+-  const minTopup = getMinTopupAmount(topupInfo)
+-  const redemptionEnabled = topupInfo?.enable_redemption !== false
++    Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0;
++  const minTopup = getMinTopupAmount(topupInfo);
++  const redemptionEnabled = topupInfo?.enable_redemption !== false;
++  const newUserSixEligible =
++    topupInfo?.recharge_promotion?.new_user_six_eligible !== false;
++  const currentPromotion = getPromotionDetails(topupAmount, newUserSixEligible);
++  const nextTier = presetAmounts.find((preset) => {
++    if (preset.value <= topupAmount) return false;
++    return !(topupAmount === 6 && newUserSixEligible && preset.value === 30);
++  });
++  const nextPromotion = nextTier
++    ? getPromotionDetails(nextTier.value, newUserSixEligible)
++    : null;
++  const marginalBonusRate =
++    nextTier && nextPromotion && nextPromotion.bonus > currentPromotion.bonus
++      ? ((nextPromotion.bonus - currentPromotion.bonus) /
++          (nextTier.value - topupAmount)) *
++        100
++      : 0;
+ 
+   if (loading) {
+     return (
+-      <Card data-card-hover='false' className='gap-0 overflow-hidden py-0'>
+-        <CardHeader className='border-b p-3 !pb-3 sm:p-5 sm:!pb-5'>
+-          <Skeleton className='h-6 w-32' />
+-          <Skeleton className='mt-2 h-4 w-48' />
++      <Card data-card-hover="false" className="gap-0 overflow-hidden py-0">
++        <CardHeader className="border-b p-3 !pb-3 sm:p-5 sm:!pb-5">
++          <Skeleton className="h-6 w-32" />
++          <Skeleton className="mt-2 h-4 w-48" />
+         </CardHeader>
+-        <CardContent className='space-y-4 p-3 sm:space-y-6 sm:p-5'>
+-          <div className='space-y-4 sm:space-y-6'>
++        <CardContent className="space-y-4 p-3 sm:space-y-6 sm:p-5">
++          <div className="space-y-4 sm:space-y-6">
+             {/* Preset Amounts Skeleton */}
+-            <div className='space-y-3'>
+-              <Skeleton className='h-3 w-16' />
+-              <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
++            <div className="space-y-3">
++              <Skeleton className="h-3 w-16" />
++              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                 {Array.from({ length: 8 }, (_, index) => `preset-${index}`).map(
+                   (key) => (
+-                    <Skeleton key={key} className='h-[72px] rounded-lg' />
+-                  )
++                    <Skeleton key={key} className="h-[72px] rounded-lg" />
++                  ),
+                 )}
+               </div>
+             </div>
+ 
+             {/* Custom Amount Input Skeleton */}
+-            <div className='space-y-3'>
+-              <Skeleton className='h-3 w-28' />
+-              <Skeleton className='h-[42px] w-full' />
++            <div className="space-y-3">
++              <Skeleton className="h-3 w-28" />
++              <Skeleton className="h-[42px] w-full" />
+             </div>
+ 
+             {/* Payment Methods Skeleton */}
+-            <div className='space-y-3'>
+-              <Skeleton className='h-3 w-32' />
+-              <div className='flex flex-wrap gap-3'>
+-                {['primary', 'secondary', 'tertiary'].map((key) => (
+-                  <Skeleton key={key} className='h-10 w-24 rounded-lg' />
++            <div className="space-y-3">
++              <Skeleton className="h-3 w-32" />
++              <div className="flex flex-wrap gap-3">
++                {["primary", "secondary", "tertiary"].map((key) => (
++                  <Skeleton key={key} className="h-10 w-24 rounded-lg" />
+                 ))}
+               </div>
+             </div>
+           </div>
+ 
+           {/* Redemption Code Section Skeleton */}
+-          <div className='space-y-3 border-t pt-8'>
+-            <Skeleton className='h-3 w-24' />
+-            <div className='flex gap-2'>
+-              <Skeleton className='h-10 flex-1' />
+-              <Skeleton className='h-10 w-20' />
++          <div className="space-y-3 border-t pt-8">
++            <Skeleton className="h-3 w-24" />
++            <div className="flex gap-2">
++              <Skeleton className="h-10 flex-1" />
++              <Skeleton className="h-10 w-20" />
+             </div>
+           </div>
+         </CardContent>
+       </Card>
+-    )
++    );
+   }
+ 
+   return (
+     <TitledCard
+-      title={t('Add Funds')}
+-      description={t('Choose an amount and payment method')}
+-      icon={<WalletCards className='h-4 w-4' />}
+-      iconTone='success'
++      title={t("Add Funds")}
++      description={t("Choose an amount and payment method")}
++      icon={<WalletCards className="h-4 w-4" />}
++      iconTone="premium"
+       disableHoverEffect
+       action={
+         onOpenBilling ? (
+           <Button
+-            variant='outline'
+-            size='sm'
++            variant="outline"
++            size="sm"
+             onClick={onOpenBilling}
+-            className='w-full gap-2 sm:w-auto'
++            className="w-full gap-2 sm:w-auto"
+           >
+-            <Receipt className='h-4 w-4' />
+-            {t('Order History')}
++            <Receipt className="h-4 w-4" />
++            {t("Order History")}
+           </Button>
+         ) : null
+       }
+-      contentClassName='space-y-4 sm:space-y-6'
++      contentClassName="space-y-4 sm:space-y-6"
+     >
+       {/* Online Topup Section */}
+       {hasAnyTopup ? (
+-        <div className='space-y-4 sm:space-y-6'>
++        <div className="space-y-4 sm:space-y-6">
+           {hasConfigurableTopup && (
+             <>
+               {presetAmounts.length > 0 && (
+-                <div className='space-y-2.5 sm:space-y-3'>
+-                  <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+-                    {t('Amount')}
++                <div className="space-y-2.5 sm:space-y-3">
++                  <Label className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
++                    {t("Amount")}
+                   </Label>
+-                  <div className='grid grid-cols-2 gap-1.5 sm:gap-3 md:grid-cols-4'>
++                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
++                    <span className="text-muted-foreground text-xs">
++                      自定义金额最低 ¥1，未命中活动档位时不赠送
++                    </span>
++                    <span className="text-xs font-semibold text-[#d6b66c]">
++                      最高加赠 25%，升档越多额度越高
++                    </span>
++                  </div>
++                  <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
+                     {presetAmounts.map((preset) => {
+-                      const discount =
+-                        preset.discount ||
+-                        topupInfo?.discount?.[preset.value] ||
+-                        1.0
+-                      const {
+-                        displayValue,
+-                        actualPrice,
+-                        savedAmount,
+-                        hasDiscount,
+-                      } = calculatePresetPricing(
++                      const promotion = getPromotionDetails(
+                         preset.value,
+-                        priceRatio,
+-                        discount,
+-                        usdExchangeRate
+-                      )
++                        newUserSixEligible,
++                      );
++                      const badge =
++                        preset.value === 6
++                          ? newUserSixEligible
++                            ? "新客体验 · 限1次"
++                            : "体验礼已使用"
++                          : preset.value === 128
++                            ? "最受欢迎"
++                            : preset.value === 648
++                              ? "最划算"
++                              : null;
+                       return (
+                         <Button
+                           key={preset.value}
+-                          variant='outline'
++                          variant="outline"
+                           className={cn(
+-                            'flex min-h-16 flex-col items-start rounded-lg px-3 py-2.5 text-left whitespace-normal sm:min-h-[72px] sm:p-4',
++                            "relative flex min-h-24 flex-col items-start justify-between overflow-hidden rounded-lg px-3 py-3 text-left whitespace-normal sm:min-h-28 sm:p-4",
+                             selectedPreset === preset.value
+-                              ? 'border-foreground bg-foreground/5 dark:border-foreground dark:bg-foreground/10'
+-                              : 'border-muted'
++                              ? "border-[#9b7b38] bg-[#d7b96f]/8 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_22px_rgba(0,0,0,0.14)]"
++                              : "border-muted hover:border-[#8b6a2c]/65",
+                           )}
+                           onClick={() => onSelectPreset(preset)}
+                         >
+-                          <div className='flex w-full items-center justify-between'>
+-                            <div className='text-base font-semibold sm:text-lg'>
+-                              {formatNumber(displayValue)}
+-                            </div>
+-                            {hasDiscount && (
+-                              <div className='text-xs font-medium text-green-600'>
+-                                {getDiscountLabel(discount)}
++                          <div className="flex w-full items-start justify-between gap-2">
++                            <div>
++                              <div className="text-lg font-bold sm:text-xl">
++                                ¥{preset.value}
+                               </div>
++                              <div className="text-muted-foreground mt-1 text-xs">
++                                实付 ¥
++                                {formatCurrency(preset.value * priceRatio)}
++                              </div>
++                            </div>
++                            {badge && (
++                              <span className="rounded-full border border-[#8b6a2c]/55 bg-[#17140f] px-2 py-1 text-[10px] leading-none font-semibold text-[#e0bd70]">
++                                {badge}
++                              </span>
+                             )}
+                           </div>
+-                          <div className='text-muted-foreground mt-1.5 w-full text-xs sm:mt-2'>
+-                            Pay {formatCurrency(actualPrice)}
+-                            {hasDiscount && savedAmount > 0 && (
+-                              <span className='text-green-600'>
+-                                {' '}
+-                                • Save {formatCurrency(savedAmount)}
++                          <div className="mt-3 flex w-full items-end justify-between gap-2">
++                            <span className="text-muted-foreground text-xs">
++                              到账 ¥
++                              {formatNumber(
++                                promotion.credited * usdExchangeRate,
++                              )}
++                            </span>
++                            {promotion.bonus > 0 ? (
++                              <span className="font-semibold text-[#e0bd70] [text-shadow:0_1px_0_#000]">
++                                +¥
++                                {formatNumber(
++                                  promotion.bonus * usdExchangeRate,
++                                )}
++                              </span>
++                            ) : (
++                              <span className="text-muted-foreground text-xs">
++                                无赠送
+                               </span>
+                             )}
+                           </div>
+                         </Button>
+-                      )
++                      );
+                     })}
+                   </div>
++                  <div className="mt-3 rounded-lg border border-[#8b6a2c]/35 bg-[#17140f] px-3 py-2.5 sm:px-4">
++                    {nextTier && nextPromotion && marginalBonusRate > 0 ? (
++                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm">
++                        <span className="text-muted-foreground">
++                          升到{" "}
++                          <strong className="text-foreground">
++                            ¥{nextTier.value}
++                          </strong>
++                          ，再多充 ¥{formatNumber(nextTier.value - topupAmount)}
++                        </span>
++                        <span className="font-semibold text-[#e0bd70]">
++                          多得 ¥
++                          {formatNumber(
++                            nextPromotion.bonus - currentPromotion.bonus,
++                          )}
++                          ，增量加赠约 {formatNumber(marginalBonusRate)}%
++                        </span>
++                      </div>
++                    ) : (
++                      <div className="text-sm font-semibold text-[#e0bd70]">
++                        已解锁最高 25% 加赠，¥648 实付到账 ¥810
++                      </div>
++                    )}
++                  </div>
+                 </div>
+               )}
+ 
+-              <div className='space-y-2.5 sm:space-y-3'>
++              <div className="space-y-2.5 sm:space-y-3">
+                 <Label
+-                  htmlFor='topup-amount'
+-                  className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
++                  htmlFor="topup-amount"
++                  className="text-muted-foreground text-xs font-medium tracking-wider uppercase"
+                 >
+-                  {t('Custom Amount')}
++                  {t("Custom Amount")}
+                 </Label>
+-                <div className='grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
++                <div className="grid grid-cols-1 gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(330px,auto)] lg:items-center">
+                   <Input
+-                    id='topup-amount'
+-                    type='number'
++                    id="topup-amount"
++                    type="number"
+                     value={localAmount}
+                     onChange={(e) => handleAmountChange(e.target.value)}
+                     min={minTopup}
+                     placeholder={`Minimum ${minTopup}`}
+-                    className='h-9 text-base sm:h-10 sm:text-lg'
++                    className="h-9 text-base sm:h-10 sm:text-lg"
+                   />
+-                  <div className='bg-muted/30 flex min-h-9 items-center justify-between gap-2 rounded-md border px-3 lg:min-w-52'>
+-                    <span className='text-muted-foreground truncate text-xs'>
+-                      {t('Amount to pay:')}
+-                    </span>
+-                    {calculating ? (
+-                      <Skeleton className='h-5 w-16' />
+-                    ) : (
+-                      <span className='text-sm font-semibold'>
+-                        {formatCurrency(paymentAmount)}
++                  <div className="bg-muted/30 grid min-h-10 grid-cols-3 items-center gap-3 rounded-md border px-3 py-2">
++                    <div>
++                      <span className="text-muted-foreground block truncate text-[10px]">
++                        实付金额
+                       </span>
+-                    )}
++                      {calculating ? (
++                        <Skeleton className="h-5 w-16" />
++                      ) : (
++                        <span className="text-sm font-semibold">
++                          ¥{formatCurrency(paymentAmount)}
++                        </span>
++                      )}
++                    </div>
++                    <div>
++                      <span className="text-muted-foreground block truncate text-[10px]">
++                        赠送额度
++                      </span>
++                      <span className="text-sm font-semibold text-[#e0bd70]">
++                        +¥
++                        {formatNumber(currentPromotion.bonus * usdExchangeRate)}
++                      </span>
++                    </div>
++                    <div>
++                      <span className="text-muted-foreground block truncate text-[10px]">
++                        预计到账
++                      </span>
++                      <span className="text-sm font-semibold">
++                        ¥
++                        {formatNumber(
++                          currentPromotion.credited * usdExchangeRate,
++                        )}
++                      </span>
++                    </div>
+                   </div>
+                 </div>
+               </div>
+ 
+-              <div className='space-y-2.5 sm:space-y-3'>
+-                <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+-                  {t('Payment Method')}
++              <div className="space-y-2.5 sm:space-y-3">
++                <Label className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
++                  {t("Payment Method")}
+                 </Label>
+                 {hasStandardPaymentMethods ? (
+-                  <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
++                  <div className="grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3">
+                     {topupInfo?.pay_methods?.map((method) => {
+-                      const minTopup = method.min_topup || 0
+-                      const disabled = minTopup > topupAmount
++                      const minTopup = method.min_topup || 0;
++                      const disabled = minTopup > topupAmount;
+                       const disabledReason = disabled
+-                        ? t('Minimum topup amount: {{amount}}', {
++                        ? t("Minimum topup amount: {{amount}}", {
+                             amount: minTopup,
+                           })
+-                        : undefined
++                        : undefined;
+                       const disabledLabel = disabled
+-                        ? `${t('Minimum:')} ${minTopup}`
+-                        : undefined
++                        ? `${t("Minimum:")} ${minTopup}`
++                        : undefined;
+ 
+                       const button = (
+                         <Button
+                           key={method.type}
+-                          variant='outline'
++                          variant="outline"
+                           onClick={() => onPaymentMethodSelect(method)}
+                           disabled={disabled || !!paymentLoading}
+                           title={disabledReason}
+@@ -340,30 +443,30 @@ export function RechargeFormCard({
+                               ? `${method.name}. ${disabledReason}`
+                               : method.name
+                           }
+-                          className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
++                          className="min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left"
+                         >
+                           {paymentLoading === method.type ? (
+-                            <Loader2 className='h-4 w-4 animate-spin' />
++                            <Loader2 className="h-4 w-4 animate-spin" />
+                           ) : (
+                             getPaymentIcon(
+                               method.type,
+-                              'h-4 w-4',
++                              "h-4 w-4",
+                               method.icon,
+-                              method.name
++                              method.name,
+                             )
+                           )}
+-                          <span className='flex min-w-0 flex-col items-start gap-0.5'>
+-                            <span className='max-w-full truncate'>
++                          <span className="flex min-w-0 flex-col items-start gap-0.5">
++                            <span className="max-w-full truncate">
+                               {method.name}
+                             </span>
+                             {disabledLabel && (
+-                              <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
++                              <span className="text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal">
+                                 {disabledLabel}
+                               </span>
+                             )}
+                           </span>
+                         </Button>
+-                      )
++                      );
+ 
+                       return disabled ? (
+                         <TooltipProvider key={method.type}>
+@@ -374,7 +477,7 @@ export function RechargeFormCard({
+                         </TooltipProvider>
+                       ) : (
+                         button
+-                      )
++                      );
+                     })}
+                   </div>
+                 ) : null}
+@@ -382,7 +485,7 @@ export function RechargeFormCard({
+                   <Alert>
+                     <AlertDescription>
+                       {t(
+-                        'No payment methods available. Please contact administrator.'
++                        "No payment methods available. Please contact administrator.",
+                       )}
+                     </AlertDescription>
+                   </Alert>
+@@ -392,44 +495,44 @@ export function RechargeFormCard({
+               {enableWaffoTopup &&
+                 hasWaffoPaymentMethods &&
+                 onWaffoMethodSelect && (
+-                  <div className='space-y-2.5 sm:space-y-3'>
+-                    <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+-                      {t('Waffo Payment')}
++                  <div className="space-y-2.5 sm:space-y-3">
++                    <Label className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
++                      {t("Waffo Payment")}
+                     </Label>
+-                    <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
++                    <div className="grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3">
+                       {waffoPayMethods?.map((method, index) => {
+-                        const loadingKey = `waffo-${index}`
+-                        const methodKey = `${method.payMethodType ?? 'unknown'}-${method.payMethodName ?? method.name}`
+-                        const waffoMin = waffoMinTopup || 0
+-                        const belowMin = waffoMin > topupAmount
++                        const loadingKey = `waffo-${index}`;
++                        const methodKey = `${method.payMethodType ?? "unknown"}-${method.payMethodName ?? method.name}`;
++                        const waffoMin = waffoMinTopup || 0;
++                        const belowMin = waffoMin > topupAmount;
+                         const disabledReason = belowMin
+-                          ? t('Minimum topup amount: {{amount}}', {
++                          ? t("Minimum topup amount: {{amount}}", {
+                               amount: waffoMin,
+                             })
+-                          : undefined
++                          : undefined;
+                         const disabledLabel = belowMin
+-                          ? `${t('Minimum:')} ${waffoMin}`
+-                          : undefined
++                          ? `${t("Minimum:")} ${waffoMin}`
++                          : undefined;
+ 
+-                        let methodIcon = getPaymentIcon('waffo')
++                        let methodIcon = getPaymentIcon("waffo");
+                         if (paymentLoading === loadingKey) {
+                           methodIcon = (
+-                            <Loader2 className='h-4 w-4 animate-spin' />
+-                          )
++                            <Loader2 className="h-4 w-4 animate-spin" />
++                          );
+                         } else if (method.icon) {
+                           methodIcon = (
+                             <img
+                               src={method.icon}
+                               alt={method.name}
+-                              className='h-4 w-4 object-contain'
++                              className="h-4 w-4 object-contain"
+                             />
+-                          )
++                          );
+                         }
+ 
+                         const button = (
+                           <Button
+                             key={methodKey}
+-                            variant='outline'
++                            variant="outline"
+                             onClick={() => onWaffoMethodSelect(method, index)}
+                             disabled={belowMin || !!paymentLoading}
+                             title={disabledReason}
+@@ -438,21 +541,21 @@ export function RechargeFormCard({
+                                 ? `${method.name}. ${disabledReason}`
+                                 : method.name
+                             }
+-                            className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
++                            className="min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left"
+                           >
+                             {methodIcon}
+-                            <span className='flex min-w-0 flex-col items-start gap-0.5'>
+-                              <span className='max-w-full truncate'>
++                            <span className="flex min-w-0 flex-col items-start gap-0.5">
++                              <span className="max-w-full truncate">
+                                 {method.name}
+                               </span>
+                               {disabledLabel && (
+-                                <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
++                                <span className="text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal">
+                                   {disabledLabel}
+                                 </span>
+                               )}
+                             </span>
+                           </Button>
+-                        )
++                        );
+ 
+                         return belowMin ? (
+                           <TooltipProvider key={methodKey}>
+@@ -463,7 +566,7 @@ export function RechargeFormCard({
+                           </TooltipProvider>
+                         ) : (
+                           button
+-                        )
++                        );
+                       })}
+                     </div>
+                   </div>
+@@ -475,7 +578,7 @@ export function RechargeFormCard({
+         <Alert>
+           <AlertDescription>
+             {t(
+-              'Online topup is not enabled. Please use redemption code or contact administrator.'
++              "Online topup is not enabled. Please use redemption code or contact administrator.",
+             )}
+           </AlertDescription>
+         </Alert>
+@@ -486,9 +589,9 @@ export function RechargeFormCard({
+         Array.isArray(creemProducts) &&
+         creemProducts.length > 0 &&
+         onCreemProductSelect && (
+-          <div className='space-y-2.5 border-t pt-4 sm:space-y-3 sm:pt-6'>
+-            <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+-              {t('Creem Payment')}
++          <div className="space-y-2.5 border-t pt-4 sm:space-y-3 sm:pt-6">
++            <Label className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
++              {t("Creem Payment")}
+             </Label>
+             <CreemProductsSection
+               products={creemProducts}
+@@ -499,60 +602,60 @@ export function RechargeFormCard({
+ 
+       {/* Redemption Code Section */}
+       {redemptionEnabled ? (
+-        <div className='space-y-2.5 border-t pt-4 sm:space-y-3 sm:pt-6'>
+-          <div className='flex items-center gap-2'>
+-            <IconBadge tone='warning' size='xs'>
++        <div className="space-y-2.5 border-t pt-4 sm:space-y-3 sm:pt-6">
++          <div className="flex items-center gap-2">
++            <IconBadge tone="warning" size="xs">
+               <Gift />
+             </IconBadge>
+             <Label
+-              htmlFor='redemption-code'
+-              className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
++              htmlFor="redemption-code"
++              className="text-muted-foreground text-xs font-medium tracking-wider uppercase"
+             >
+-              {t('Have a Code?')}
++              {t("Have a Code?")}
+             </Label>
+           </div>
+-          <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
++          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+             <Input
+-              id='redemption-code'
++              id="redemption-code"
+               value={redemptionCode}
+               onChange={(e) => onRedemptionCodeChange(e.target.value)}
+-              placeholder={t('Enter your redemption code')}
+-              className='h-9 min-w-0'
++              placeholder={t("Enter your redemption code")}
++              className="h-9 min-w-0"
+             />
+             <Button
+               onClick={onRedeem}
+               disabled={redeeming}
+-              variant='outline'
+-              className='h-9 px-4'
++              variant="outline"
++              className="h-9 px-4"
+             >
+-              {redeeming && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
+-              {t('Redeem')}
++              {redeeming && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
++              {t("Redeem")}
+             </Button>
+           </div>
+           {topupLink && (
+-            <p className='text-muted-foreground text-xs'>
+-              {t('Need a redemption code?')}{' '}
++            <p className="text-muted-foreground text-xs">
++              {t("Need a redemption code?")}{" "}
+               <a
+                 href={topupLink}
+-                target='_blank'
+-                rel='noopener noreferrer'
+-                className='inline-flex items-center gap-1 underline-offset-4 hover:underline'
++                target="_blank"
++                rel="noopener noreferrer"
++                className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
+               >
+-                {t('Get one here')}
+-                <ExternalLink className='h-3 w-3' />
++                {t("Get one here")}
++                <ExternalLink className="h-3 w-3" />
+               </a>
+             </p>
+           )}
+         </div>
+       ) : (
+-        <Alert className='border-t'>
++        <Alert className="border-t">
+           <AlertDescription>
+             {t(
+-              'Redemption codes are disabled until the administrator confirms compliance terms.'
++              "Redemption codes are disabled until the administrator confirms compliance terms.",
+             )}
+           </AlertDescription>
+         </Alert>
+       )}
+     </TitledCard>
+-  )
++  );
+ }
+diff --git a/web/default/src/features/wallet/components/wallet-stats-card.tsx b/web/default/src/features/wallet/components/wallet-stats-card.tsx
+index 74ff0a8..52689bd 100644
+--- a/web/default/src/features/wallet/components/wallet-stats-card.tsx
++++ b/web/default/src/features/wallet/components/wallet-stats-card.tsx
+@@ -16,87 +16,87 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { Activity, BarChart3, WalletCards } from 'lucide-react'
+-import { useTranslation } from 'react-i18next'
++import { Activity, BarChart3, WalletCards } from "lucide-react";
++import { useTranslation } from "react-i18next";
+ 
+-import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
+-import { Skeleton } from '@/components/ui/skeleton'
+-import { formatQuota } from '@/lib/format'
++import { IconBadge, type IconBadgeTone } from "@/components/ui/icon-badge";
++import { Skeleton } from "@/components/ui/skeleton";
++import { formatQuota } from "@/lib/format";
+ 
+-import type { UserWalletData } from '../types'
++import type { UserWalletData } from "../types";
+ 
+ interface WalletStatsCardProps {
+-  user: UserWalletData | null
+-  loading?: boolean
++  user: UserWalletData | null;
++  loading?: boolean;
+ }
+ 
+ export function WalletStatsCard(props: WalletStatsCardProps) {
+-  const { t } = useTranslation()
++  const { t } = useTranslation();
+   if (props.loading) {
+     return (
+-      <div className='grid grid-cols-3 divide-x rounded-lg border'>
+-        {['balance', 'usage', 'requests'].map((key) => (
+-          <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
+-            <Skeleton className='h-3.5 w-full' />
+-            <Skeleton className='mt-2 h-6 w-full sm:h-7' />
+-            <Skeleton className='mt-1.5 hidden h-3.5 w-24 md:block' />
++      <div className="grid grid-cols-3 divide-x rounded-lg border">
++        {["balance", "usage", "requests"].map((key) => (
++          <div key={key} className="min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4">
++            <Skeleton className="h-3.5 w-full" />
++            <Skeleton className="mt-2 h-6 w-full sm:h-7" />
++            <Skeleton className="mt-1.5 hidden h-3.5 w-24 md:block" />
+           </div>
+         ))}
+       </div>
+-    )
++    );
+   }
+ 
+   const stats: {
+-    label: string
+-    value: string
+-    description: string
+-    icon: typeof WalletCards
+-    tone: IconBadgeTone
++    label: string;
++    value: string;
++    description: string;
++    icon: typeof WalletCards;
++    tone: IconBadgeTone;
+   }[] = [
+     {
+-      label: t('Current Balance'),
++      label: t("Current Balance"),
+       value: formatQuota(props.user?.quota ?? 0),
+-      description: t('Remaining quota'),
++      description: t("Remaining quota"),
+       icon: WalletCards,
+-      tone: 'success',
++      tone: "premium",
+     },
+     {
+-      label: t('Total Usage'),
++      label: t("Total Usage"),
+       value: formatQuota(props.user?.used_quota ?? 0),
+-      description: t('Total consumed quota'),
++      description: t("Total consumed quota"),
+       icon: BarChart3,
+-      tone: 'info',
++      tone: "info",
+     },
+     {
+-      label: t('API Requests'),
++      label: t("API Requests"),
+       value: (props.user?.request_count ?? 0).toLocaleString(),
+-      description: t('Total requests made'),
++      description: t("Total requests made"),
+       icon: Activity,
+-      tone: 'chart-4',
++      tone: "chart-4",
+     },
+-  ]
++  ];
+ 
+   return (
+-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
++    <div className="grid grid-cols-3 divide-x rounded-lg border">
+       {stats.map((item) => (
+-        <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
+-          <div className='flex items-center gap-1.5 sm:gap-2.5'>
+-            <IconBadge tone={item.tone} size='stat'>
++        <div key={item.label} className="min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4">
++          <div className="flex items-center gap-1.5 sm:gap-2.5">
++            <IconBadge tone={item.tone} size="stat">
+               <item.icon />
+             </IconBadge>
+-            <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>
++            <div className="text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs">
+               {item.label}
+             </div>
+           </div>
+ 
+-          <div className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'>
++          <div className="text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl">
+             {item.value}
+           </div>
+-          <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
++          <div className="text-muted-foreground/60 mt-1 hidden text-xs md:block">
+             {item.description}
+           </div>
+         </div>
+       ))}
+     </div>
+-  )
++  );
+ }
+diff --git a/web/default/src/features/wallet/hooks/use-topup-info.ts b/web/default/src/features/wallet/hooks/use-topup-info.ts
+index 8fb4b1a..593aa05 100644
+--- a/web/default/src/features/wallet/hooks/use-topup-info.ts
++++ b/web/default/src/features/wallet/hooks/use-topup-info.ts
+@@ -16,21 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { useState, useEffect, useCallback } from 'react'
++import { useState, useEffect, useCallback } from "react";
+ 
+-import { getTopupInfo } from '../api'
++import { getTopupInfo } from "../api";
+ import {
+   generatePresetAmounts,
+   mergePresetAmounts,
+   getMinTopupAmount,
+-} from '../lib'
++} from "../lib";
+ import type {
+   TopupInfo,
+   PresetAmount,
+   CreemProduct,
+   PaymentMethod,
+   WaffoPayMethod,
+-} from '../types'
++} from "../types";
+ 
+ // ============================================================================
+ // Topup Info Hook
+@@ -38,199 +38,204 @@ import type {
+ 
+ function parseJsonArray(data: unknown): unknown[] {
+   if (Array.isArray(data)) {
+-    return data
++    return data;
+   }
+ 
+-  if (typeof data === 'string') {
++  if (typeof data === "string") {
+     try {
+-      const parsed = JSON.parse(data)
+-      return Array.isArray(parsed) ? parsed : []
++      const parsed = JSON.parse(data);
++      return Array.isArray(parsed) ? parsed : [];
+     } catch {
+-      return []
++      return [];
+     }
+   }
+ 
+-  return []
++  return [];
+ }
+ 
+ function parsePaymentMethods(
+   data: unknown,
+-  stripeMinTopup: number
++  stripeMinTopup: number,
+ ): PaymentMethod[] {
+   return parseJsonArray(data)
+     .filter(
+       (item): item is Record<string, unknown> =>
+-        !!item && typeof item === 'object'
++        !!item && typeof item === "object",
+     )
+     .map((item) => {
+-      const rawMinTopup = Number(item.min_topup)
+-      const normalizedMinTopup = Number.isFinite(rawMinTopup) ? rawMinTopup : 0
+-      const type = typeof item.type === 'string' ? item.type : ''
++      const rawMinTopup = Number(item.min_topup);
++      const normalizedMinTopup = Number.isFinite(rawMinTopup) ? rawMinTopup : 0;
++      const type = typeof item.type === "string" ? item.type : "";
+ 
+       return {
+-        name: typeof item.name === 'string' ? item.name : '',
++        name: typeof item.name === "string" ? item.name : "",
+         type,
+-        color: typeof item.color === 'string' ? item.color : undefined,
+-        icon: typeof item.icon === 'string' ? item.icon : undefined,
++        color: typeof item.color === "string" ? item.color : undefined,
++        icon: typeof item.icon === "string" ? item.icon : undefined,
+         min_topup:
+-          type === 'stripe' && normalizedMinTopup <= 0
++          type === "stripe" && normalizedMinTopup <= 0
+             ? stripeMinTopup
+             : normalizedMinTopup,
+-      }
++      };
+     })
+-    .filter((item) => item.name && item.type && item.type !== 'waffo')
++    .filter((item) => item.name && item.type && item.type !== "waffo");
+ }
+ 
+ function parseWaffoPayMethods(data: unknown): WaffoPayMethod[] {
+   return parseJsonArray(data)
+     .filter(
+       (item): item is Record<string, unknown> =>
+-        !!item && typeof item === 'object'
++        !!item && typeof item === "object",
+     )
+     .map((item) => ({
+-      name: typeof item.name === 'string' ? item.name : '',
+-      icon: typeof item.icon === 'string' ? item.icon : undefined,
++      name: typeof item.name === "string" ? item.name : "",
++      icon: typeof item.icon === "string" ? item.icon : undefined,
+       payMethodType:
+-        typeof item.payMethodType === 'string' ? item.payMethodType : undefined,
++        typeof item.payMethodType === "string" ? item.payMethodType : undefined,
+       payMethodName:
+-        typeof item.payMethodName === 'string' ? item.payMethodName : undefined,
++        typeof item.payMethodName === "string" ? item.payMethodName : undefined,
+     }))
+-    .filter((item) => item.name)
++    .filter((item) => item.name);
+ }
+ 
+ function parseCreemProducts(data: unknown): CreemProduct[] {
+   return parseJsonArray(data)
+     .filter(
+       (item): item is Record<string, unknown> =>
+-        !!item && typeof item === 'object'
++        !!item && typeof item === "object",
+     )
+     .map((item) => {
+-      const currency: CreemProduct['currency'] =
+-        item.currency === 'EUR' ? 'EUR' : 'USD'
++      const currency: CreemProduct["currency"] =
++        item.currency === "EUR" ? "EUR" : "USD";
+ 
+       return {
+-        name: typeof item.name === 'string' ? item.name : '',
+-        productId: typeof item.productId === 'string' ? item.productId : '',
++        name: typeof item.name === "string" ? item.name : "",
++        productId: typeof item.productId === "string" ? item.productId : "",
+         price: Number(item.price) || 0,
+         quota: Number(item.quota) || 0,
+         currency,
+-      }
++      };
+     })
+-    .filter((item) => item.name && item.productId)
++    .filter((item) => item.name && item.productId);
+ }
+ 
+ function parseAmountOptions(data: unknown): number[] {
+   return parseJsonArray(data)
+     .map((item) => Number(item))
+-    .filter((item) => Number.isFinite(item) && item > 0)
++    .filter((item) => Number.isFinite(item) && item > 0);
+ }
+ 
+ function parseDiscountMap(data: unknown): Record<number, number> {
+   if (!data) {
+-    return {}
++    return {};
+   }
+ 
+-  let parsedData = data
++  let parsedData = data;
+ 
+-  if (typeof data === 'string') {
++  if (typeof data === "string") {
+     try {
+-      parsedData = JSON.parse(data)
++      parsedData = JSON.parse(data);
+     } catch {
+-      return {}
++      return {};
+     }
+   }
+ 
+   if (
+     !parsedData ||
+-    typeof parsedData !== 'object' ||
++    typeof parsedData !== "object" ||
+     Array.isArray(parsedData)
+   ) {
+-    return {}
++    return {};
+   }
+ 
+   return Object.entries(parsedData).reduce<Record<number, number>>(
+     (result, [key, value]) => {
+-      const numericKey = Number(key)
+-      const numericValue = Number(value)
++      const numericKey = Number(key);
++      const numericValue = Number(value);
+ 
+       if (Number.isFinite(numericKey) && Number.isFinite(numericValue)) {
+-        result[numericKey] = numericValue
++        result[numericKey] = numericValue;
+       }
+ 
+-      return result
++      return result;
+     },
+-    {}
+-  )
++    {},
++  );
+ }
+ 
+ export function useTopupInfo() {
+-  const [topupInfo, setTopupInfo] = useState<TopupInfo | null>(null)
+-  const [presetAmounts, setPresetAmounts] = useState<PresetAmount[]>([])
+-  const [loading, setLoading] = useState(true)
++  const [topupInfo, setTopupInfo] = useState<TopupInfo | null>(null);
++  const [presetAmounts, setPresetAmounts] = useState<PresetAmount[]>([]);
++  const [loading, setLoading] = useState(true);
+ 
+   const fetchTopupInfo = useCallback(async () => {
+     try {
+-      setLoading(true)
++      setLoading(true);
+ 
+-      const response = await getTopupInfo()
++      const response = await getTopupInfo();
+ 
+       if (!response.success || !response.data) {
+         // eslint-disable-next-line no-console
+-        console.error('Failed to fetch topup info:', response.message)
+-        return
++        console.error("Failed to fetch topup info:", response.message);
++        return;
+       }
+ 
+       const processedData: TopupInfo = {
+         ...response.data,
+         pay_methods: parsePaymentMethods(
+           response.data.pay_methods,
+-          response.data.stripe_min_topup
++          response.data.stripe_min_topup,
+         ),
+         amount_options: parseAmountOptions(response.data.amount_options),
+         discount: parseDiscountMap(response.data.discount),
+         creem_products: parseCreemProducts(response.data.creem_products),
+         waffo_pay_methods: parseWaffoPayMethods(
+-          response.data.waffo_pay_methods
++          response.data.waffo_pay_methods,
+         ),
++      };
++      if (processedData.recharge_promotion?.amount_options?.length) {
++        processedData.amount_options = parseAmountOptions(
++          processedData.recharge_promotion.amount_options,
++        );
+       }
+ 
+-      setTopupInfo(processedData)
++      setTopupInfo(processedData);
+ 
+       if (processedData.amount_options.length > 0) {
+         const customPresets = mergePresetAmounts(
+           processedData.amount_options,
+-          processedData.discount || {}
+-        )
+-        setPresetAmounts(customPresets)
++          processedData.discount || {},
++        );
++        setPresetAmounts(customPresets);
+       } else {
+-        const minTopup = getMinTopupAmount(processedData)
+-        const defaultPresets = generatePresetAmounts(minTopup)
+-        setPresetAmounts(defaultPresets)
++        const minTopup = getMinTopupAmount(processedData);
++        const defaultPresets = generatePresetAmounts(minTopup);
++        setPresetAmounts(defaultPresets);
+       }
+     } catch (err) {
+       // eslint-disable-next-line no-console
+-      console.error('Failed to fetch topup info:', err)
++      console.error("Failed to fetch topup info:", err);
+     } finally {
+-      setLoading(false)
++      setLoading(false);
+     }
+-  }, [])
++  }, []);
+ 
+   useEffect(() => {
+-    let cancelled = false
++    let cancelled = false;
+ 
+     queueMicrotask(() => {
+-      if (!cancelled) void fetchTopupInfo()
+-    })
++      if (!cancelled) void fetchTopupInfo();
++    });
+ 
+     return () => {
+-      cancelled = true
+-    }
+-  }, [fetchTopupInfo])
++      cancelled = true;
++    };
++  }, [fetchTopupInfo]);
+ 
+   return {
+     topupInfo,
+     presetAmounts,
+     loading,
+     refetch: fetchTopupInfo,
+-  }
++  };
+ }
+diff --git a/web/default/src/features/wallet/index.tsx b/web/default/src/features/wallet/index.tsx
+index 048e033..fd50519 100644
+--- a/web/default/src/features/wallet/index.tsx
++++ b/web/default/src/features/wallet/index.tsx
+@@ -16,23 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { useState, useEffect, useCallback, useMemo } from 'react'
+-import { useTranslation } from 'react-i18next'
+-
+-import { SectionPageLayout } from '@/components/layout'
+-import { useStatus } from '@/hooks/use-status'
+-import { useSystemConfig } from '@/hooks/use-system-config'
+-import { getSelf } from '@/lib/api'
+-
+-import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
+-import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
+-import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
+-import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
+-import { TransferDialog } from './components/dialogs/transfer-dialog'
+-import { RechargeFormCard } from './components/recharge-form-card'
+-import { SubscriptionPlansCard } from './components/subscription-plans-card'
+-import { WalletStatsCard } from './components/wallet-stats-card'
+-import { DEFAULT_DISCOUNT_RATE } from './constants'
++import { useState, useEffect, useCallback, useMemo } from "react";
++import { useTranslation } from "react-i18next";
++
++import { SectionPageLayout } from "@/components/layout";
++import { useStatus } from "@/hooks/use-status";
++import { useSystemConfig } from "@/hooks/use-system-config";
++import { getSelf } from "@/lib/api";
++
++import { AffiliateRewardsCard } from "./components/affiliate-rewards-card";
++import { BillingHistoryDialog } from "./components/dialogs/billing-history-dialog";
++import { CreemConfirmDialog } from "./components/dialogs/creem-confirm-dialog";
++import { PaymentConfirmDialog } from "./components/dialogs/payment-confirm-dialog";
++import { TransferDialog } from "./components/dialogs/transfer-dialog";
++import { RechargeFormCard } from "./components/recharge-form-card";
++import { SubscriptionPlansCard } from "./components/subscription-plans-card";
++import { WalletStatsCard } from "./components/wallet-stats-card";
++import { DEFAULT_DISCOUNT_RATE } from "./constants";
+ import {
+   useTopupInfo,
+   usePayment,
+@@ -41,240 +41,259 @@ import {
+   useCreemPayment,
+   useWaffoPayment,
+   useWaffoPancakePayment,
+-} from './hooks'
++} from "./hooks";
+ import {
+   getDefaultPaymentType,
+   getMinTopupAmount,
+   isWaffoPancakePayment,
+-} from './lib'
++} from "./lib";
+ import type {
+   UserWalletData,
+   PaymentMethod,
+   PresetAmount,
+   CreemProduct,
+-} from './types'
++} from "./types";
+ 
+ interface WalletProps {
+-  initialShowHistory?: boolean
++  initialShowHistory?: boolean;
+ }
+ 
+ export function Wallet(props: WalletProps) {
+-  const { t } = useTranslation()
+-  const [user, setUser] = useState<UserWalletData | null>(null)
+-  const [userLoading, setUserLoading] = useState(true)
+-  const [topupAmount, setTopupAmount] = useState(0)
+-  const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
++  const { t } = useTranslation();
++  const [user, setUser] = useState<UserWalletData | null>(null);
++  const [userLoading, setUserLoading] = useState(true);
++  const [topupAmount, setTopupAmount] = useState(0);
++  const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
+   const [selectedPaymentMethod, setSelectedPaymentMethod] =
+-    useState<PaymentMethod>()
+-  const [paymentLoading, setPaymentLoading] = useState<string | null>(null)
+-  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
+-  const [transferDialogOpen, setTransferDialogOpen] = useState(false)
+-  const [billingDialogOpen, setBillingDialogOpen] = useState(false)
+-  const [redemptionCode, setRedemptionCode] = useState('')
+-  const [creemDialogOpen, setCreemDialogOpen] = useState(false)
++    useState<PaymentMethod>();
++  const [paymentLoading, setPaymentLoading] = useState<string | null>(null);
++  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
++  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
++  const [billingDialogOpen, setBillingDialogOpen] = useState(false);
++  const [redemptionCode, setRedemptionCode] = useState("");
++  const [creemDialogOpen, setCreemDialogOpen] = useState(false);
+   const [selectedCreemProduct, setSelectedCreemProduct] =
+-    useState<CreemProduct | null>(null)
+-  const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
++    useState<CreemProduct | null>(null);
++  const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true);
+ 
+-  const { status } = useStatus()
+-  const { currency } = useSystemConfig()
+-  const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
++  const { status } = useStatus();
++  const { currency } = useSystemConfig();
++  const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo();
+ 
+   // Calculate effective exchange rate - when display type is USD, use rate of 1
+   const effectiveUsdExchangeRate = useMemo(() => {
+-    return currency?.quotaDisplayType === 'USD'
++    return currency?.quotaDisplayType === "USD"
+       ? 1
+-      : currency?.usdExchangeRate || 1
+-  }, [currency?.quotaDisplayType, currency?.usdExchangeRate])
++      : currency?.usdExchangeRate || 1;
++  }, [currency?.quotaDisplayType, currency?.usdExchangeRate]);
+   const {
+     amount: paymentAmount,
+     calculating,
+     processing,
+     calculatePaymentAmount,
+     processPayment,
+-  } = usePayment()
++  } = usePayment();
+   const {
+     affiliateLink,
+     loading: affiliateLoading,
+     transferQuota,
+     transferring,
+-  } = useAffiliate()
+-  const { redeeming, redeemCode } = useRedemption()
+-  const { processing: creemProcessing, processCreemPayment } = useCreemPayment()
+-  const { processWaffoPayment } = useWaffoPayment()
++  } = useAffiliate();
++  const { redeeming, redeemCode } = useRedemption();
++  const { processing: creemProcessing, processCreemPayment } =
++    useCreemPayment();
++  const { processWaffoPayment } = useWaffoPayment();
+   const { processing: pancakeProcessing, processWaffoPancakePayment } =
+-    useWaffoPancakePayment()
++    useWaffoPancakePayment();
+ 
+   // Fetch and refresh user data
+   const fetchUser = useCallback(async () => {
+     try {
+-      setUserLoading(true)
+-      const response = await getSelf()
++      setUserLoading(true);
++      const response = await getSelf();
+       if (response.success && response.data) {
+-        setUser(response.data as UserWalletData)
++        setUser(response.data as UserWalletData);
+       }
+     } catch (error) {
+       // eslint-disable-next-line no-console
+-      console.error('Failed to fetch user data:', error)
++      console.error("Failed to fetch user data:", error);
+     } finally {
+-      setUserLoading(false)
++      setUserLoading(false);
+     }
+-  }, [])
++  }, []);
+ 
+   useEffect(() => {
+-    fetchUser()
+-  }, [fetchUser])
++    fetchUser();
++  }, [fetchUser]);
+ 
+   useEffect(() => {
+     if (props.initialShowHistory) {
+-      setBillingDialogOpen(true)
+-      window.history.replaceState({}, '', window.location.pathname)
++      setBillingDialogOpen(true);
++      window.history.replaceState({}, "", window.location.pathname);
+     }
+-  }, [props.initialShowHistory])
++  }, [props.initialShowHistory]);
+ 
+   // Initialize topup amount when topup info is loaded
+   useEffect(() => {
+     if (topupInfo && topupAmount === 0) {
+-      const minTopup = getMinTopupAmount(topupInfo)
+-      setTopupAmount(minTopup)
++      const initialAmount =
++        topupInfo.recharge_promotion?.amount_options?.includes(128)
++          ? 128
++          : getMinTopupAmount(topupInfo);
++      setTopupAmount(initialAmount);
++      setSelectedPreset(initialAmount);
+ 
+       // Calculate initial payment amount with default payment type
+-      const defaultPaymentType = getDefaultPaymentType(topupInfo)
+-      calculatePaymentAmount(minTopup, defaultPaymentType)
++      const defaultPaymentType = getDefaultPaymentType(topupInfo);
++      calculatePaymentAmount(initialAmount, defaultPaymentType);
+     }
+-  }, [topupInfo, topupAmount, calculatePaymentAmount])
++  }, [topupInfo, topupAmount, calculatePaymentAmount]);
+ 
+   // Get current payment type (selected or default)
+   const getCurrentPaymentType = useCallback(() => {
+-    return selectedPaymentMethod?.type || getDefaultPaymentType(topupInfo)
+-  }, [selectedPaymentMethod, topupInfo])
++    return selectedPaymentMethod?.type || getDefaultPaymentType(topupInfo);
++  }, [selectedPaymentMethod, topupInfo]);
+ 
+   // Handle preset selection
+   const handleSelectPreset = (preset: PresetAmount) => {
+-    setTopupAmount(preset.value)
+-    setSelectedPreset(preset.value)
+-    calculatePaymentAmount(preset.value, getCurrentPaymentType())
+-  }
++    setTopupAmount(preset.value);
++    setSelectedPreset(preset.value);
++    calculatePaymentAmount(preset.value, getCurrentPaymentType());
++  };
+ 
+   // Handle topup amount change
+   const handleTopupAmountChange = (amount: number) => {
+-    setTopupAmount(amount)
+-    setSelectedPreset(null)
+-    calculatePaymentAmount(amount, getCurrentPaymentType())
+-  }
++    setTopupAmount(amount);
++    setSelectedPreset(null);
++    calculatePaymentAmount(amount, getCurrentPaymentType());
++  };
+ 
+   // Handle payment method selection
+   const handlePaymentMethodSelect = async (method: PaymentMethod) => {
+-    setSelectedPaymentMethod(method)
+-    setPaymentLoading(method.type)
++    setSelectedPaymentMethod(method);
++    setPaymentLoading(method.type);
+ 
+     try {
+       // Validate minimum topup
+-      const minTopup = getMinTopupAmount(topupInfo)
++      const minTopup = getMinTopupAmount(topupInfo);
+       if (topupAmount < minTopup) {
+-        return
++        return;
+       }
+ 
+       // Calculate payment amount and show confirmation dialog
+-      await calculatePaymentAmount(topupAmount, method.type)
+-      setConfirmDialogOpen(true)
++      await calculatePaymentAmount(topupAmount, method.type);
++      setConfirmDialogOpen(true);
+     } finally {
+-      setPaymentLoading(null)
++      setPaymentLoading(null);
+     }
+-  }
++  };
+ 
+   // Handle payment confirmation
+   const handlePaymentConfirm = async () => {
+-    if (!selectedPaymentMethod) return
++    if (!selectedPaymentMethod) return;
+ 
+-    const isPancake = isWaffoPancakePayment(selectedPaymentMethod.type)
++    const isPancake = isWaffoPancakePayment(selectedPaymentMethod.type);
+     const success = isPancake
+       ? await processWaffoPancakePayment(topupAmount)
+-      : await processPayment(topupAmount, selectedPaymentMethod.type)
++      : await processPayment(topupAmount, selectedPaymentMethod.type);
+ 
+     if (success) {
+-      setConfirmDialogOpen(false)
+-      await fetchUser()
++      setConfirmDialogOpen(false);
++      await fetchUser();
+     }
+-  }
++  };
+ 
+   // Handle redemption
+   const handleRedeem = async () => {
+-    if (!redemptionCode) return
++    if (!redemptionCode) return;
+ 
+-    const success = await redeemCode(redemptionCode)
++    const success = await redeemCode(redemptionCode);
+     if (success) {
+-      setRedemptionCode('')
+-      await fetchUser()
++      setRedemptionCode("");
++      await fetchUser();
+     }
+-  }
++  };
+ 
+   // Handle transfer
+   const handleTransfer = async (amount: number) => {
+-    const success = await transferQuota(amount)
++    const success = await transferQuota(amount);
+     if (success) {
+-      await fetchUser()
++      await fetchUser();
+     }
+-    return success
+-  }
++    return success;
++  };
+ 
+   // Handle Creem product selection
+   const handleCreemProductSelect = (product: CreemProduct) => {
+-    setSelectedCreemProduct(product)
+-    setCreemDialogOpen(true)
+-  }
++    setSelectedCreemProduct(product);
++    setCreemDialogOpen(true);
++  };
+ 
+   // Handle Creem payment confirmation
+   const handleCreemConfirm = async () => {
+-    if (!selectedCreemProduct) return
++    if (!selectedCreemProduct) return;
+ 
+-    const success = await processCreemPayment(selectedCreemProduct.productId)
++    const success = await processCreemPayment(selectedCreemProduct.productId);
+     if (success) {
+-      setCreemDialogOpen(false)
+-      setSelectedCreemProduct(null)
+-      await fetchUser()
++      setCreemDialogOpen(false);
++      setSelectedCreemProduct(null);
++      await fetchUser();
+     }
+-  }
++  };
+ 
+   const handleWaffoMethodSelect = async (_method: unknown, index: number) => {
+-    const loadingKey = `waffo-${index}`
+-    setPaymentLoading(loadingKey)
++    const loadingKey = `waffo-${index}`;
++    setPaymentLoading(loadingKey);
+ 
+     try {
+-      await processWaffoPayment(topupAmount, index)
++      await processWaffoPayment(topupAmount, index);
+     } finally {
+-      setPaymentLoading(null)
++      setPaymentLoading(null);
+     }
+-  }
++  };
+ 
+   // Get discount rate for current topup amount
+   const getDiscountRate = useCallback(() => {
+-    return topupInfo?.discount?.[topupAmount] || DEFAULT_DISCOUNT_RATE
+-  }, [topupInfo, topupAmount])
++    return topupInfo?.discount?.[topupAmount] || DEFAULT_DISCOUNT_RATE;
++  }, [topupInfo, topupAmount]);
++
++  const rechargeBonus = useMemo(() => {
++    const eligible =
++      topupInfo?.recharge_promotion?.new_user_six_eligible !== false;
++    const rates: Record<number, number> = {
++      30: 0.05,
++      68: 0.08,
++      128: 0.12,
++      328: 0.18,
++      648: 0.25,
++    };
++    if (topupAmount === 6 && eligible) return 2;
++    return topupAmount * (rates[topupAmount] || 0);
++  }, [topupAmount, topupInfo?.recharge_promotion?.new_user_six_eligible]);
+ 
+   const handleSubscriptionAvailabilityChange = useCallback(
+     (available: boolean) => {
+-      setShowSubscriptionPanel(available)
++      setShowSubscriptionPanel(available);
+     },
+-    []
+-  )
++    [],
++  );
+ 
+   return (
+     <>
+       <SectionPageLayout>
+-        <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
++        <SectionPageLayout.Title>{t("Wallet")}</SectionPageLayout.Title>
+         <SectionPageLayout.Content>
+-          <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
++          <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5">
+             <WalletStatsCard user={user} loading={userLoading} />
+ 
+             <div
+               className={
+                 showSubscriptionPanel
+-                  ? 'grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:items-start'
+-                  : 'grid gap-4'
++                  ? "grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:items-start"
++                  : "grid gap-4"
+               }
+             >
+-              <div id='wallet-add-funds' className='scroll-mt-4'>
++              <div id="wallet-add-funds" className="scroll-mt-4">
+                 <RechargeFormCard
+                   topupInfo={topupInfo}
+                   presetAmounts={presetAmounts}
+@@ -340,6 +359,8 @@ export function Wallet(props: WalletProps) {
+         processing={processing || pancakeProcessing}
+         discountRate={getDiscountRate()}
+         usdExchangeRate={effectiveUsdExchangeRate}
++        creditedAmount={topupAmount + rechargeBonus}
++        bonusAmount={rechargeBonus}
+       />
+ 
+       <TransferDialog
+@@ -363,5 +384,5 @@ export function Wallet(props: WalletProps) {
+         processing={creemProcessing}
+       />
+     </>
+-  )
++  );
+ }
+diff --git a/web/default/src/features/wallet/types.ts b/web/default/src/features/wallet/types.ts
+index 5da08f0..9f9fdb9 100644
+--- a/web/default/src/features/wallet/types.ts
++++ b/web/default/src/features/wallet/types.ts
+@@ -24,56 +24,56 @@ For commercial licensing, please contact support@quantumnous.com
+  * Generic API response
+  */
+ export interface ApiResponse<T = unknown> {
+-  success?: boolean
+-  message?: string
+-  data?: T
++  success?: boolean;
++  message?: string;
++  data?: T;
+ }
+ 
+ /**
+  * Standard API response types
+  */
+-export type TopupInfoResponse = ApiResponse<TopupInfo>
+-export type RedemptionResponse = ApiResponse<number>
+-export type AmountResponse = ApiResponse<string>
++export type TopupInfoResponse = ApiResponse<TopupInfo>;
++export type RedemptionResponse = ApiResponse<number>;
++export type AmountResponse = ApiResponse<string>;
+ export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
+-  url?: string
+-}
+-export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
+-export type AffiliateCodeResponse = ApiResponse<string>
+-export type AffiliateTransferResponse = ApiResponse
+-export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
++  url?: string;
++};
++export type StripePaymentResponse = ApiResponse<{ pay_link: string }>;
++export type AffiliateCodeResponse = ApiResponse<string>;
++export type AffiliateTransferResponse = ApiResponse;
++export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>;
+ export type WaffoPaymentResponse = ApiResponse<
+   { payment_url?: string } | string
+->
++>;
+ export type WaffoPancakePaymentResponse = ApiResponse<
+   | {
+-      checkout_url?: string
+-      session_id?: string
+-      expires_at?: number | string
+-      order_id?: string
++      checkout_url?: string;
++      session_id?: string;
++      expires_at?: number | string;
++      order_id?: string;
+       // Self-service session token + expiry — surfaced by the backend so
+       // future flows (refund / cancel from new-api's own UI) can use them
+       // without re-issuing checkout. Not consumed by the current handler.
+-      token?: string
+-      token_expires_at?: number | string
++      token?: string;
++      token_expires_at?: number | string;
+     }
+   | string
+->
++>;
+ 
+ /**
+  * Creem product configuration
+  */
+ export interface CreemProduct {
+   /** Product display name */
+-  name: string
++  name: string;
+   /** Creem product ID */
+-  productId: string
++  productId: string;
+   /** Product price */
+-  price: number
++  price: number;
+   /** Quota amount to credit */
+-  quota: number
++  quota: number;
+   /** Currency (USD or EUR) */
+-  currency: 'USD' | 'EUR'
++  currency: "USD" | "EUR";
+ }
+ 
+ /**
+@@ -81,9 +81,9 @@ export interface CreemProduct {
+  */
+ export interface CreemPaymentRequest {
+   /** Creem product ID */
+-  product_id: string
++  product_id: string;
+   /** Payment method identifier */
+-  payment_method: 'creem'
++  payment_method: "creem";
+ }
+ 
+ /**
+@@ -91,15 +91,15 @@ export interface CreemPaymentRequest {
+  */
+ export interface PaymentMethod {
+   /** Display name of payment method */
+-  name: string
++  name: string;
+   /** Payment method type identifier */
+-  type: string
++  type: string;
+   /** Legacy optional color for UI display */
+-  color?: string
++  color?: string;
+   /** Minimum topup amount for this payment method */
+-  min_topup?: number
++  min_topup?: number;
+   /** Optional react-icons component name or safe icon URL */
+-  icon?: string
++  icon?: string;
+ }
+ 
+ /**
+@@ -107,13 +107,13 @@ export interface PaymentMethod {
+  */
+ export interface WaffoPayMethod {
+   /** Display name of payment method */
+-  name: string
++  name: string;
+   /** Optional icon path */
+-  icon?: string
++  icon?: string;
+   /** Waffo pay method type */
+-  payMethodType?: string
++  payMethodType?: string;
+   /** Waffo pay method name */
+-  payMethodName?: string
++  payMethodName?: string;
+ }
+ 
+ /**
+@@ -121,41 +121,46 @@ export interface WaffoPayMethod {
+  */
+ export interface TopupInfo {
+   /** Whether online topup is enabled */
+-  enable_online_topup: boolean
++  enable_online_topup: boolean;
+   /** Whether Stripe topup is enabled */
+-  enable_stripe_topup: boolean
++  enable_stripe_topup: boolean;
+   /** Available payment methods */
+-  pay_methods: PaymentMethod[]
++  pay_methods: PaymentMethod[];
+   /** Minimum topup amount for online topup */
+-  min_topup: number
++  min_topup: number;
+   /** Minimum topup amount for Stripe */
+-  stripe_min_topup: number
++  stripe_min_topup: number;
+   /** Preset amount options */
+-  amount_options: number[]
++  amount_options: number[];
+   /** Discount rates by amount */
+-  discount: Record<number, number>
++  discount: Record<number, number>;
++  /** Mad API recharge promotion state */
++  recharge_promotion?: {
++    new_user_six_eligible: boolean;
++    amount_options: number[];
++  };
+   /** Optional topup link for purchasing codes */
+-  topup_link?: string
++  topup_link?: string;
+   /** Whether Creem topup is enabled */
+-  enable_creem_topup?: boolean
++  enable_creem_topup?: boolean;
+   /** Available Creem products */
+-  creem_products?: CreemProduct[]
++  creem_products?: CreemProduct[];
+   /** Whether Waffo topup is enabled */
+-  enable_waffo_topup?: boolean
++  enable_waffo_topup?: boolean;
+   /** Available Waffo payment methods */
+-  waffo_pay_methods?: WaffoPayMethod[]
++  waffo_pay_methods?: WaffoPayMethod[];
+   /** Minimum topup amount for Waffo */
+-  waffo_min_topup?: number
++  waffo_min_topup?: number;
+   /** Whether Waffo Pancake topup is enabled */
+-  enable_waffo_pancake_topup?: boolean
++  enable_waffo_pancake_topup?: boolean;
+   /** Minimum topup amount for Waffo Pancake */
+-  waffo_pancake_min_topup?: number
++  waffo_pancake_min_topup?: number;
+   /** Whether redemption code usage is enabled */
+-  enable_redemption?: boolean
++  enable_redemption?: boolean;
+   /** Whether compliance confirmation has been completed */
+-  payment_compliance_confirmed?: boolean
++  payment_compliance_confirmed?: boolean;
+   /** Current compliance terms version */
+-  payment_compliance_terms_version?: string
++  payment_compliance_terms_version?: string;
+ }
+ 
+ /**
+@@ -163,9 +168,9 @@ export interface TopupInfo {
+  */
+ export interface PresetAmount {
+   /** Preset amount value */
+-  value: number
++  value: number;
+   /** Optional discount rate (0-1) */
+-  discount?: number
++  discount?: number;
+ }
+ 
+ /**
+@@ -173,7 +178,7 @@ export interface PresetAmount {
+  */
+ export interface RedemptionRequest {
+   /** Redemption code key */
+-  key: string
++  key: string;
+ }
+ 
+ /**
+@@ -181,9 +186,9 @@ export interface RedemptionRequest {
+  */
+ export interface PaymentRequest {
+   /** Topup amount */
+-  amount: number
++  amount: number;
+   /** Payment method identifier */
+-  payment_method: string
++  payment_method: string;
+ }
+ 
+ /**
+@@ -191,9 +196,9 @@ export interface PaymentRequest {
+  */
+ export interface WaffoPaymentRequest {
+   /** Topup amount */
+-  amount: number
++  amount: number;
+   /** Optional server-side Waffo payment method index */
+-  pay_method_index?: number
++  pay_method_index?: number;
+ }
+ 
+ /**
+@@ -201,7 +206,7 @@ export interface WaffoPaymentRequest {
+  */
+ export interface WaffoPancakePaymentRequest {
+   /** Topup amount */
+-  amount: number
++  amount: number;
+ }
+ 
+ /**
+@@ -209,7 +214,7 @@ export interface WaffoPancakePaymentRequest {
+  */
+ export interface AmountRequest {
+   /** Topup amount to calculate */
+-  amount: number
++  amount: number;
+ }
+ 
+ /**
+@@ -217,7 +222,7 @@ export interface AmountRequest {
+  */
+ export interface AffiliateTransferRequest {
+   /** Quota amount to transfer */
+-  quota: number
++  quota: number;
+ }
+ 
+ /**
+@@ -225,65 +230,65 @@ export interface AffiliateTransferRequest {
+  */
+ export interface UserWalletData {
+   /** User ID */
+-  id: number
++  id: number;
+   /** Username */
+-  username: string
++  username: string;
+   /** Current quota balance */
+-  quota: number
++  quota: number;
+   /** Total used quota */
+-  used_quota: number
++  used_quota: number;
+   /** Total request count */
+-  request_count: number
++  request_count: number;
+   /** Affiliate quota (pending rewards) */
+-  aff_quota: number
++  aff_quota: number;
+   /** Total affiliate quota earned (historical) */
+-  aff_history_quota: number
++  aff_history_quota: number;
+   /** Number of successful affiliate invites */
+-  aff_count: number
++  aff_count: number;
+   /** User group */
+-  group: string
++  group: string;
+ }
+ 
+ /**
+  * Topup record status
+  */
+-export type TopupStatus = 'success' | 'pending' | 'expired'
++export type TopupStatus = "success" | "pending" | "expired";
+ 
+ /**
+  * Topup billing record
+  */
+ export interface TopupRecord {
+   /** Record ID */
+-  id: number
++  id: number;
+   /** User ID */
+-  user_id: number
++  user_id: number;
+   /** Topup amount (quota) */
+-  amount: number
++  amount: number;
+   /** Payment amount (actual money paid) */
+-  money: number
++  money: number;
+   /** Trade/order number */
+-  trade_no: string
++  trade_no: string;
+   /** Payment method type */
+-  payment_method: string
++  payment_method: string;
+   /** Creation timestamp */
+-  create_time: number
++  create_time: number;
+   /** Completion timestamp */
+-  complete_time?: number
++  complete_time?: number;
+   /** Payment status */
+-  status: TopupStatus
++  status: TopupStatus;
+ }
+ 
+ /**
+  * Billing history response
+  */
+ export interface BillingHistoryResponse {
+-  items: TopupRecord[]
+-  total: number
++  items: TopupRecord[];
++  total: number;
+ }
+ 
+ /**
+  * Complete order request (admin only)
+  */
+ export interface CompleteOrderRequest {
+-  trade_no: string
++  trade_no: string;
+ }

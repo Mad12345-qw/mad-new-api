@@ -15,11 +15,12 @@ flock -n 9 || exit 0
 
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
+cache_bust=$(date +%s)
 
 curl -fL --retry 3 --connect-timeout 15 --max-time 900 \
-  -o "$work_dir/mad-new-api.tar.gz" "$RELEASE_BASE/mad-new-api.tar.gz"
+  -o "$work_dir/mad-new-api.tar.gz" "$RELEASE_BASE/mad-new-api.tar.gz?cb=$cache_bust"
 curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
-  -o "$work_dir/mad-new-api.tar.gz.sha256" "$RELEASE_BASE/mad-new-api.tar.gz.sha256"
+  -o "$work_dir/mad-new-api.tar.gz.sha256" "$RELEASE_BASE/mad-new-api.tar.gz.sha256?cb=$cache_bust"
 
 cd "$work_dir"
 sha256sum -c mad-new-api.tar.gz.sha256

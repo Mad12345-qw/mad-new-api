@@ -1,0 +1,16 @@
+diff --git a/web/default/src/hooks/use-top-nav-links.ts b/web/default/src/hooks/use-top-nav-links.ts
+index 5a5baa2d..3ba1d5cb 100644
+--- a/web/default/src/hooks/use-top-nav-links.ts
++++ b/web/default/src/hooks/use-top-nav-links.ts
+@@ -100,5 +100,11 @@ export function useTopNavLinks(): TopNavLink[] {
+     links.push({ title: t('About'), href: '/about' })
+   }
+ 
++  links.push({
++    title: 'AdForge（广告腹肌）',
++    href: 'https://mad.myddns.me/adforge',
++    external: true,
++  })
++
+   return links
+ }

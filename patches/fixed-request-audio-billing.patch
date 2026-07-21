@@ -1,0 +1,281 @@
+diff --git a/relay/relay_task.go b/relay/relay_task.go
+index fb384d1..e1c0854 100644
+--- a/relay/relay_task.go
++++ b/relay/relay_task.go
+@@ -137,6 +137,38 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
+ 	return nil
+ }
+ 
++func applyTaskBillingRatios(info *relaycommon.RelayInfo, modelName string) {
++	// ModelPrice is the administrator-configured fixed charge for one request.
++	// Keep request dimensions as task metadata, but never multiply that charge.
++	if info.PriceData.UsePrice || common.StringsContains(constant.TaskPricePatches, modelName) {
++		return
++	}
++
++	quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
++	quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
++	info.PriceData.Quota = quota
++	noteTaskQuotaClamp(info, clamp)
++}
++
++func applyAdjustedTaskBillingRatios(info *relaycommon.RelayInfo, adjustedRatios map[string]float64) (int, bool) {
++	if len(adjustedRatios) == 0 {
++		return info.PriceData.Quota, false
++	}
++
++	if info.PriceData.UsePrice {
++		info.PriceData.ReplaceOtherRatios(adjustedRatios)
++		return info.PriceData.Quota, true
++	}
++
++	adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios)
++	if !ok {
++		return info.PriceData.Quota, false
++	}
++	info.PriceData.ReplaceOtherRatios(adjustedRatios)
++	info.PriceData.Quota = adjustedQuota
++	return adjustedQuota, true
++}
++
+ // RelayTaskSubmit 完成 task 提交的全部流程（每次尝试调用一次）：
+ // 刷新渠道元数据 → 确定 platform/adaptor → 验证请求 →
+ // 估算计费(EstimateBilling) → 计算价格 → 预扣费（仅首次）→
+@@ -194,13 +226,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
+ 		}
+ 	}
+ 
+-	// 6. 将 OtherRatios 应用到基础额度（饱和转换，防止溢出成负数）
+-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+-		quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
+-		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
+-		info.PriceData.Quota = quota
+-		noteTaskQuotaClamp(info, clamp)
+-	}
++	// 6. 按量任务应用请求倍率；按次任务严格保留后台配置的单次价格。
++	applyTaskBillingRatios(info, modelName)
+ 
+ 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
+ 	if info.Billing == nil && !info.PriceData.FreeModel {
+@@ -243,11 +270,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
+ 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
+ 	finalQuota := info.PriceData.Quota
+ 	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
+-		if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
+-			// 基于调整后的 ratios 重新计算 quota
++		if adjustedQuota, ok := applyAdjustedTaskBillingRatios(info, adjustedRatios); ok {
+ 			finalQuota = adjustedQuota
+-			info.PriceData.ReplaceOtherRatios(adjustedRatios)
+-			info.PriceData.Quota = finalQuota
+ 		}
+ 	}
+ 
+diff --git a/relay/relay_task_billing_test.go b/relay/relay_task_billing_test.go
+new file mode 100644
+index 0000000..d0f9657
+--- /dev/null
++++ b/relay/relay_task_billing_test.go
+@@ -0,0 +1,50 @@
++package relay
++
++import (
++	"testing"
++
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/types"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestApplyTaskBillingRatiosKeepsFixedRequestPrice(t *testing.T) {
++	info := &relaycommon.RelayInfo{
++		PriceData: types.PriceData{UsePrice: true, Quota: 480000},
++	}
++	info.PriceData.AddOtherRatio("seconds", 5)
++	info.PriceData.AddOtherRatio("size", 1.666667)
++
++	applyTaskBillingRatios(info, "grok-imagine-video")
++
++	require.Equal(t, 480000, info.PriceData.Quota)
++}
++
++func TestApplyAdjustedTaskBillingRatiosKeepsFixedRequestPrice(t *testing.T) {
++	info := &relaycommon.RelayInfo{
++		PriceData: types.PriceData{UsePrice: true, Quota: 480000},
++	}
++	info.PriceData.AddOtherRatio("seconds", 5)
++
++	quota, ok := applyAdjustedTaskBillingRatios(info, map[string]float64{
++		"seconds": 10,
++		"size":    1.666667,
++	})
++
++	require.True(t, ok)
++	require.Equal(t, 480000, quota)
++	require.Equal(t, 480000, info.PriceData.Quota)
++	require.Equal(t, 10.0, info.PriceData.OtherRatios()["seconds"])
++}
++
++func TestApplyTaskBillingRatiosStillAppliesUsageBasedMultipliers(t *testing.T) {
++	info := &relaycommon.RelayInfo{
++		PriceData: types.PriceData{UsePrice: false, Quota: 100},
++	}
++	info.PriceData.AddOtherRatio("seconds", 5)
++
++	applyTaskBillingRatios(info, "usage-priced-video")
++
++	require.Equal(t, 500, info.PriceData.Quota)
++}
+diff --git a/service/quota.go b/service/quota.go
+index e5d4ec7..f19525d 100644
+--- a/service/quota.go
++++ b/service/quota.go
+@@ -39,6 +39,26 @@ type QuotaInfo struct {
+ 	GroupRatio    float64
+ }
+ 
++func buildAudioQuotaInfo(
++	inputDetails TokenDetails,
++	outputDetails TokenDetails,
++	modelName string,
++	usePrice bool,
++	modelPrice float64,
++	modelRatio float64,
++	groupRatio float64,
++) QuotaInfo {
++	return QuotaInfo{
++		InputDetails:  inputDetails,
++		OutputDetails: outputDetails,
++		ModelName:     modelName,
++		UsePrice:      usePrice,
++		ModelPrice:    modelPrice,
++		ModelRatio:    modelRatio,
++		GroupRatio:    groupRatio,
++	}
++}
++
+ func hasCustomModelRatio(modelName string, currentRatio float64) bool {
+ 	defaultRatio, exists := ratio_setting.GetDefaultModelRatioMap()[modelName]
+ 	if !exists {
+@@ -121,20 +141,21 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
+ 		actualGroupRatio = userGroupRatio
+ 	}
+ 
+-	quotaInfo := QuotaInfo{
+-		InputDetails: TokenDetails{
++	quotaInfo := buildAudioQuotaInfo(
++		TokenDetails{
+ 			TextTokens:  textInputTokens,
+ 			AudioTokens: audioInputTokens,
+ 		},
+-		OutputDetails: TokenDetails{
++		TokenDetails{
+ 			TextTokens:  textOutTokens,
+ 			AudioTokens: audioOutTokens,
+ 		},
+-		ModelName:  modelName,
+-		UsePrice:   relayInfo.UsePrice,
+-		ModelRatio: modelRatio,
+-		GroupRatio: actualGroupRatio,
+-	}
++		modelName,
++		relayInfo.UsePrice,
++		relayInfo.PriceData.ModelPrice,
++		modelRatio,
++		actualGroupRatio,
++	)
+ 
+ 	quota, clamp := calculateAudioQuota(quotaInfo)
+ 	noteQuotaClamp(relayInfo, clamp)
+@@ -185,20 +206,21 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
+ 	modelPrice := relayInfo.PriceData.ModelPrice
+ 	usePrice := relayInfo.PriceData.UsePrice
+ 
+-	quotaInfo := QuotaInfo{
+-		InputDetails: TokenDetails{
++	quotaInfo := buildAudioQuotaInfo(
++		TokenDetails{
+ 			TextTokens:  textInputTokens,
+ 			AudioTokens: audioInputTokens,
+ 		},
+-		OutputDetails: TokenDetails{
++		TokenDetails{
+ 			TextTokens:  textOutTokens,
+ 			AudioTokens: audioOutTokens,
+ 		},
+-		ModelName:  modelName,
+-		UsePrice:   usePrice,
+-		ModelRatio: modelRatio,
+-		GroupRatio: groupRatio,
+-	}
++		modelName,
++		usePrice,
++		modelPrice,
++		modelRatio,
++		groupRatio,
++	)
+ 
+ 	quota, clamp := calculateAudioQuota(quotaInfo)
+ 	noteQuotaClamp(relayInfo, clamp)
+@@ -308,20 +330,21 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
+ 	modelPrice := relayInfo.PriceData.ModelPrice
+ 	usePrice := relayInfo.PriceData.UsePrice
+ 
+-	quotaInfo := QuotaInfo{
+-		InputDetails: TokenDetails{
++	quotaInfo := buildAudioQuotaInfo(
++		TokenDetails{
+ 			TextTokens:  textInputTokens,
+ 			AudioTokens: audioInputTokens,
+ 		},
+-		OutputDetails: TokenDetails{
++		TokenDetails{
+ 			TextTokens:  textOutTokens,
+ 			AudioTokens: audioOutTokens,
+ 		},
+-		ModelName:  relayInfo.OriginModelName,
+-		UsePrice:   usePrice,
+-		ModelRatio: modelRatio,
+-		GroupRatio: groupRatio,
+-	}
++		relayInfo.OriginModelName,
++		usePrice,
++		modelPrice,
++		modelRatio,
++		groupRatio,
++	)
+ 
+ 	quota, clamp := calculateAudioQuota(quotaInfo)
+ 	noteQuotaClamp(relayInfo, clamp)
+diff --git a/service/quota_audio_test.go b/service/quota_audio_test.go
+new file mode 100644
+index 0000000..1671b66
+--- /dev/null
++++ b/service/quota_audio_test.go
+@@ -0,0 +1,26 @@
++package service
++
++import (
++	"testing"
++
++	"github.com/QuantumNous/new-api/common"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestBuildAudioQuotaInfoPreservesFixedRequestPrice(t *testing.T) {
++	priceInfo := buildAudioQuotaInfo(
++		TokenDetails{TextTokens: 20},
++		TokenDetails{AudioTokens: 83},
++		"moss-tts",
++		true,
++		15,
++		0,
++		0.06,
++	)
++
++	require.Equal(t, 15.0, priceInfo.ModelPrice)
++	quota, clamp := calculateAudioQuota(priceInfo)
++	require.Nil(t, clamp)
++	require.Equal(t, int(15*common.QuotaPerUnit*0.06), quota)
++}

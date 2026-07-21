@@ -45,6 +45,31 @@ jobs:
         working-directory: source
         run: sha256sum --check "$GITHUB_WORKSPACE/guards/customizations.sha256"
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache-dependency-path: source/go.sum
+
+      - name: Verify billing patch formatting
+        working-directory: source
+        run: |
+          files=(
+            relay/relay_task.go
+            relay/relay_task_billing_test.go
+            service/quota.go
+            service/quota_audio_test.go
+          )
+          unformatted=$(gofmt -l "${files[@]}")
+          if [ -n "$unformatted" ]; then
+            printf 'Unformatted Go files:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Test billing paths
+        working-directory: source
+        run: go test ./relay ./service
+
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
 

@@ -1,0 +1,38 @@
+diff --git a/web/default/src/features/models/components/models-columns.tsx b/web/default/src/features/models/components/models-columns.tsx
+index 9a4041e..e5919ea 100644
+--- a/web/default/src/features/models/components/models-columns.tsx
++++ b/web/default/src/features/models/components/models-columns.tsx
+@@ -47,2 +47,5 @@ import { DescriptionCell } from './description-cell'
+ function getCompactModelIcon(iconKey: string) {
++  if (/^(?:https?:\/\/|\/)/i.test(iconKey.trim())) {
++    return getLobeIcon(iconKey, 20)
++  }
+   const baseIconKey = iconKey.split('.')[0]
+diff --git a/web/default/src/lib/lobe-icon.tsx b/web/default/src/lib/lobe-icon.tsx
+index 73cac55..012bedd 100644
+--- a/web/default/src/lib/lobe-icon.tsx
++++ b/web/default/src/lib/lobe-icon.tsx
+@@ -25,2 +25,3 @@ For commercial licensing, please contact support@quantumnous.com
+  * - Chained properties: "OpenAI.Avatar.type={'platform'}"
++ * - Image paths: "/model-icons/custom.svg", "https://example.com/icon.png"
+  * - Size parameter: getLobeIcon("OpenAI", 20)
+@@ -100,3 +101,18 @@ export function getLobeIcon(
+   }
+-
++  if (/^(?:https?:\/\/|\/)/i.test(trimmedName)) {
++    return (
++      <span
++        className='border-border/70 inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border bg-white'
++        style={{ width: size, height: size }}
++      >
++        <img
++          src={trimmedName}
++          alt=''
++          aria-hidden='true'
++          loading='lazy'
++          className='h-full w-full object-contain p-[2px]'
++        />
++      </span>
++    )
++  }
+   // Parse component path and chained properties

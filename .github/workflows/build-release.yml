@@ -25,9 +25,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: QuantumNous/new-api
-          ref: main
+          ref: 5a6c53d4966b2e34690ab49f3dd19be01c88fdbe
           path: source
           fetch-depth: 1
+
+      - name: Install Mad API static assets
+        run: |
+          mkdir -p source/web/default/public
+          cp -R "$GITHUB_WORKSPACE/assets/." source/web/default/public/
 
       - name: Apply Mad API patches
         run: |

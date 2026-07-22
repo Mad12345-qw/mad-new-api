@@ -21,6 +21,8 @@ CACHE_TTL = int(os.getenv("CACHE_TTL", "1800"))
 CLEAN_INTERVAL = int(os.getenv("CLEAN_INTERVAL", "300"))
 MAX_BODY = int(os.getenv("MAX_BODY", str(2 * 1024 * 1024)))
 TIMEOUT = int(os.getenv("UPSTREAM_TIMEOUT", "650"))
+IMAGE_DOWNLOAD_TIMEOUT = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT", "180"))
+MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(64 * 1024 * 1024)))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("image-url-compat")
@@ -42,6 +44,10 @@ IMAGE2_MODELS = {"gpt-image-2", "gpt-image-2-4k"}
 
 def is_image2_model(model):
     return isinstance(model, str) and model.strip().lower() in IMAGE2_MODELS
+
+
+def is_image2_4k_model(model):
+    return isinstance(model, str) and model.strip().lower() == "gpt-image-2-4k"
 
 
 def image_extension(raw):
@@ -95,53 +101,100 @@ def prepare_upstream_body(body):
         return request_json, body
 
     upstream_json = dict(request_json)
-    upstream_json["response_format"] = "b64_json"
+    upstream_json["response_format"] = (
+        "url" if is_image2_4k_model(request_json.get("model")) else "b64_json"
+    )
     upstream_body = json.dumps(
         upstream_json, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
     return request_json, upstream_body
 
 
-def add_urls(payload, remove_base64=False):
+def decode_base64_image(value):
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("invalid base64 image") from exc
+
+
+def download_image(url):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 Chrome/150 Safari/537.36"
+            ),
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=IMAGE_DOWNLOAD_TIMEOUT) as response:
+        chunks = []
+        total = 0
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_IMAGE_BYTES:
+                raise ValueError("upstream image is too large")
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def store_image(raw):
+    detected = image_extension(raw)
+    if not detected:
+        raise ValueError("unsupported image format")
+    ext, _ = detected
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    name = secrets.token_urlsafe(32) + "." + ext
+    final_path = CACHE_DIR / name
+    temp_path = CACHE_DIR / ("." + name + ".tmp")
+    try:
+        with open(temp_path, "xb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_path, 0o640)
+        os.replace(temp_path, final_path)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+    return PUBLIC_BASE_URL.rstrip("/") + "/image-cache/" + name
+
+
+def normalize_images(payload, requested_format):
     data = payload.get("data")
     if not isinstance(data, list):
         return 0
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    added = 0
+    normalized = 0
     for item in data:
-        if not isinstance(item, dict) or not isinstance(item.get("b64_json"), str):
+        if not isinstance(item, dict):
             continue
-        try:
-            raw = base64.b64decode(item["b64_json"], validate=True)
-        except (binascii.Error, ValueError):
-            LOG.warning("skipped invalid base64 image")
+        if isinstance(item.get("b64_json"), str):
+            raw = decode_base64_image(item["b64_json"])
+        elif isinstance(item.get("url"), str):
+            raw = download_image(item["url"])
+        else:
             continue
-        detected = image_extension(raw)
-        if not detected:
-            LOG.warning("skipped image with unsupported magic bytes")
-            continue
-        ext, _ = detected
-        name = secrets.token_urlsafe(32) + "." + ext
-        final_path = CACHE_DIR / name
-        temp_path = CACHE_DIR / ("." + name + ".tmp")
-        try:
-            with open(temp_path, "xb") as handle:
-                handle.write(raw)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temp_path, 0o640)
-            os.replace(temp_path, final_path)
-        finally:
-            try:
-                temp_path.unlink()
-            except FileNotFoundError:
-                pass
-        item["url"] = PUBLIC_BASE_URL.rstrip("/") + "/image-cache/" + name
-        if remove_base64:
+
+        if not image_extension(raw):
+            raise ValueError("unsupported image format")
+        if requested_format == "b64_json":
+            item["b64_json"] = base64.b64encode(raw).decode("ascii")
+            item.pop("url", None)
+        elif requested_format == "url":
+            item["url"] = store_image(raw)
             item.pop("b64_json", None)
-        added += 1
-    return added
+        else:
+            item["b64_json"] = base64.b64encode(raw).decode("ascii")
+            item["url"] = store_image(raw)
+        normalized += 1
+    return normalized
 
 
 def transform_image_response(request_json, content_type, response_body):
@@ -153,7 +206,9 @@ def transform_image_response(request_json, content_type, response_body):
         return response_body, "passthrough"
 
     requested_format = str(request_json.get("response_format") or "").lower()
-    if requested_format == "b64_json":
+    if requested_format == "b64_json" and not is_image2_4k_model(
+        request_json.get("model")
+    ):
         return response_body, "b64_json"
 
     try:
@@ -162,22 +217,18 @@ def transform_image_response(request_json, content_type, response_body):
         LOG.warning("successful upstream response was not valid JSON")
         return response_body, "passthrough"
 
-    try:
-        if requested_format == "url":
-            mode = "url" if add_urls(payload, remove_base64=True) else "passthrough"
-        else:
-            mode = "dual" if add_urls(payload) else "b64_json"
-        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
-        return encoded, mode
-    except Exception:
-        LOG.exception("failed to normalize image response")
+    normalized = normalize_images(payload, requested_format)
+    if not normalized:
         return response_body, "passthrough"
+    mode = requested_format if requested_format in {"url", "b64_json"} else "dual"
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return encoded, mode
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ImageURLCompat/2.0"
+    server_version = "ImageURLCompat/3.0"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -279,9 +330,14 @@ class Handler(BaseHTTPRequestHandler):
         mode = "passthrough"
         content_type = response_headers.get("Content-Type", "")
         if 200 <= status < 300:
-            response_body, mode = transform_image_response(
-                request_json, content_type, response_body
-            )
+            try:
+                response_body, mode = transform_image_response(
+                    request_json, content_type, response_body
+                )
+            except Exception:
+                LOG.exception("failed to download or normalize upstream image")
+                self.send_json_error(502, "failed to download upstream image")
+                return
         self.forward_response(status, response_headers, response_body, mode)
 
 

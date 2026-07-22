@@ -30,10 +30,29 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(PNG_BYTES)))
+        self.end_headers()
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(PNG_BYTES)))
+        self.end_headers()
+        self.wfile.write(PNG_BYTES)
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         type(self).last_request = json.loads(self.rfile.read(length))
-        body = json.dumps({"data": [{"b64_json": PNG_B64}]}).encode("utf-8")
+        if type(self).last_request.get("response_format") == "url":
+            item = {
+                "url": f"http://127.0.0.1:{self.server.server_port}/generated.png"
+            }
+        else:
+            item = {"b64_json": PNG_B64}
+        body = json.dumps({"data": [item]}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -54,14 +73,25 @@ class ImageURLCompatTest(unittest.TestCase):
     def response(self):
         return json.dumps({"data": [{"b64_json": PNG_B64}]}).encode("utf-8")
 
-    def test_image2_models_force_base64_upstream(self):
-        for model in ("gpt-image-2", "gpt-image-2-4k"):
-            original = json.dumps(
-                {"model": model, "prompt": "test", "response_format": "url"}
-            ).encode("utf-8")
-            request_json, upstream_body = service.prepare_upstream_body(original)
-            self.assertEqual(request_json["response_format"], "url")
-            self.assertEqual(json.loads(upstream_body)["response_format"], "b64_json")
+    def test_standard_image2_forces_base64_upstream(self):
+        original = json.dumps(
+            {"model": "gpt-image-2", "prompt": "test", "response_format": "url"}
+        ).encode("utf-8")
+        request_json, upstream_body = service.prepare_upstream_body(original)
+        self.assertEqual(request_json["response_format"], "url")
+        self.assertEqual(json.loads(upstream_body)["response_format"], "b64_json")
+
+    def test_4k_image2_forces_url_upstream(self):
+        original = json.dumps(
+            {
+                "model": "gpt-image-2-4k",
+                "prompt": "test",
+                "response_format": "b64_json",
+            }
+        ).encode("utf-8")
+        request_json, upstream_body = service.prepare_upstream_body(original)
+        self.assertEqual(request_json["response_format"], "b64_json")
+        self.assertEqual(json.loads(upstream_body)["response_format"], "url")
 
     def test_explicit_base64_returns_base64_only(self):
         body, mode = service.transform_image_response(
@@ -103,7 +133,7 @@ class ImageURLCompatTest(unittest.TestCase):
         self.assertEqual(request_json["model"], "other-image")
         self.assertEqual(upstream_body, original)
 
-    def test_http_handler_forces_base64_and_supports_options(self):
+    def test_http_handler_downloads_4k_url_and_supports_both_formats(self):
         upstream = ThreadingHTTPServer(("127.0.0.1", 0), MockUpstreamHandler)
         upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
         upstream_thread.start()
@@ -130,10 +160,31 @@ class ImageURLCompatTest(unittest.TestCase):
                 payload = json.load(response)
                 self.assertEqual(response.headers["X-Image-URL-Compat"], "url")
             self.assertEqual(
-                MockUpstreamHandler.last_request["response_format"], "b64_json"
+                MockUpstreamHandler.last_request["response_format"], "url"
             )
             self.assertIn("url", payload["data"][0])
             self.assertNotIn("b64_json", payload["data"][0])
+
+            base64_request = urllib.request.Request(
+                endpoint,
+                data=json.dumps(
+                    {
+                        "model": "gpt-image-2-4k",
+                        "prompt": "test",
+                        "response_format": "b64_json",
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(base64_request) as response:
+                base64_payload = json.load(response)
+                self.assertEqual(response.headers["X-Image-URL-Compat"], "b64_json")
+            self.assertEqual(
+                MockUpstreamHandler.last_request["response_format"], "url"
+            )
+            self.assertEqual(base64_payload["data"][0]["b64_json"], PNG_B64)
+            self.assertNotIn("url", base64_payload["data"][0])
 
             options = urllib.request.Request(endpoint, method="OPTIONS")
             with urllib.request.urlopen(options) as response:

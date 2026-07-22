@@ -1,5 +1,167 @@
+diff --git a/controller/video_proxy.go b/controller/video_proxy.go
+index 996d084d..b3ba3c24 100644
+--- a/controller/video_proxy.go
++++ b/controller/video_proxy.go
+@@ -67,6 +67,7 @@ func VideoProxy(c *gin.Context) {
+ 	}
+ 
+ 	var videoURL string
++	resolveJSONContent := false
+ 	proxy := channel.GetSetting().Proxy
+ 	client := service.GetSSRFProtectedHTTPClient()
+ 	if proxy != "" {
+@@ -114,6 +115,7 @@ func VideoProxy(c *gin.Context) {
+ 	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
+ 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+ 		req.Header.Set("Authorization", "Bearer "+channel.Key)
++		resolveJSONContent = true
+ 	default:
+ 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
+ 		videoURL = task.GetResultURL()
+@@ -134,14 +136,7 @@ func VideoProxy(c *gin.Context) {
+ 		return
+ 	}
+ 
+-	var validateErr error
+-	if proxy == "" {
+-		validateErr = service.ValidateSSRFProtectedFetchURL(videoURL)
+-	} else {
+-		fetchSetting := system_setting.GetFetchSetting()
+-		validateErr = common.ValidateURLWithFetchSetting(videoURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain)
+-	}
+-	if validateErr != nil {
++	if validateErr := validateVideoProxyURL(videoURL, proxy); validateErr != nil {
+ 		logger.LogError(c.Request.Context(), fmt.Sprintf("Video URL blocked for task %s: %v", taskID, validateErr))
+ 		videoProxyError(c, http.StatusForbidden, "server_error", fmt.Sprintf("request blocked: %v", validateErr))
+ 		return
+@@ -160,15 +155,60 @@ func VideoProxy(c *gin.Context) {
+ 		videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
+ 		return
+ 	}
+-	defer resp.Body.Close()
+-
+-	if resp.StatusCode != http.StatusOK {
++	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
++		resp.Body.Close()
+ 		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
+ 		videoProxyError(c, http.StatusBadGateway, "server_error",
+ 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
+ 		return
+ 	}
+ 
++	if resolveJSONContent && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
++		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
++		resp.Body.Close()
++		if readErr != nil {
++			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to read video metadata for task %s: %s", taskID, readErr.Error()))
++			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve video content")
++			return
++		}
++
++		resolvedURL := extractVideoURLFromContentResponse(body)
++		if resolvedURL == "" {
++			logger.LogError(c.Request.Context(), fmt.Sprintf("Video metadata contains no URL for task %s: %s", taskID, string(body)))
++			videoProxyError(c, http.StatusBadGateway, "server_error", "Upstream returned no video URL")
++			return
++		}
++		if validateErr := validateVideoProxyURL(resolvedURL, proxy); validateErr != nil {
++			logger.LogError(c.Request.Context(), fmt.Sprintf("Resolved video URL blocked for task %s: %v", taskID, validateErr))
++			videoProxyError(c, http.StatusForbidden, "server_error", fmt.Sprintf("request blocked: %v", validateErr))
++			return
++		}
++
++		resolvedReq, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, resolvedURL, nil)
++		if requestErr != nil {
++			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to create resolved video request for task %s: %s", taskID, requestErr.Error()))
++			videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create video request")
++			return
++		}
++		if rangeHeader := c.GetHeader("Range"); rangeHeader != "" {
++			resolvedReq.Header.Set("Range", rangeHeader)
++		}
++
++		resp, err = client.Do(resolvedReq)
++		if err != nil {
++			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to fetch resolved video for task %s: %s", taskID, err.Error()))
++			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
++			return
++		}
++		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
++			resp.Body.Close()
++			logger.LogError(c.Request.Context(), fmt.Sprintf("Resolved video returned status %d for task %s", resp.StatusCode, taskID))
++			videoProxyError(c, http.StatusBadGateway, "server_error", fmt.Sprintf("Video service returned status %d", resp.StatusCode))
++			return
++		}
++	}
++	defer resp.Body.Close()
++
+ 	for key, values := range resp.Header {
+ 		for _, value := range values {
+ 			c.Writer.Header().Add(key, value)
+@@ -182,6 +222,35 @@ func VideoProxy(c *gin.Context) {
+ 	}
+ }
+ 
++func validateVideoProxyURL(videoURL, proxy string) error {
++	if proxy == "" {
++		return service.ValidateSSRFProtectedFetchURL(videoURL)
++	}
++	fetchSetting := system_setting.GetFetchSetting()
++	return common.ValidateURLWithFetchSetting(videoURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain)
++}
++
++func extractVideoURLFromContentResponse(body []byte) string {
++	var payload struct {
++		URL   string `json:"url"`
++		Video struct {
++			URL string `json:"url"`
++		} `json:"video"`
++		Data struct {
++			URL string `json:"url"`
++		} `json:"data"`
++	}
++	if err := common.Unmarshal(body, &payload); err != nil {
++		return ""
++	}
++	for _, candidate := range []string{payload.Video.URL, payload.URL, payload.Data.URL} {
++		if candidate = strings.TrimSpace(candidate); candidate != "" {
++			return candidate
++		}
++	}
++	return ""
++}
++
+ func writeVideoDataURL(c *gin.Context, dataURL string) error {
+ 	parts := strings.SplitN(dataURL, ",", 2)
+ 	if len(parts) != 2 {
+diff --git a/controller/video_proxy_content_test.go b/controller/video_proxy_content_test.go
+new file mode 100644
+index 00000000..757a9ce5
+--- /dev/null
++++ b/controller/video_proxy_content_test.go
+@@ -0,0 +1,20 @@
++package controller
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestExtractVideoURLFromContentResponse(t *testing.T) {
++	url := extractVideoURLFromContentResponse([]byte(`{
++		"status":"done",
++		"video":{"url":"https://vidgen.x.ai/example.mp4","duration":5}
++	}`))
++
++	require.Equal(t, "https://vidgen.x.ai/example.mp4", url)
++}
++
++func TestExtractVideoURLFromContentResponseRejectsMissingURL(t *testing.T) {
++	require.Empty(t, extractVideoURLFromContentResponse([]byte(`{"status":"pending"}`)))
++}
 diff --git a/relay/channel/task/sora/adaptor.go b/relay/channel/task/sora/adaptor.go
-index e9029aa..1fac333 100644
+index e9029aa2..ea11b330 100644
 --- a/relay/channel/task/sora/adaptor.go
 +++ b/relay/channel/task/sora/adaptor.go
 @@ -41,6 +41,7 @@ type ImageURL struct {
@@ -20,3 +182,42 @@ index e9029aa..1fac333 100644
  	if upstreamID == "" {
  		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
  		return
+@@ -313,6 +317,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
+ 			taskResult.Reason = "task failed"
+ 		}
+ 	default:
++		// Some compatible gateways expose the provider request ID before their
++		// own task status is available. Keep polling this valid hand-off state.
++		if resTask.RequestID != "" {
++			taskResult.Status = model.TaskStatusQueued
++		}
+ 	}
+ 	if resTask.Progress > 0 && resTask.Progress < 100 {
+ 		taskResult.Progress = fmt.Sprintf("%d%%", resTask.Progress)
+diff --git a/relay/channel/task/sora/adaptor_test.go b/relay/channel/task/sora/adaptor_test.go
+new file mode 100644
+index 00000000..25df51ee
+--- /dev/null
++++ b/relay/channel/task/sora/adaptor_test.go
+@@ -0,0 +1,21 @@
++package sora
++
++import (
++	"testing"
++
++	"github.com/QuantumNous/new-api/model"
++	"github.com/stretchr/testify/require"
++)
++
++func TestParseTaskResultTreatsRequestIDAsQueued(t *testing.T) {
++	adaptor := &TaskAdaptor{}
++
++	result, err := adaptor.ParseTaskResult([]byte(`{
++		"request_id":"e6d4926a-c606-9315-8679-36faf6b52a29",
++		"id":"task_PjJ0t1qaaehsEWWXQb05Fr2m984p9WH8"
++	}`))
++
++	require.NoError(t, err)
++	require.NotNil(t, result)
++	require.Equal(t, model.TaskStatusQueued, result.Status)
++}

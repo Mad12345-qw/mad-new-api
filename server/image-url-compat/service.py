@@ -335,8 +335,15 @@ class Handler(BaseHTTPRequestHandler):
         content_type = response_headers.get("Content-Type", "")
         if 200 <= status < 300:
             try:
+                response_request_json = request_json
+                if (
+                    self.path.split("?", 1)[0] == "/pg/images/generations"
+                    and is_image2_4k_model(request_json.get("model"))
+                ):
+                    response_request_json = dict(request_json)
+                    response_request_json["response_format"] = "url"
                 response_body, mode = transform_image_response(
-                    request_json, content_type, response_body
+                    response_request_json, content_type, response_body
                 )
             except Exception:
                 LOG.exception("failed to download or normalize upstream image")

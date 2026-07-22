@@ -165,8 +165,11 @@ class ImageURLCompatTest(unittest.TestCase):
             self.assertIn("url", payload["data"][0])
             self.assertNotIn("b64_json", payload["data"][0])
 
+            base64_endpoint = (
+                f"http://127.0.0.1:{compat.server_port}/v1/images/generations"
+            )
             base64_request = urllib.request.Request(
-                endpoint,
+                base64_endpoint,
                 data=json.dumps(
                     {
                         "model": "gpt-image-2-4k",
@@ -185,6 +188,24 @@ class ImageURLCompatTest(unittest.TestCase):
             )
             self.assertEqual(base64_payload["data"][0]["b64_json"], PNG_B64)
             self.assertNotIn("url", base64_payload["data"][0])
+
+            playground_base64_request = urllib.request.Request(
+                endpoint,
+                data=json.dumps(
+                    {
+                        "model": "gpt-image-2-4k",
+                        "prompt": "test",
+                        "response_format": "b64_json",
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(playground_base64_request) as response:
+                playground_payload = json.load(response)
+                self.assertEqual(response.headers["X-Image-URL-Compat"], "url")
+            self.assertIn("url", playground_payload["data"][0])
+            self.assertNotIn("b64_json", playground_payload["data"][0])
 
             options = urllib.request.Request(endpoint, method="OPTIONS")
             with urllib.request.urlopen(options) as response:

@@ -486,7 +486,7 @@ index c4b436b4..41bc91f8 100644
          </Tooltip>
  
 diff --git a/web/default/src/features/playground/components/input/playground-input.tsx b/web/default/src/features/playground/components/input/playground-input.tsx
-index b06d7cb4..951f207b 100644
+index b06d7cb4..6525c934 100644
 --- a/web/default/src/features/playground/components/input/playground-input.tsx
 +++ b/web/default/src/features/playground/components/input/playground-input.tsx
 @@ -16,50 +16,59 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -496,7 +496,7 @@ index b06d7cb4..951f207b 100644
 -import { useState } from 'react'
 -import { useTranslation } from 'react-i18next'
 +import { FileIcon, ImageIcon, XIcon } from "lucide-react";
-+import { useRef, useState } from "react";
++import { type DragEvent, useRef, useState } from "react";
 +import { useTranslation } from "react-i18next";
 +import { toast } from "sonner";
  
@@ -575,7 +575,7 @@ index b06d7cb4..951f207b 100644
  }
  
  export function PlaygroundInput({
-@@ -81,37 +90,169 @@ export function PlaygroundInput({
+@@ -81,37 +90,191 @@ export function PlaygroundInput({
    onParameterEnabledChange,
    parameterEnabled,
  }: PlaygroundInputProps) {
@@ -584,13 +584,12 @@ index b06d7cb4..951f207b 100644
 +  const { t } = useTranslation();
 +  const [text, setText] = useState("");
 +  const [attachments, setAttachments] = useState<PlaygroundAttachment[]>([]);
++  const [isFileDragActive, setIsFileDragActive] = useState(false);
 +  const fileInputRef = useRef<HTMLInputElement>(null);
 +  const photoInputRef = useRef<HTMLInputElement>(null);
 +  const cameraInputRef = useRef<HTMLInputElement>(null);
 +  const modelProfile = getPlaygroundModelProfile(modelValue);
- 
--  const handleSubmit = (message: PromptInputMessage) => {
--    const submittableText = getSubmittableInputText(message, disabled)
++
 +  const appendFiles = async (files: File[]) => {
 +    try {
 +      const available = Math.max(0, MAX_ATTACHMENT_COUNT - attachments.length);
@@ -628,16 +627,34 @@ index b06d7cb4..951f207b 100644
 +    }
 +  };
  
--    if (!submittableText) return
--    onSubmit(submittableText)
--    setText('')
--  }
-+  const handleSubmit = (message: PromptInputMessage) => {
+   const handleSubmit = (message: PromptInputMessage) => {
+-    const submittableText = getSubmittableInputText(message, disabled)
 +    const submittableText = message.text?.trim() ?? "";
 +    if (disabled || (!submittableText && attachments.length === 0)) return;
 +    onSubmit(submittableText, attachments);
 +    setText("");
 +    setAttachments([]);
++  };
+ 
+-    if (!submittableText) return
+-    onSubmit(submittableText)
+-    setText('')
+-  }
++  const handleFileDragEnter = (event: DragEvent<HTMLFormElement>) => {
++    if (event.dataTransfer.types.includes("Files")) {
++      setIsFileDragActive(true);
++    }
++  };
++
++  const handleFileDragLeave = (event: DragEvent<HTMLFormElement>) => {
++    const nextTarget = event.relatedTarget;
++    if (
++      nextTarget instanceof Node &&
++      event.currentTarget.contains(nextTarget)
++    ) {
++      return;
++    }
++    setIsFileDragActive(false);
 +  };
  
    return (
@@ -647,7 +664,11 @@ index b06d7cb4..951f207b 100644
 -        className='relative'
 -        groupClassName='bg-background/95 dark:bg-background/80 border-border/70 shadow-[0_18px_60px_-32px_rgba(0,0,0,0.65)] ring-1 ring-foreground/5 rounded-xl overflow-hidden transition-all duration-200 focus-within:border-primary/45 focus-within:ring-primary/15 focus-within:shadow-[0_22px_70px_-34px_rgba(0,0,0,0.75)]'
 +        className="relative"
-+        groupClassName="bg-background/95 dark:bg-background/80 border-border/70 shadow-[0_18px_60px_-32px_rgba(0,0,0,0.65)] ring-1 ring-foreground/5 rounded-xl overflow-hidden transition-all duration-200 focus-within:border-primary/45 focus-within:ring-primary/15 focus-within:shadow-[0_22px_70px_-34px_rgba(0,0,0,0.75)]"
++        groupClassName={`bg-background/95 dark:bg-background/80 border-border/70 shadow-[0_18px_60px_-32px_rgba(0,0,0,0.65)] ring-1 ring-foreground/5 rounded-xl overflow-hidden transition-all duration-200 focus-within:border-primary/45 focus-within:ring-primary/15 focus-within:shadow-[0_22px_70px_-34px_rgba(0,0,0,0.75)] ${isFileDragActive ? "border-primary/70 ring-primary/25 bg-primary/[0.04]" : ""}`}
++        onDragEnter={handleFileDragEnter}
++        onDragLeave={handleFileDragLeave}
++        onDrop={() => setIsFileDragActive(false)}
++        onFilesAdded={appendFiles}
          onSubmit={handleSubmit}
        >
 +        <input
@@ -762,7 +783,7 @@ index b06d7cb4..951f207b 100644
            <PlaygroundInputControls
              disabled={disabled}
              groups={groups}
-@@ -124,6 +265,7 @@ export function PlaygroundInput({
+@@ -124,6 +287,7 @@ export function PlaygroundInput({
              onModelChange={onModelChange}
              onStop={onStop}
              text={text}
@@ -770,7 +791,7 @@ index b06d7cb4..951f207b 100644
              tools={
                <PlaygroundInputTools
                  config={config}
-@@ -133,11 +275,12 @@ export function PlaygroundInput({
+@@ -133,11 +297,12 @@ export function PlaygroundInput({
                  onClearMessages={onClearMessages}
                  onParameterEnabledChange={onParameterEnabledChange}
                  parameterEnabled={parameterEnabled}
@@ -2817,3 +2838,45 @@ index 4f1412ac..815f2973 100644
 +    "Chat with image and file understanding; enable search for compatible web-enabled models.": "支持对话、图片与文件理解；搜索开关用于兼容的联网模型。"
    }
  }
+diff --git a/web/default/src/components/ai-elements/prompt-input.tsx b/web/default/src/components/ai-elements/prompt-input.tsx
+index 46ab3f67..25f252b4 100644
+--- a/web/default/src/components/ai-elements/prompt-input.tsx
++++ b/web/default/src/components/ai-elements/prompt-input.tsx
+@@ -438,6 +438,7 @@ export type PromptInputProps = Omit<
+   // Minimal constraints
+   maxFiles?: number
+   maxFileSize?: number // bytes
++  onFilesAdded?: (files: File[]) => void | Promise<void>
+   onError?: (err: {
+     code: 'max_files' | 'max_file_size' | 'accept'
+     message: string
+@@ -462,6 +463,7 @@ export const PromptInput = ({
+   syncHiddenInput,
+   maxFiles,
+   maxFileSize,
++  onFilesAdded,
+   onError,
+   onSubmit,
+   children,
+@@ -562,8 +564,12 @@ export const PromptInput = ({
+     () =>
+       controller
+         ? (files: File[] | FileList) => controller.attachments.add(files)
++        : onFilesAdded
++          ? (files: File[] | FileList) => {
++              void onFilesAdded(Array.from(files))
++            }
+         : addLocal,
+-    [controller, addLocal]
++    [controller, onFilesAdded, addLocal]
+   )
+ 
+   const remove = useMemo(
+@@ -783,6 +789,7 @@ export const PromptInput = ({
+       <form
+         className={cn('w-full', className)}
+         onSubmit={handleSubmit}
++        ref={formRef}
+         {...props}
+       >
+         <InputGroup className={groupClassName}>{children}</InputGroup>

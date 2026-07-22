@@ -486,7 +486,7 @@ index c4b436b4..41bc91f8 100644
          </Tooltip>
  
 diff --git a/web/default/src/features/playground/components/input/playground-input.tsx b/web/default/src/features/playground/components/input/playground-input.tsx
-index b06d7cb4..6525c934 100644
+index b06d7cb4..2702228d 100644
 --- a/web/default/src/features/playground/components/input/playground-input.tsx
 +++ b/web/default/src/features/playground/components/input/playground-input.tsx
 @@ -16,50 +16,59 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -495,7 +495,7 @@ index b06d7cb4..6525c934 100644
  */
 -import { useState } from 'react'
 -import { useTranslation } from 'react-i18next'
-+import { FileIcon, ImageIcon, XIcon } from "lucide-react";
++import { FileIcon, XIcon } from "lucide-react";
 +import { type DragEvent, useRef, useState } from "react";
 +import { useTranslation } from "react-i18next";
 +import { toast } from "sonner";
@@ -575,7 +575,7 @@ index b06d7cb4..6525c934 100644
  }
  
  export function PlaygroundInput({
-@@ -81,37 +90,191 @@ export function PlaygroundInput({
+@@ -81,37 +90,216 @@ export function PlaygroundInput({
    onParameterEnabledChange,
    parameterEnabled,
  }: PlaygroundInputProps) {
@@ -705,31 +705,56 @@ index b06d7cb4..6525c934 100644
 +        />
 +
 +        {attachments.length > 0 && (
-+          <div className="flex flex-wrap gap-2 px-4 pt-3">
++          <div className="flex min-h-16 flex-wrap items-start gap-2 px-4 pt-3">
 +            {attachments.map((attachment) => (
-+              <div
-+                className="border-border/70 bg-muted/35 flex max-w-56 items-center gap-2 rounded-md border px-2 py-1.5"
-+                key={attachment.id}
-+              >
-+                {attachment.kind === "image" ? (
-+                  <ImageIcon className="text-muted-foreground size-4 shrink-0" />
-+                ) : (
-+                  <FileIcon className="text-muted-foreground size-4 shrink-0" />
-+                )}
-+                <span className="truncate text-xs">{attachment.name}</span>
-+                <button
-+                  aria-label={t("Remove attachment")}
-+                  className="text-muted-foreground hover:text-destructive shrink-0"
-+                  onClick={() =>
-+                    setAttachments((current) =>
-+                      current.filter((item) => item.id !== attachment.id),
-+                    )
-+                  }
-+                  type="button"
++              attachment.kind === "image" ? (
++                <div
++                  className="border-border/70 bg-muted/35 group relative size-16 shrink-0 overflow-hidden rounded-md border"
++                  key={attachment.id}
++                  title={attachment.name}
 +                >
-+                  <XIcon size={14} />
-+                </button>
-+              </div>
++                  <img
++                    alt={attachment.name}
++                    className="size-full object-cover"
++                    src={attachment.dataUrl}
++                  />
++                  <button
++                    aria-label={t("Remove attachment")}
++                    className="absolute top-1 right-1 grid size-5 place-items-center rounded-full bg-black/75 text-white shadow-sm transition-colors hover:bg-black"
++                    onClick={() =>
++                      setAttachments((current) =>
++                        current.filter((item) => item.id !== attachment.id),
++                      )
++                    }
++                    type="button"
++                  >
++                    <XIcon size={12} />
++                  </button>
++                </div>
++              ) : (
++                <div
++                  className="border-border/70 bg-muted/35 relative flex size-16 shrink-0 flex-col items-center justify-center gap-1 overflow-hidden rounded-md border px-1.5 pt-2"
++                  key={attachment.id}
++                  title={attachment.name}
++                >
++                  <FileIcon className="text-muted-foreground size-6 shrink-0" />
++                  <span className="w-full truncate text-center text-[10px] leading-3">
++                    {attachment.name}
++                  </span>
++                  <button
++                    aria-label={t("Remove attachment")}
++                    className="absolute top-1 right-1 grid size-5 place-items-center rounded-full bg-black/75 text-white shadow-sm transition-colors hover:bg-black"
++                    onClick={() =>
++                      setAttachments((current) =>
++                        current.filter((item) => item.id !== attachment.id),
++                      )
++                    }
++                    type="button"
++                  >
++                    <XIcon size={12} />
++                  </button>
++                </div>
++              )
 +            ))}
 +          </div>
 +        )}
@@ -783,7 +808,7 @@ index b06d7cb4..6525c934 100644
            <PlaygroundInputControls
              disabled={disabled}
              groups={groups}
-@@ -124,6 +287,7 @@ export function PlaygroundInput({
+@@ -124,6 +312,7 @@ export function PlaygroundInput({
              onModelChange={onModelChange}
              onStop={onStop}
              text={text}
@@ -791,7 +816,7 @@ index b06d7cb4..6525c934 100644
              tools={
                <PlaygroundInputTools
                  config={config}
-@@ -133,11 +297,12 @@ export function PlaygroundInput({
+@@ -133,11 +322,12 @@ export function PlaygroundInput({
                  onClearMessages={onClearMessages}
                  onParameterEnabledChange={onParameterEnabledChange}
                  parameterEnabled={parameterEnabled}

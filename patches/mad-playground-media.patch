@@ -2306,7 +2306,7 @@ index 00000000..cb7e61e9
 +}
 diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
 new file mode 100644
-index 00000000..42f02bd5
+index 00000000..714aca5f
 --- /dev/null
 +++ b/web/default/src/features/playground/lib/model/model-profiles.ts
 @@ -0,0 +1,170 @@
@@ -2336,7 +2336,7 @@ index 00000000..42f02bd5
 +  ttsVoicePlaceholder?: string;
 +};
 +
-+export const MOSS_TTS_DEFAULT_VOICE_ID = "90879748-4a4c-5852-b81a-7a18aefebf0b";
++export const MOSS_TTS_DEFAULT_VOICE_ID = "86a2ab25-a94b-4feb-af3b-c853629f067f";
 +
 +const STANDARD_IMAGE_SIZES: PlaygroundSelectOption[] = [
 +  { value: "1024x1024", label: "1:1 | 1024x1024" },

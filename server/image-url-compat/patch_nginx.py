@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 DEFAULT_SITE = Path("/etc/nginx/sites-enabled/mad.myddns.me")
+DEFAULT_BACKUP_DIR = Path("/opt/new-api/backups/nginx")
 INSERT_BEFORE = "    # image-url-compat managed block\n"
 BLOCK_MARKER = "    # image-url-compat playground block\n"
 PLAYGROUND_BLOCK = """    # image-url-compat playground block
@@ -51,6 +52,7 @@ def write_atomic(path, content):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--site", type=Path, default=DEFAULT_SITE)
+    parser.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUP_DIR)
     parser.add_argument("--no-reload", action="store_true")
     args = parser.parse_args()
 
@@ -60,7 +62,8 @@ def main():
         print("nginx playground route already configured")
         return
 
-    backup = args.site.with_name(
+    args.backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = args.backup_dir / (
         args.site.name + ".pre-playground-image-compat-" + time.strftime("%Y%m%d-%H%M%S")
     )
     shutil.copy2(args.site, backup)

@@ -528,7 +528,7 @@ index c4b436b4..41bc91f8 100644
          </Tooltip>
  
 diff --git a/web/default/src/features/playground/components/input/playground-input.tsx b/web/default/src/features/playground/components/input/playground-input.tsx
-index b06d7cb4..e73f7a2b 100644
+index b06d7cb4..d17e742f 100644
 --- a/web/default/src/features/playground/components/input/playground-input.tsx
 +++ b/web/default/src/features/playground/components/input/playground-input.tsx
 @@ -16,50 +16,59 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -617,7 +617,7 @@ index b06d7cb4..e73f7a2b 100644
  }
  
  export function PlaygroundInput({
-@@ -81,37 +90,253 @@ export function PlaygroundInput({
+@@ -81,37 +90,261 @@ export function PlaygroundInput({
    onParameterEnabledChange,
    parameterEnabled,
  }: PlaygroundInputProps) {
@@ -771,8 +771,9 @@ index b06d7cb4..e73f7a2b 100644
 +
 +        {attachments.length > 0 && (
 +          <div className="flex min-h-16 flex-wrap items-start gap-2 px-4 pt-3">
-+            {attachments.map((attachment) => (
-+              attachment.kind === "image" ? (
++            {attachments.map((attachment) => {
++              if (attachment.kind === "image") {
++                return (
 +                <div
 +                  className="border-border/70 bg-muted/35 group relative size-16 shrink-0 overflow-hidden rounded-md border"
 +                  key={attachment.id}
@@ -792,7 +793,11 @@ index b06d7cb4..e73f7a2b 100644
 +                    <XIcon size={12} />
 +                  </button>
 +                </div>
-+              ) : attachment.kind === "video" ? (
++                );
++              }
++
++              if (attachment.kind === "video") {
++                return (
 +                <div
 +                  className="border-border/70 bg-muted/35 group relative size-16 shrink-0 overflow-hidden rounded-md border"
 +                  key={attachment.id}
@@ -815,7 +820,10 @@ index b06d7cb4..e73f7a2b 100644
 +                    <XIcon size={12} />
 +                  </button>
 +                </div>
-+              ) : (
++                );
++              }
++
++              return (
 +                <div
 +                  className="border-border/70 bg-muted/35 relative flex size-16 shrink-0 flex-col items-center justify-center gap-1 overflow-hidden rounded-md border px-1.5 pt-2"
 +                  key={attachment.id}
@@ -834,8 +842,8 @@ index b06d7cb4..e73f7a2b 100644
 +                    <XIcon size={12} />
 +                  </button>
 +                </div>
-+              )
-+            ))}
++              );
++            })}
 +          </div>
 +        )}
 +
@@ -888,7 +896,7 @@ index b06d7cb4..e73f7a2b 100644
            <PlaygroundInputControls
              disabled={disabled}
              groups={groups}
-@@ -124,6 +349,7 @@ export function PlaygroundInput({
+@@ -124,6 +357,7 @@ export function PlaygroundInput({
              onModelChange={onModelChange}
              onStop={onStop}
              text={text}
@@ -896,7 +904,7 @@ index b06d7cb4..e73f7a2b 100644
              tools={
                <PlaygroundInputTools
                  config={config}
-@@ -133,11 +359,12 @@ export function PlaygroundInput({
+@@ -133,11 +367,12 @@ export function PlaygroundInput({
                  onClearMessages={onClearMessages}
                  onParameterEnabledChange={onParameterEnabledChange}
                  parameterEnabled={parameterEnabled}
@@ -1406,7 +1414,7 @@ index 7cfd0a9d..d4e44038 100644
 +  );
  }
 diff --git a/web/default/src/features/playground/components/message/playground-message-content.tsx b/web/default/src/features/playground/components/message/playground-message-content.tsx
-index 4a116bf8..0fe0af5c 100644
+index 4a116bf8..4391bf78 100644
 --- a/web/default/src/features/playground/components/message/playground-message-content.tsx
 +++ b/web/default/src/features/playground/components/message/playground-message-content.tsx
 @@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -1440,7 +1448,7 @@ index 4a116bf8..0fe0af5c 100644
  
    return (
      <div
-@@ -134,30 +144,145 @@ export function PlaygroundMessageContent({
+@@ -134,30 +144,153 @@ export function PlaygroundMessageContent({
          </>
        )}
  
@@ -1470,8 +1478,9 @@ index 4a116bf8..0fe0af5c 100644
 -            </MessageContent>
 +          {attachments.length > 0 && (
 +            <div className='mb-2 grid max-w-2xl gap-2 sm:grid-cols-2'>
-+              {attachments.map((attachment) =>
-+                attachment.kind === 'image' ? (
++              {attachments.map((attachment) => {
++                if (attachment.kind === 'image') {
++                  return (
 +                  <a
 +                    className='border-border/70 bg-muted/20 overflow-hidden rounded-lg border'
 +                    download={attachment.name}
@@ -1490,7 +1499,11 @@ index 4a116bf8..0fe0af5c 100644
 +                      </span>
 +                    </div>
 +                  </a>
-+                ) : attachment.kind === 'video' ? (
++                  )
++                }
++
++                if (attachment.kind === 'video') {
++                  return (
 +                  <div
 +                    className='border-border/70 bg-muted/20 overflow-hidden rounded-lg border'
 +                    key={attachment.id}
@@ -1509,7 +1522,10 @@ index 4a116bf8..0fe0af5c 100644
 +                      </span>
 +                    </div>
 +                  </div>
-+                ) : (
++                  )
++                }
++
++                return (
 +                  <a
 +                    className='border-border/70 bg-muted/25 hover:bg-muted/40 flex min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors'
 +                    download={attachment.name}
@@ -1528,9 +1544,9 @@ index 4a116bf8..0fe0af5c 100644
 +                    <DownloadIcon className='text-muted-foreground size-4 shrink-0' />
 +                  </a>
 +                )
-+              )}
++              })}
 +            </div>
-+          )}
+           )}
 +
 +          {media.length > 0 && (
 +            <div className='mb-2 grid max-w-3xl gap-3'>
@@ -1580,7 +1596,7 @@ index 4a116bf8..0fe0af5c 100644
 +                </div>
 +              ))}
 +            </div>
-           )}
++          )}
 +
 +          {showMessageContent &&
 +            (isSourceVisible ? (
@@ -2267,10 +2283,10 @@ index b2404d8b..ced13108 100644
  export * from './state/playground-state-utils'
 diff --git a/web/default/src/features/playground/lib/input/attachment-utils.ts b/web/default/src/features/playground/lib/input/attachment-utils.ts
 new file mode 100644
-index 00000000..e4391d91
+index 00000000..56fda257
 --- /dev/null
 +++ b/web/default/src/features/playground/lib/input/attachment-utils.ts
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,91 @@
 +import { nanoid } from 'nanoid'
 +
 +import type { PlaygroundAttachment } from '../../types'
@@ -2297,13 +2313,15 @@ index 00000000..e4391d91
 +    throw new Error('Each attachment must be 10 MB or smaller')
 +  }
 +  const dataUrl = await readFileAsDataUrl(file)
++  let kind: PlaygroundAttachment['kind'] = 'file'
++  if (file.type.startsWith('image/')) {
++    kind = 'image'
++  } else if (file.type.startsWith('video/')) {
++    kind = 'video'
++  }
 +  return {
 +    id: nanoid(),
-+    kind: file.type.startsWith('image/')
-+      ? 'image'
-+      : file.type.startsWith('video/')
-+        ? 'video'
-+        : 'file',
++    kind,
 +    name: file.name || 'attachment',
 +    mimeType: file.type || 'application/octet-stream',
 +    size: file.size,

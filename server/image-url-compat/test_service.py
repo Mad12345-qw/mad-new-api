@@ -142,7 +142,7 @@ class ImageURLCompatTest(unittest.TestCase):
         compat = ThreadingHTTPServer(("127.0.0.1", 0), service.Handler)
         compat_thread = threading.Thread(target=compat.serve_forever, daemon=True)
         compat_thread.start()
-        endpoint = f"http://127.0.0.1:{compat.server_port}/v1/images/generations"
+        endpoint = f"http://127.0.0.1:{compat.server_port}/pg/images/generations"
         try:
             request = urllib.request.Request(
                 endpoint,

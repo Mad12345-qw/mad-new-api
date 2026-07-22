@@ -40,6 +40,10 @@ HOP_HEADERS = {
     "content-encoding",
 }
 IMAGE2_MODELS = {"gpt-image-2", "gpt-image-2-4k"}
+IMAGE_GENERATION_PATHS = {
+    "/v1/images/generations",
+    "/pg/images/generations",
+}
 
 
 def is_image2_model(model):
@@ -302,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json_error(502, "upstream request failed")
 
     def do_POST(self):
-        if self.path.split("?", 1)[0] != "/v1/images/generations":
+        if self.path.split("?", 1)[0] not in IMAGE_GENERATION_PATHS:
             self.send_json_error(404, "not found")
             return
         try:

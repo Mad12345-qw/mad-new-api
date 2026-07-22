@@ -738,7 +738,7 @@ index b06d7cb4..951f207b 100644
 +  );
  }
 diff --git a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
-index 7cfd0a9d..90df4f5c 100644
+index 7cfd0a9d..78962bdb 100644
 --- a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
 +++ b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
 @@ -16,60 +16,61 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -827,7 +827,7 @@ index 7cfd0a9d..90df4f5c 100644
  
  function PlaygroundParameterContent({
    compact = false,
-@@ -79,64 +80,208 @@ function PlaygroundParameterContent({
+@@ -79,64 +80,204 @@ function PlaygroundParameterContent({
    onParameterEnabledChange,
    parameterEnabled,
  }: PlaygroundParameterContentProps) {
@@ -880,23 +880,19 @@ index 7cfd0a9d..90df4f5c 100644
 +                ))}
 +              </select>
 +            </label>
-+            {modelProfile.defaultImageQuality !== "auto" && (
-+              <label className="grid min-w-0 gap-1.5 text-sm font-medium">
-+                {t("Quality")}
-+                <select
-+                  className="border-input bg-background block h-9 w-full min-w-0 max-w-full truncate rounded-md border px-3 text-sm"
-+                  disabled={disabled}
-+                  onChange={(event) =>
-+                    onConfigChange("imageQuality", event.target.value)
-+                  }
-+                  value={config.imageQuality}
-+                >
-+                  <option value="standard">{t("Standard")}</option>
-+                  <option value="high">{t("High")}</option>
-+                  <option value="hd">HD</option>
-+                </select>
-+              </label>
-+            )}
++            <label className="grid min-w-0 gap-1.5 text-sm font-medium">
++              {t("Quality")}
++              <select
++                className="border-input bg-background block h-9 w-full min-w-0 max-w-full truncate rounded-md border px-3 text-sm"
++                disabled={disabled}
++                onChange={(event) =>
++                  onConfigChange("imageQuality", event.target.value)
++                }
++                value={config.imageQuality}
++              >
++                <option value="hd">HD</option>
++              </select>
++            </label>
 +            {modelProfile.imageResponseFormats && (
 +              <label className="grid min-w-0 gap-1.5 text-sm font-medium">
 +                {t("Return format")}
@@ -1057,7 +1053,7 @@ index 7cfd0a9d..90df4f5c 100644
                    parameter: t(control.labelKey),
                  })}
                  checked={enabled}
-@@ -144,13 +289,13 @@ function PlaygroundParameterContent({
+@@ -144,13 +285,13 @@ function PlaygroundParameterContent({
                  onCheckedChange={(checked) =>
                    onParameterEnabledChange(control.key, checked)
                  }
@@ -1074,7 +1070,7 @@ index 7cfd0a9d..90df4f5c 100644
                  disabled={disabled || !enabled}
                  id={controlId}
                  max={control.max}
-@@ -158,11 +303,11 @@ function PlaygroundParameterContent({
+@@ -158,11 +299,11 @@ function PlaygroundParameterContent({
                  onValueChange={(nextValue) => {
                    const firstValue = Array.isArray(nextValue)
                      ? nextValue[0]
@@ -1089,7 +1085,7 @@ index 7cfd0a9d..90df4f5c 100644
                  }}
                  step={control.step}
                  value={[Number(value)]}
-@@ -171,7 +316,7 @@ function PlaygroundParameterContent({
+@@ -171,7 +312,7 @@ function PlaygroundParameterContent({
                <Input
                  disabled={disabled || !enabled}
                  id={controlId}
@@ -1098,7 +1094,7 @@ index 7cfd0a9d..90df4f5c 100644
                  max={control.max}
                  min={control.min}
                  onChange={(event) => {
-@@ -179,42 +324,52 @@ function PlaygroundParameterContent({
+@@ -179,42 +320,52 @@ function PlaygroundParameterContent({
                      control.key,
                      normalizeParameterNumberValue(
                        control.key,
@@ -1168,7 +1164,7 @@ index 7cfd0a9d..90df4f5c 100644
  
    if (isMobile) {
      return (
-@@ -222,20 +377,20 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+@@ -222,20 +373,20 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
          <Tooltip>
            <TooltipTrigger render={<SheetTrigger render={trigger} />} />
            <TooltipContent>
@@ -1194,7 +1190,7 @@ index 7cfd0a9d..90df4f5c 100644
    }
  
    return (
-@@ -243,24 +398,24 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+@@ -243,24 +394,24 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
        <Tooltip>
          <TooltipTrigger render={<PopoverTrigger render={trigger} />} />
          <TooltipContent>
@@ -1413,7 +1409,7 @@ index 4a116bf8..7391235f 100644
            {actions}
          </>
 diff --git a/web/default/src/features/playground/constants.ts b/web/default/src/features/playground/constants.ts
-index 4026a0f1..77f6a873 100644
+index 4026a0f1..9968db86 100644
 --- a/web/default/src/features/playground/constants.ts
 +++ b/web/default/src/features/playground/constants.ts
 @@ -35,6 +35,11 @@ export const MESSAGE_STATUS = {
@@ -1434,7 +1430,7 @@ index 4026a0f1..77f6a873 100644
    stream: true,
 +  webSearch: false,
 +  imageSize: '1024x1024',
-+  imageQuality: 'standard',
++  imageQuality: 'hd',
 +  imageResponseFormat: 'b64_json',
 +  videoSeconds: 5,
 +  videoSize: '1280x720',
@@ -2307,7 +2303,7 @@ index 00000000..cb7e61e9
 +}
 diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
 new file mode 100644
-index 00000000..65a54f47
+index 00000000..fb69a55c
 --- /dev/null
 +++ b/web/default/src/features/playground/lib/model/model-profiles.ts
 @@ -0,0 +1,199 @@
@@ -2412,7 +2408,7 @@ index 00000000..65a54f47
 +      imageSizes: GPT_IMAGE_2_4K_SIZES,
 +      imageResponseFormats: GPT_IMAGE_2_RESPONSE_FORMATS,
 +      defaultImageSize: "3840x2160",
-+      defaultImageQuality: "auto",
++      defaultImageQuality: "hd",
 +      defaultImageResponseFormat: "b64_json",
 +    };
 +  }
@@ -2430,7 +2426,7 @@ index 00000000..65a54f47
 +      ],
 +      imageSizes: GEMINI_IMAGE_RESOLUTIONS,
 +      defaultImageSize: "4K",
-+      defaultImageQuality: "standard",
++      defaultImageQuality: "hd",
 +    };
 +  }
 +
@@ -2451,7 +2447,7 @@ index 00000000..65a54f47
 +      imageSizes: STANDARD_IMAGE_SIZES,
 +      imageResponseFormats: image2 ? GPT_IMAGE_2_RESPONSE_FORMATS : undefined,
 +      defaultImageSize: "1024x1024",
-+      defaultImageQuality: "standard",
++      defaultImageQuality: "hd",
 +      defaultImageResponseFormat: image2 ? "b64_json" : undefined,
 +    };
 +  }

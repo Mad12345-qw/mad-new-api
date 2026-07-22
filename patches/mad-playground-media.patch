@@ -1,8 +1,14 @@
 diff --git a/controller/playground.go b/controller/playground.go
-index 501c4e15..06370195 100644
+index 501c4e15..786fe6ce 100644
 --- a/controller/playground.go
 +++ b/controller/playground.go
-@@ -12,27 +12,15 @@ import (
+@@ -7,32 +7,21 @@ import (
+ 	"github.com/QuantumNous/new-api/middleware"
+ 	"github.com/QuantumNous/new-api/model"
+ 	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+ 	"github.com/QuantumNous/new-api/types"
+ 
  	"github.com/gin-gonic/gin"
  )
  
@@ -33,7 +39,7 @@ index 501c4e15..06370195 100644
  	}
  
  	userId := c.GetInt("id")
-@@ -40,8 +28,7 @@ func Playground(c *gin.Context) {
+@@ -40,8 +29,7 @@ func Playground(c *gin.Context) {
  	// Write user context to ensure acceptUnsetRatio is available
  	userCache, err := model.GetUserCache(userId)
  	if err != nil {
@@ -43,7 +49,7 @@ index 501c4e15..06370195 100644
  	}
  	userCache.WriteContext(c)
  
-@@ -51,6 +38,52 @@ func Playground(c *gin.Context) {
+@@ -51,6 +39,53 @@ func Playground(c *gin.Context) {
  		Group:  relayInfo.UsingGroup,
  	}
  	_ = middleware.SetupContextForToken(c, tempToken)
@@ -92,6 +98,7 @@ index 501c4e15..06370195 100644
 +}
 +
 +func PlaygroundTaskFetch(c *gin.Context) {
++	c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
 +	if respondPlaygroundSetupError(c, setupPlaygroundContext(c)) {
 +		return
 +	}
@@ -221,6 +228,19 @@ index 9f460ce5..0ec1dabe 100644
  		info.IsPlayground = true
  		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
  		info.RequestURLPath = "/v1" + info.RequestURLPath
+diff --git a/relay/relay_task.go b/relay/relay_task.go
+index fb384d18..a1f8e098 100644
+--- a/relay/relay_task.go
++++ b/relay/relay_task.go
+@@ -296,7 +296,7 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp
+ func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
+ 	respBuilder, ok := fetchRespBuilders[relayMode]
+ 	if !ok {
+-		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
++		return service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
+ 	}
+ 
+ 	respBody, taskErr := respBuilder(c)
 diff --git a/router/relay-router.go b/router/relay-router.go
 index 17a13cad..5d7c7aa7 100644
 --- a/router/relay-router.go

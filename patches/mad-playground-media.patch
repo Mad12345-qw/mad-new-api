@@ -241,6 +241,33 @@ index fb384d18..a1f8e098 100644
  	}
  
  	respBody, taskErr := respBuilder(c)
+diff --git a/relay/relay_task_fetch_test.go b/relay/relay_task_fetch_test.go
+new file mode 100644
+index 00000000..8660d321
+--- /dev/null
++++ b/relay/relay_task_fetch_test.go
+@@ -0,0 +1,21 @@
++package relay
++
++import (
++	"net/http/httptest"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++)
++
++func TestRelayTaskFetchRejectsUnknownMode(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	context, _ := gin.CreateTestContext(httptest.NewRecorder())
++
++	taskErr := RelayTaskFetch(context, -1)
++	if taskErr == nil {
++		t.Fatal("expected invalid relay mode error")
++	}
++	if taskErr.Code != "invalid_relay_mode" {
++		t.Fatalf("unexpected error code: %s", taskErr.Code)
++	}
++}
 diff --git a/router/relay-router.go b/router/relay-router.go
 index 17a13cad..5d7c7aa7 100644
 --- a/router/relay-router.go

@@ -738,7 +738,7 @@ index b06d7cb4..951f207b 100644
 +  );
  }
 diff --git a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
-index 7cfd0a9d..f0238e77 100644
+index 7cfd0a9d..90df4f5c 100644
 --- a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
 +++ b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
 @@ -16,60 +16,61 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -827,7 +827,7 @@ index 7cfd0a9d..f0238e77 100644
  
  function PlaygroundParameterContent({
    compact = false,
-@@ -79,64 +80,203 @@ function PlaygroundParameterContent({
+@@ -79,64 +80,208 @@ function PlaygroundParameterContent({
    onParameterEnabledChange,
    parameterEnabled,
  }: PlaygroundParameterContentProps) {
@@ -855,13 +855,18 @@ index 7cfd0a9d..f0238e77 100644
 +
 +  if (modelKind !== "chat") {
 +    return (
-+      <div className={cn("grid gap-3", compact ? "px-4 pb-4" : "p-1")}>
++      <div
++        className={cn(
++          "grid w-full min-w-0 gap-3",
++          compact ? "px-4 pb-4" : "p-1",
++        )}
++      >
 +        {modelKind === "image" && (
 +          <>
-+            <label className="grid gap-1.5 text-sm font-medium">
++            <label className="grid min-w-0 gap-1.5 text-sm font-medium">
 +              {t("Image size")}
 +              <select
-+                className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                className="border-input bg-background block h-9 w-full min-w-0 max-w-full truncate rounded-md border px-3 text-sm"
 +                disabled={disabled}
 +                onChange={(event) =>
 +                  onConfigChange("imageSize", event.target.value)
@@ -876,10 +881,10 @@ index 7cfd0a9d..f0238e77 100644
 +              </select>
 +            </label>
 +            {modelProfile.defaultImageQuality !== "auto" && (
-+              <label className="grid gap-1.5 text-sm font-medium">
++              <label className="grid min-w-0 gap-1.5 text-sm font-medium">
 +                {t("Quality")}
 +                <select
-+                  className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                  className="border-input bg-background block h-9 w-full min-w-0 max-w-full truncate rounded-md border px-3 text-sm"
 +                  disabled={disabled}
 +                  onChange={(event) =>
 +                    onConfigChange("imageQuality", event.target.value)
@@ -893,10 +898,10 @@ index 7cfd0a9d..f0238e77 100644
 +              </label>
 +            )}
 +            {modelProfile.imageResponseFormats && (
-+              <label className="grid gap-1.5 text-sm font-medium">
++              <label className="grid min-w-0 gap-1.5 text-sm font-medium">
 +                {t("Return format")}
 +                <select
-+                  className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                  className="border-input bg-background block h-9 w-full min-w-0 max-w-full truncate rounded-md border px-3 text-sm"
 +                  disabled={disabled}
 +                  onChange={(event) =>
 +                    onConfigChange(
@@ -919,7 +924,7 @@ index 7cfd0a9d..f0238e77 100644
 +
 +        {modelKind === "video" && (
 +          <>
-+            <label className="grid gap-1.5 text-sm font-medium">
++            <label className="grid min-w-0 gap-1.5 text-sm font-medium">
 +              {t("Duration")}
 +              <Input
 +                disabled={disabled}
@@ -935,10 +940,10 @@ index 7cfd0a9d..f0238e77 100644
 +                value={config.videoSeconds}
 +              />
 +            </label>
-+            <label className="grid gap-1.5 text-sm font-medium">
++            <label className="grid min-w-0 gap-1.5 text-sm font-medium">
 +              {t("Resolution")}
 +              <select
-+                className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                className="border-input bg-background block h-9 w-full min-w-0 max-w-full truncate rounded-md border px-3 text-sm"
 +                disabled={disabled}
 +                onChange={(event) =>
 +                  onConfigChange("videoSize", event.target.value)
@@ -956,7 +961,7 @@ index 7cfd0a9d..f0238e77 100644
 +
 +        {modelKind === "tts" && (
 +          <>
-+            <label className="grid gap-1.5 text-sm font-medium">
++            <label className="grid min-w-0 gap-1.5 text-sm font-medium">
 +              {t(modelProfile.ttsVoiceLabel || "Voice")}
 +              <Input
 +                disabled={disabled}
@@ -967,10 +972,10 @@ index 7cfd0a9d..f0238e77 100644
 +                value={config.ttsVoice}
 +              />
 +            </label>
-+            <label className="grid gap-1.5 text-sm font-medium">
++            <label className="grid min-w-0 gap-1.5 text-sm font-medium">
 +              {t("Audio format")}
 +              <select
-+                className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                className="border-input bg-background block h-9 w-full min-w-0 max-w-full truncate rounded-md border px-3 text-sm"
 +                disabled={disabled}
 +                onChange={(event) =>
 +                  onConfigChange("ttsFormat", event.target.value)
@@ -1052,7 +1057,7 @@ index 7cfd0a9d..f0238e77 100644
                    parameter: t(control.labelKey),
                  })}
                  checked={enabled}
-@@ -144,13 +284,13 @@ function PlaygroundParameterContent({
+@@ -144,13 +289,13 @@ function PlaygroundParameterContent({
                  onCheckedChange={(checked) =>
                    onParameterEnabledChange(control.key, checked)
                  }
@@ -1069,7 +1074,7 @@ index 7cfd0a9d..f0238e77 100644
                  disabled={disabled || !enabled}
                  id={controlId}
                  max={control.max}
-@@ -158,11 +298,11 @@ function PlaygroundParameterContent({
+@@ -158,11 +303,11 @@ function PlaygroundParameterContent({
                  onValueChange={(nextValue) => {
                    const firstValue = Array.isArray(nextValue)
                      ? nextValue[0]
@@ -1084,7 +1089,7 @@ index 7cfd0a9d..f0238e77 100644
                  }}
                  step={control.step}
                  value={[Number(value)]}
-@@ -171,7 +311,7 @@ function PlaygroundParameterContent({
+@@ -171,7 +316,7 @@ function PlaygroundParameterContent({
                <Input
                  disabled={disabled || !enabled}
                  id={controlId}
@@ -1093,7 +1098,7 @@ index 7cfd0a9d..f0238e77 100644
                  max={control.max}
                  min={control.min}
                  onChange={(event) => {
-@@ -179,42 +319,51 @@ function PlaygroundParameterContent({
+@@ -179,42 +324,52 @@ function PlaygroundParameterContent({
                      control.key,
                      normalizeParameterNumberValue(
                        control.key,
@@ -1134,11 +1139,12 @@ index 7cfd0a9d..f0238e77 100644
 +    activeCount = PLAYGROUND_PARAMETER_CONTROLS.filter(
 +      (control) => props.parameterEnabled[control.key],
 +    ).length;
-+  } else if (
-+    modelKind === "image" &&
-+    getPlaygroundModelProfile(props.config.model).defaultImageQuality === "auto"
-+  ) {
-+    activeCount = 1;
++  } else if (modelKind === "image") {
++    const profile = getPlaygroundModelProfile(props.config.model);
++    activeCount =
++      1 +
++      (profile.defaultImageQuality === "auto" ? 0 : 1) +
++      (profile.imageResponseFormats ? 1 : 0);
 +  }
  
    const trigger = (
@@ -1162,7 +1168,7 @@ index 7cfd0a9d..f0238e77 100644
  
    if (isMobile) {
      return (
-@@ -222,20 +371,20 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+@@ -222,20 +377,20 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
          <Tooltip>
            <TooltipTrigger render={<SheetTrigger render={trigger} />} />
            <TooltipContent>
@@ -1173,7 +1179,7 @@ index 7cfd0a9d..f0238e77 100644
          <SheetContent
 -          className='max-h-[85vh] overflow-hidden rounded-t-xl'
 -          side='bottom'
-+          className="max-h-[85vh] overflow-hidden rounded-t-xl"
++          className="max-h-[85vh] w-full min-w-0 overflow-hidden rounded-t-xl"
 +          side="bottom"
          >
            <SheetHeader>
@@ -1188,7 +1194,7 @@ index 7cfd0a9d..f0238e77 100644
    }
  
    return (
-@@ -243,24 +392,24 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+@@ -243,24 +398,24 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
        <Tooltip>
          <TooltipTrigger render={<PopoverTrigger render={trigger} />} />
          <TooltipContent>
@@ -1200,7 +1206,7 @@ index 7cfd0a9d..f0238e77 100644
 -        align='start'
 -        className='w-[22rem] max-w-[calc(100vw-2rem)] gap-3 p-3'
 +        align="start"
-+        className="w-[22rem] max-w-[calc(100vw-2rem)] gap-3 p-3"
++        className="w-[22rem] min-w-0 max-w-[calc(100vw-2rem)] overflow-hidden gap-3 p-3"
          collisionPadding={8}
 -        side='top'
 +        side="top"

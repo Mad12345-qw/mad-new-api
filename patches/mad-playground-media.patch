@@ -1444,7 +1444,7 @@ index 4026a0f1..77f6a873 100644
  
  export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
 diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
-index bfc85f2c..acc5c880 100644
+index bfc85f2c..9877a722 100644
 --- a/web/default/src/features/playground/hooks/use-chat-handler.ts
 +++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
 @@ -20,7 +20,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
@@ -1486,7 +1486,7 @@ index bfc85f2c..acc5c880 100644
  import { useStreamRequest } from './use-stream-request'
  
  interface UseChatHandlerOptions {
-@@ -45,12 +65,121 @@ interface UseChatHandlerOptions {
+@@ -45,12 +65,122 @@ interface UseChatHandlerOptions {
  
  const KNOWN_ERROR_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES))
  const STREAM_UPDATE_FLUSH_MS = 50
@@ -1582,10 +1582,11 @@ index bfc85f2c..acc5c880 100644
 +}
 +
 +function getGeminiImageSize(size: string): '1K' | '2K' | '4K' {
-+  if (size.includes('3840')) {
++  const normalized = size.trim().toUpperCase()
++  if (normalized === '4K' || normalized.includes('3840')) {
 +    return '4K'
 +  }
-+  if (size.includes('2160')) {
++  if (normalized === '2K' || normalized.includes('2160')) {
 +    return '2K'
 +  }
 +  return '1K'
@@ -1608,7 +1609,7 @@ index bfc85f2c..acc5c880 100644
  function mergePendingStreamChunk(
    currentChunk: string,
    nextChunk: string
-@@ -279,16 +408,208 @@ export function useChatHandler({
+@@ -279,16 +409,208 @@ export function useChatHandler({
      [config, parameterEnabled, onMessageUpdate, handleStreamError]
    )
  
@@ -2306,10 +2307,10 @@ index 00000000..cb7e61e9
 +}
 diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
 new file mode 100644
-index 00000000..714aca5f
+index 00000000..65a54f47
 --- /dev/null
 +++ b/web/default/src/features/playground/lib/model/model-profiles.ts
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,199 @@
 +import type { PlaygroundModelKind } from "../../types";
 +import { getPlaygroundModelKind } from "./model-capabilities";
 +
@@ -2342,6 +2343,10 @@ index 00000000..714aca5f
 +  { value: "1024x1024", label: "1:1 | 1024x1024" },
 +  { value: "1536x1024", label: "3:2 | 1536x1024" },
 +  { value: "1024x1536", label: "2:3 | 1024x1536" },
++];
++
++const GEMINI_IMAGE_RESOLUTIONS: PlaygroundSelectOption[] = [
++  { value: "4K", label: "4K" },
 +];
 +
 +const GPT_IMAGE_2_4K_SIZES: PlaygroundSelectOption[] = [
@@ -2378,6 +2383,14 @@ index 00000000..714aca5f
 +  return /gpt[-_.]?image[-_.]?2(?:[-_.]?4k)?/i.test(model);
 +}
 +
++export function isGeminiFourKImageModel(model: string): boolean {
++  const normalized = model.trim().toLowerCase();
++  return (
++    normalized === "gemini-3.1-flash-image-preview" ||
++    normalized === "gemini-3-pro-image-preview"
++  );
++}
++
 +export function getPlaygroundModelProfile(
 +  model: string,
 +): PlaygroundModelProfile {
@@ -2401,6 +2414,23 @@ index 00000000..714aca5f
 +      defaultImageSize: "3840x2160",
 +      defaultImageQuality: "auto",
 +      defaultImageResponseFormat: "b64_json",
++    };
++  }
++
++  if (isGeminiFourKImageModel(model)) {
++    return {
++      badge: "4K Image",
++      description:
++        "Gemini native 4K image generation; the playground always requests 4K output.",
++      endpoint: "/v1/chat/completions",
++      kind,
++      requestHints: [
++        { label: "model", value: model },
++        { label: "image_size", value: "4K" },
++      ],
++      imageSizes: GEMINI_IMAGE_RESOLUTIONS,
++      defaultImageSize: "4K",
++      defaultImageQuality: "standard",
 +    };
 +  }
 +
@@ -2624,10 +2654,10 @@ index 855b4833..209eb69d 100644
  
  export interface ParameterEnabled {
 diff --git a/web/default/src/i18n/locales/zh.json b/web/default/src/i18n/locales/zh.json
-index 4f1412ac..5efcc525 100644
+index 4f1412ac..cefaa91a 100644
 --- a/web/default/src/i18n/locales/zh.json
 +++ b/web/default/src/i18n/locales/zh.json
-@@ -5169,6 +5169,35 @@
+@@ -5169,6 +5169,36 @@
      "Zero retention": "零数据保留",
      "Zhipu": "智谱",
      "Zhipu V4": "智谱 V4",
@@ -2656,6 +2686,7 @@ index 4f1412ac..5efcc525 100644
 +    "File read failed": "文件读取失败",
 +    "4K Image": "4K 图片",
 +    "Native 4K image generation verified at 3840x2160; enter a prompt and generate the result directly.": "已验证 3840x2160 原生 4K 生图，输入提示词即可直接生成。",
++    "Gemini native 4K image generation; the playground always requests 4K output.": "Gemini 原生 4K 生图，游乐场始终请求 4K 输出。",
 +    "Generate images from text or upload an image to test compatible editing models.": "支持文生图；上传图片后可测试兼容的图片编辑能力。",
 +    "MOSS speech synthesis using the verified OpenAI-compatible audio request.": "MOSS 语音合成，使用已验证的 OpenAI 兼容音频调用方式。",
 +    "Voice ID": "音色 ID",

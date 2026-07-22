@@ -1,0 +1,29 @@
+[Unit]
+Description=Mad API image response compatibility layer
+After=network-online.target new-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=imagecompat
+Group=www-data
+Environment=PYTHONUNBUFFERED=1
+Environment=UPSTREAM=http://127.0.0.1:3001
+Environment=PUBLIC_BASE_URL=https://mad.myddns.me
+Environment=CACHE_DIR=/opt/image-url-cache
+Environment=CACHE_TTL=1800
+Environment=CLEAN_INTERVAL=300
+ExecStart=/usr/bin/python3 /opt/image-url-compat/service.py
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/image-url-cache
+MemoryMax=512M
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

@@ -9,6 +9,11 @@ HEALTH_URL=http://127.0.0.1:3001/api/status
 LOCK_FILE=/run/lock/new-api-maintenance.lock
 RELEASE_BASE=https://github.com/Mad12345-qw/mad-new-api/releases/download/build-latest
 STATE_FILE=/opt/new-api/mad-release-sha256.txt
+COMPAT_STATE_FILE=/opt/new-api/mad-image-compat-sha256.txt
+COMPAT_DIR=/opt/image-url-compat
+COMPAT_SCRIPT=$COMPAT_DIR/service.py
+COMPAT_UNIT=/etc/systemd/system/image-url-compat.service
+COMPAT_HEALTH_URL=http://127.0.0.1:3010/health
 
 exec 9>"$LOCK_FILE"
 flock -n 9 || exit 0
@@ -21,10 +26,54 @@ curl -fL --retry 3 --connect-timeout 15 --max-time 900 \
   -o "$work_dir/mad-new-api.tar.gz" "$RELEASE_BASE/mad-new-api.tar.gz?cb=$cache_bust"
 curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
   -o "$work_dir/mad-new-api.tar.gz.sha256" "$RELEASE_BASE/mad-new-api.tar.gz.sha256?cb=$cache_bust"
+for asset in image-url-compat.py image-url-compat.service; do
+  curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
+    -o "$work_dir/$asset" "$RELEASE_BASE/$asset?cb=$cache_bust"
+  curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
+    -o "$work_dir/$asset.sha256" "$RELEASE_BASE/$asset.sha256?cb=$cache_bust"
+done
 
 cd "$work_dir"
 sha256sum -c mad-new-api.tar.gz.sha256
+sha256sum -c image-url-compat.py.sha256
+sha256sum -c image-url-compat.service.sha256
 release_sha=$(sha256sum mad-new-api.tar.gz | awk '{print $1}')
+compat_sha=$(cat image-url-compat.py.sha256 image-url-compat.service.sha256 | sha256sum | awk '{print $1}')
+
+if [ ! -f "$COMPAT_STATE_FILE" ] || [ "$(cat "$COMPAT_STATE_FILE")" != "$compat_sha" ]; then
+  compat_backup_dir="$COMPOSE_DIR/backups/image-compat-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$compat_backup_dir"
+  [ ! -f "$COMPAT_SCRIPT" ] || cp -a "$COMPAT_SCRIPT" "$compat_backup_dir/service.py"
+  [ ! -f "$COMPAT_UNIT" ] || cp -a "$COMPAT_UNIT" "$compat_backup_dir/image-url-compat.service"
+
+  install -d -m 0755 "$COMPAT_DIR"
+  install -m 0755 "$work_dir/image-url-compat.py" "$COMPAT_SCRIPT"
+  install -m 0644 "$work_dir/image-url-compat.service" "$COMPAT_UNIT"
+  systemctl daemon-reload
+  systemctl enable image-url-compat.service >/dev/null
+  systemctl restart image-url-compat.service
+
+  compat_healthy=0
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 3 "$COMPAT_HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; then
+      compat_healthy=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$compat_healthy" -ne 1 ]; then
+    logger -t new-api-autoupdate "image compatibility service health check failed; rolling back"
+    [ ! -f "$compat_backup_dir/service.py" ] || cp -a "$compat_backup_dir/service.py" "$COMPAT_SCRIPT"
+    [ ! -f "$compat_backup_dir/image-url-compat.service" ] || cp -a "$compat_backup_dir/image-url-compat.service" "$COMPAT_UNIT"
+    systemctl daemon-reload
+    systemctl restart image-url-compat.service || true
+    exit 2
+  fi
+
+  printf '%s\n' "$compat_sha" > "$COMPAT_STATE_FILE"
+  logger -t new-api-autoupdate "image compatibility service updated successfully: $compat_sha"
+fi
 
 if [ -f "$STATE_FILE" ] \
   && [ "$(cat "$STATE_FILE")" = "$release_sha" ] \

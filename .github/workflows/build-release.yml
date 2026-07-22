@@ -92,6 +92,9 @@ jobs:
           ../node_modules/.bin/oxlint -c .oxlintrc.json src/features/playground
           bun run build
 
+      - name: Test image response compatibility service
+        run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
+
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
 
@@ -99,6 +102,12 @@ jobs:
         run: |
           docker save mad-new-api:latest | gzip -1 > mad-new-api.tar.gz
           sha256sum mad-new-api.tar.gz > mad-new-api.tar.gz.sha256
+          cp server/image-url-compat/service.py image-url-compat.py
+          cp server/image-url-compat/image-url-compat.service image-url-compat.service
+          cp server/new-api-autoupdate.sh new-api-autoupdate.sh
+          sha256sum image-url-compat.py > image-url-compat.py.sha256
+          sha256sum image-url-compat.service > image-url-compat.service.sha256
+          sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
           git -C source rev-parse HEAD > upstream-commit.txt
 
       - name: Publish stable release
@@ -109,6 +118,12 @@ jobs:
           gh release create build-latest \
             mad-new-api.tar.gz \
             mad-new-api.tar.gz.sha256 \
+            image-url-compat.py \
+            image-url-compat.py.sha256 \
+            image-url-compat.service \
+            image-url-compat.service.sha256 \
+            new-api-autoupdate.sh \
+            new-api-autoupdate.sh.sha256 \
             upstream-commit.txt \
             --title "Mad New API latest build" \
-            --notes "Automated build from the pinned upstream New API source with Mad API billing, branding, recharge, and multi-model playground customizations."
+            --notes "Automated build from the pinned upstream New API source with Mad API billing, branding, recharge, multi-model playground, and image response compatibility customizations."

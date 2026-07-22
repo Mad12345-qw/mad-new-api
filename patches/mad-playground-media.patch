@@ -738,7 +738,7 @@ index b06d7cb4..951f207b 100644
 +  );
  }
 diff --git a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
-index 7cfd0a9d..32cd1abe 100644
+index 7cfd0a9d..f0238e77 100644
 --- a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
 +++ b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
 @@ -16,60 +16,61 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -827,7 +827,7 @@ index 7cfd0a9d..32cd1abe 100644
  
  function PlaygroundParameterContent({
    compact = false,
-@@ -79,64 +80,181 @@ function PlaygroundParameterContent({
+@@ -79,64 +80,203 @@ function PlaygroundParameterContent({
    onParameterEnabledChange,
    parameterEnabled,
  }: PlaygroundParameterContentProps) {
@@ -889,6 +889,28 @@ index 7cfd0a9d..32cd1abe 100644
 +                  <option value="standard">{t("Standard")}</option>
 +                  <option value="high">{t("High")}</option>
 +                  <option value="hd">HD</option>
++                </select>
++              </label>
++            )}
++            {modelProfile.imageResponseFormats && (
++              <label className="grid gap-1.5 text-sm font-medium">
++                {t("Return format")}
++                <select
++                  className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                  disabled={disabled}
++                  onChange={(event) =>
++                    onConfigChange(
++                      "imageResponseFormat",
++                      event.target.value as PlaygroundConfig["imageResponseFormat"],
++                    )
++                  }
++                  value={config.imageResponseFormat}
++                >
++                  {modelProfile.imageResponseFormats.map((option) => (
++                    <option key={option.value} value={option.value}>
++                      {t(option.label)}
++                    </option>
++                  ))}
 +                </select>
 +              </label>
 +            )}
@@ -1030,7 +1052,7 @@ index 7cfd0a9d..32cd1abe 100644
                    parameter: t(control.labelKey),
                  })}
                  checked={enabled}
-@@ -144,13 +262,13 @@ function PlaygroundParameterContent({
+@@ -144,13 +284,13 @@ function PlaygroundParameterContent({
                  onCheckedChange={(checked) =>
                    onParameterEnabledChange(control.key, checked)
                  }
@@ -1047,7 +1069,7 @@ index 7cfd0a9d..32cd1abe 100644
                  disabled={disabled || !enabled}
                  id={controlId}
                  max={control.max}
-@@ -158,11 +276,11 @@ function PlaygroundParameterContent({
+@@ -158,11 +298,11 @@ function PlaygroundParameterContent({
                  onValueChange={(nextValue) => {
                    const firstValue = Array.isArray(nextValue)
                      ? nextValue[0]
@@ -1062,7 +1084,7 @@ index 7cfd0a9d..32cd1abe 100644
                  }}
                  step={control.step}
                  value={[Number(value)]}
-@@ -171,7 +289,7 @@ function PlaygroundParameterContent({
+@@ -171,7 +311,7 @@ function PlaygroundParameterContent({
                <Input
                  disabled={disabled || !enabled}
                  id={controlId}
@@ -1071,7 +1093,7 @@ index 7cfd0a9d..32cd1abe 100644
                  max={control.max}
                  min={control.min}
                  onChange={(event) => {
-@@ -179,42 +297,51 @@ function PlaygroundParameterContent({
+@@ -179,42 +319,51 @@ function PlaygroundParameterContent({
                      control.key,
                      normalizeParameterNumberValue(
                        control.key,
@@ -1140,7 +1162,7 @@ index 7cfd0a9d..32cd1abe 100644
  
    if (isMobile) {
      return (
-@@ -222,20 +349,20 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+@@ -222,20 +371,20 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
          <Tooltip>
            <TooltipTrigger render={<SheetTrigger render={trigger} />} />
            <TooltipContent>
@@ -1166,7 +1188,7 @@ index 7cfd0a9d..32cd1abe 100644
    }
  
    return (
-@@ -243,24 +370,24 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+@@ -243,24 +392,24 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
        <Tooltip>
          <TooltipTrigger render={<PopoverTrigger render={trigger} />} />
          <TooltipContent>
@@ -1385,7 +1407,7 @@ index 4a116bf8..7391235f 100644
            {actions}
          </>
 diff --git a/web/default/src/features/playground/constants.ts b/web/default/src/features/playground/constants.ts
-index 4026a0f1..07ce830d 100644
+index 4026a0f1..77f6a873 100644
 --- a/web/default/src/features/playground/constants.ts
 +++ b/web/default/src/features/playground/constants.ts
 @@ -35,6 +35,11 @@ export const MESSAGE_STATUS = {
@@ -1400,13 +1422,14 @@ index 4026a0f1..07ce830d 100644
    USER_MODELS: '/api/user/models',
    USER_GROUPS: '/api/user/self/groups',
  } as const
-@@ -54,6 +59,13 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
+@@ -54,6 +59,14 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
    presence_penalty: 0,
    seed: null,
    stream: true,
 +  webSearch: false,
 +  imageSize: '1024x1024',
 +  imageQuality: 'standard',
++  imageResponseFormat: 'b64_json',
 +  videoSeconds: 5,
 +  videoSize: '1280x720',
 +  ttsVoice: 'alloy',
@@ -1415,7 +1438,7 @@ index 4026a0f1..07ce830d 100644
  
  export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
 diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
-index bfc85f2c..cc046e65 100644
+index bfc85f2c..acc5c880 100644
 --- a/web/default/src/features/playground/hooks/use-chat-handler.ts
 +++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
 @@ -20,7 +20,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
@@ -1434,13 +1457,14 @@ index bfc85f2c..cc046e65 100644
  import { ERROR_MESSAGES } from '../constants'
  import {
    applyStreamingChunk,
-@@ -33,8 +40,20 @@ import {
+@@ -33,8 +40,21 @@ import {
    hasChatCompletionChoice,
    isAssistantMessageFinal,
    isAssistantMessagePending,
 +  dataUrlToBlob,
 +  getMessageContent,
 +  getPlaygroundModelKind,
++  isGptImage2Model,
 +  isGeminiImageModel,
 +  updateCurrentVersionContent,
  } from '../lib'
@@ -1456,7 +1480,7 @@ index bfc85f2c..cc046e65 100644
  import { useStreamRequest } from './use-stream-request'
  
  interface UseChatHandlerOptions {
-@@ -45,12 +64,121 @@ interface UseChatHandlerOptions {
+@@ -45,12 +65,121 @@ interface UseChatHandlerOptions {
  
  const KNOWN_ERROR_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES))
  const STREAM_UPDATE_FLUSH_MS = 50
@@ -1578,7 +1602,7 @@ index bfc85f2c..cc046e65 100644
  function mergePendingStreamChunk(
    currentChunk: string,
    nextChunk: string
-@@ -279,16 +407,202 @@ export function useChatHandler({
+@@ -279,16 +408,208 @@ export function useChatHandler({
      [config, parameterEnabled, onMessageUpdate, handleStreamError]
    )
  
@@ -1647,6 +1671,9 @@ index bfc85f2c..cc046e65 100644
 +            payload.append('group', config.group)
 +            payload.append('prompt', prompt || 'Edit this image')
 +            payload.append('size', config.imageSize)
++            if (isGptImage2Model(config.model)) {
++              payload.append('response_format', config.imageResponseFormat)
++            }
 +            if (config.imageQuality !== 'auto') {
 +              payload.append('quality', config.imageQuality)
 +            }
@@ -1667,6 +1694,9 @@ index bfc85f2c..cc046e65 100644
 +              prompt,
 +              size: config.imageSize,
 +              n: 1,
++            }
++            if (isGptImage2Model(config.model)) {
++              imagePayload.response_format = config.imageResponseFormat
 +            }
 +            if (config.imageQuality !== 'auto') {
 +              imagePayload.quality = config.imageQuality
@@ -1836,7 +1866,7 @@ index 25b66bc1..d3c4dbaf 100644
          return newMessages
        })
 diff --git a/web/default/src/features/playground/index.tsx b/web/default/src/features/playground/index.tsx
-index 4f225574..d2b85b80 100644
+index 4f225574..91f413ce 100644
 --- a/web/default/src/features/playground/index.tsx
 +++ b/web/default/src/features/playground/index.tsx
 @@ -16,14 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -1893,7 +1923,7 @@ index 4f225574..d2b85b80 100644
  
    const { isLoadingModels } = usePlaygroundOptions({
      currentGroup: config.group,
-@@ -72,12 +75,33 @@ export function Playground() {
+@@ -72,12 +75,36 @@ export function Playground() {
      setGroups,
      setModels,
      updateConfig,
@@ -1908,6 +1938,9 @@ index 4f225574..d2b85b80 100644
 +    }
 +    if (profile.defaultImageQuality) {
 +      updateConfig("imageQuality", profile.defaultImageQuality);
++    }
++    if (profile.defaultImageResponseFormat) {
++      updateConfig("imageResponseFormat", profile.defaultImageResponseFormat);
 +    }
 +    if (profile.defaultTtsVoice) {
 +      updateConfig("ttsVoice", profile.defaultTtsVoice);
@@ -1930,7 +1963,7 @@ index 4f225574..d2b85b80 100644
          <PlaygroundChat
            messages={messages}
            isLoadingMessages={isLoadingMessages}
-@@ -94,7 +118,7 @@ export function Playground() {
+@@ -94,7 +121,7 @@ export function Playground() {
        </div>
  
        {/* Input area: center content and constrain to the same container width */}
@@ -1939,7 +1972,7 @@ index 4f225574..d2b85b80 100644
          <PlaygroundInput
            config={config}
            disabled={isGenerating}
-@@ -104,10 +128,10 @@ export function Playground() {
+@@ -104,10 +131,10 @@ export function Playground() {
            isModelLoading={isLoadingModels}
            modelValue={config.model}
            models={models}
@@ -1952,7 +1985,7 @@ index 4f225574..d2b85b80 100644
            onParameterEnabledChange={updateParameterEnabled}
            onStop={stopGeneration}
            onSubmit={handleSendMessage}
-@@ -116,5 +140,5 @@ export function Playground() {
+@@ -116,5 +143,5 @@ export function Playground() {
          />
        </div>
      </div>
@@ -2267,10 +2300,10 @@ index 00000000..cb7e61e9
 +}
 diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
 new file mode 100644
-index 00000000..c4a4e6e4
+index 00000000..42f02bd5
 --- /dev/null
 +++ b/web/default/src/features/playground/lib/model/model-profiles.ts
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,170 @@
 +import type { PlaygroundModelKind } from "../../types";
 +import { getPlaygroundModelKind } from "./model-capabilities";
 +
@@ -2286,7 +2319,9 @@ index 00000000..c4a4e6e4
 +  kind: PlaygroundModelKind;
 +  requestHints?: PlaygroundSelectOption[];
 +  imageSizes?: PlaygroundSelectOption[];
++  imageResponseFormats?: PlaygroundSelectOption[];
 +  defaultImageQuality?: string;
++  defaultImageResponseFormat?: "b64_json" | "url";
 +  defaultImageSize?: string;
 +  defaultTtsFormat?: string;
 +  defaultTtsVoice?: string;
@@ -2311,6 +2346,11 @@ index 00000000..c4a4e6e4
 +  },
 +];
 +
++const GPT_IMAGE_2_RESPONSE_FORMATS: PlaygroundSelectOption[] = [
++  { value: "b64_json", label: "Base64 (recommended)" },
++  { value: "url", label: "Image URL" },
++];
++
 +const STANDARD_TTS_FORMATS: PlaygroundSelectOption[] = [
 +  { value: "mp3", label: "MP3" },
 +  { value: "wav", label: "WAV" },
@@ -2326,6 +2366,10 @@ index 00000000..c4a4e6e4
 +
 +export function isGptImage2FourKModel(model: string): boolean {
 +  return /gpt[-_.]?image[-_.]?2[-_.]?4k/i.test(model);
++}
++
++export function isGptImage2Model(model: string): boolean {
++  return /gpt[-_.]?image[-_.]?2(?:[-_.]?4k)?/i.test(model);
 +}
 +
 +export function getPlaygroundModelProfile(
@@ -2344,23 +2388,35 @@ index 00000000..c4a4e6e4
 +        { label: "model", value: model },
 +        { label: "size", value: "3840x2160" },
 +        { label: "n", value: "1" },
++        { label: "response_format", value: "b64_json" },
 +      ],
 +      imageSizes: GPT_IMAGE_2_4K_SIZES,
++      imageResponseFormats: GPT_IMAGE_2_RESPONSE_FORMATS,
 +      defaultImageSize: "3840x2160",
 +      defaultImageQuality: "auto",
++      defaultImageResponseFormat: "b64_json",
 +    };
 +  }
 +
 +  if (kind === "image") {
++    const image2 = isGptImage2Model(model);
 +    return {
 +      badge: "Image",
 +      description:
 +        "Generate images from text or upload an image to test compatible editing models.",
 +      endpoint: "/v1/images/generations",
 +      kind,
++      requestHints: image2
++        ? [
++            { label: "model", value: model },
++            { label: "response_format", value: "b64_json" },
++          ]
++        : undefined,
 +      imageSizes: STANDARD_IMAGE_SIZES,
++      imageResponseFormats: image2 ? GPT_IMAGE_2_RESPONSE_FORMATS : undefined,
 +      defaultImageSize: "1024x1024",
 +      defaultImageQuality: "standard",
++      defaultImageResponseFormat: image2 ? "b64_json" : undefined,
 +    };
 +  }
 +
@@ -2419,16 +2475,17 @@ index 00000000..c4a4e6e4
 +  };
 +}
 diff --git a/web/default/src/features/playground/lib/storage/storage-schema.ts b/web/default/src/features/playground/lib/storage/storage-schema.ts
-index 6bcfd2de..70eb8fda 100644
+index 6bcfd2de..bae3005d 100644
 --- a/web/default/src/features/playground/lib/storage/storage-schema.ts
 +++ b/web/default/src/features/playground/lib/storage/storage-schema.ts
-@@ -34,6 +34,13 @@ export const playgroundConfigSchema = z.object({
+@@ -34,6 +34,14 @@ export const playgroundConfigSchema = z.object({
    presence_penalty: z.number().optional(),
    seed: z.number().nullable().optional(),
    stream: z.boolean().optional(),
 +  webSearch: z.boolean().optional(),
 +  imageSize: z.string().optional(),
 +  imageQuality: z.string().optional(),
++  imageResponseFormat: z.enum(['b64_json', 'url']).optional(),
 +  videoSeconds: z.number().optional(),
 +  videoSize: z.string().optional(),
 +  ttsVoice: z.string().optional(),
@@ -2463,7 +2520,7 @@ index e3983a6f..05a84609 100644
    return payload
  }
 diff --git a/web/default/src/features/playground/types.ts b/web/default/src/features/playground/types.ts
-index 855b4833..a7b11bc8 100644
+index 855b4833..209eb69d 100644
 --- a/web/default/src/features/playground/types.ts
 +++ b/web/default/src/features/playground/types.ts
 @@ -49,6 +49,29 @@ export interface Message {
@@ -2525,13 +2582,14 @@ index 855b4833..a7b11bc8 100644
  }
  
  export interface ChatCompletionChunk {
-@@ -126,6 +158,33 @@ export interface PlaygroundConfig {
+@@ -126,6 +158,34 @@ export interface PlaygroundConfig {
    presence_penalty: number
    seed: number | null
    stream: boolean
 +  webSearch: boolean
 +  imageSize: string
 +  imageQuality: string
++  imageResponseFormat: 'b64_json' | 'url'
 +  videoSeconds: number
 +  videoSize: string
 +  ttsVoice: string
@@ -2560,10 +2618,10 @@ index 855b4833..a7b11bc8 100644
  
  export interface ParameterEnabled {
 diff --git a/web/default/src/i18n/locales/zh.json b/web/default/src/i18n/locales/zh.json
-index 4f1412ac..c5e586f1 100644
+index 4f1412ac..5efcc525 100644
 --- a/web/default/src/i18n/locales/zh.json
 +++ b/web/default/src/i18n/locales/zh.json
-@@ -5169,6 +5169,32 @@
+@@ -5169,6 +5169,35 @@
      "Zero retention": "零数据保留",
      "Zhipu": "智谱",
      "Zhipu V4": "智谱 V4",
@@ -2573,6 +2631,9 @@ index 4f1412ac..c5e586f1 100644
 +    "Capture failed": "截图失败",
 +    "Image size": "图片尺寸",
 +    "Quality": "画质",
++    "Return format": "返回方式",
++    "Base64 (recommended)": "Base64（推荐）",
++    "Image URL": "图片链接",
 +    "High": "高",
 +    "Resolution": "分辨率",
 +    "Voice": "音色",

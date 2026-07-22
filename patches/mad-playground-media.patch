@@ -247,7 +247,7 @@ index 17a13cad..5d7c7aa7 100644
  	relayV1Router := router.Group("/v1")
  	relayV1Router.Use(middleware.RouteTag("relay"))
 diff --git a/web/default/src/features/playground/api.ts b/web/default/src/features/playground/api.ts
-index 4f6e205e..14d735d1 100644
+index 4f6e205e..4486f8eb 100644
 --- a/web/default/src/features/playground/api.ts
 +++ b/web/default/src/features/playground/api.ts
 @@ -24,6 +24,8 @@ import type {
@@ -298,7 +298,7 @@ index 4f6e205e..14d735d1 100644
 +}
 +
 +export async function submitVideo(
-+  payload: FormData,
++  payload: FormData | Record<string, unknown>,
 +  signal?: AbortSignal
 +): Promise<VideoTaskResponse> {
 +  const res = await api.post(API_ENDPOINTS.VIDEOS, payload, {
@@ -1440,7 +1440,7 @@ index 4026a0f1..9968db86 100644
  
  export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
 diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
-index bfc85f2c..9877a722 100644
+index bfc85f2c..5412d403 100644
 --- a/web/default/src/features/playground/hooks/use-chat-handler.ts
 +++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
 @@ -20,7 +20,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
@@ -1459,13 +1459,14 @@ index bfc85f2c..9877a722 100644
  import { ERROR_MESSAGES } from '../constants'
  import {
    applyStreamingChunk,
-@@ -33,8 +40,21 @@ import {
+@@ -33,8 +40,22 @@ import {
    hasChatCompletionChoice,
    isAssistantMessageFinal,
    isAssistantMessagePending,
 +  dataUrlToBlob,
 +  getMessageContent,
 +  getPlaygroundModelKind,
++  isGrokImagineVideoModel,
 +  isGptImage2Model,
 +  isGeminiImageModel,
 +  updateCurrentVersionContent,
@@ -1482,7 +1483,7 @@ index bfc85f2c..9877a722 100644
  import { useStreamRequest } from './use-stream-request'
  
  interface UseChatHandlerOptions {
-@@ -45,12 +65,122 @@ interface UseChatHandlerOptions {
+@@ -45,12 +66,122 @@ interface UseChatHandlerOptions {
  
  const KNOWN_ERROR_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES))
  const STREAM_UPDATE_FLUSH_MS = 50
@@ -1605,7 +1606,7 @@ index bfc85f2c..9877a722 100644
  function mergePendingStreamChunk(
    currentChunk: string,
    nextChunk: string
-@@ -279,16 +409,208 @@ export function useChatHandler({
+@@ -279,16 +410,223 @@ export function useChatHandler({
      [config, parameterEnabled, onMessageUpdate, handleStreamError]
    )
  
@@ -1737,18 +1738,33 @@ index bfc85f2c..9877a722 100644
 +        }
 +
 +        if (modelKind === 'video') {
-+          const payload = new FormData()
-+          payload.append('model', config.model)
-+          payload.append('group', config.group)
-+          payload.append('prompt', prompt)
-+          payload.append('seconds', String(config.videoSeconds))
-+          payload.append('size', config.videoSize)
-+          if (imageAttachment) {
-+            payload.append(
-+              'input_reference',
-+              dataUrlToBlob(imageAttachment.dataUrl),
-+              imageAttachment.name
-+            )
++          let payload: FormData | Record<string, unknown>
++          if (isGrokImagineVideoModel(config.model)) {
++            payload = {
++              model: config.model,
++              group: config.group,
++              prompt,
++              seconds: String(config.videoSeconds),
++              size: config.videoSize,
++            }
++            if (imageAttachment) {
++              payload.input_reference = imageAttachment.dataUrl
++            }
++          } else {
++            const formData = new FormData()
++            formData.append('model', config.model)
++            formData.append('group', config.group)
++            formData.append('prompt', prompt)
++            formData.append('seconds', String(config.videoSeconds))
++            formData.append('size', config.videoSize)
++            if (imageAttachment) {
++              formData.append(
++                'input_reference',
++                dataUrlToBlob(imageAttachment.dataUrl),
++                imageAttachment.name
++              )
++            }
++            payload = formData
 +          }
 +
 +          const created = await submitVideo(payload, abortController.signal)
@@ -2303,10 +2319,10 @@ index 00000000..cb7e61e9
 +}
 diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
 new file mode 100644
-index 00000000..fb69a55c
+index 00000000..15b0a028
 --- /dev/null
 +++ b/web/default/src/features/playground/lib/model/model-profiles.ts
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,203 @@
 +import type { PlaygroundModelKind } from "../../types";
 +import { getPlaygroundModelKind } from "./model-capabilities";
 +
@@ -2385,6 +2401,10 @@ index 00000000..fb69a55c
 +    normalized === "gemini-3.1-flash-image-preview" ||
 +    normalized === "gemini-3-pro-image-preview"
 +  );
++}
++
++export function isGrokImagineVideoModel(model: string): boolean {
++  return model.trim().toLowerCase() === "grok-imagine-video";
 +}
 +
 +export function getPlaygroundModelProfile(

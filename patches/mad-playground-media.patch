@@ -229,10 +229,10 @@ index 9f460ce5..0ec1dabe 100644
  		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
  		info.RequestURLPath = "/v1" + info.RequestURLPath
 diff --git a/relay/relay_task.go b/relay/relay_task.go
-index fb384d18..a1f8e098 100644
+index e1c08546..84e6e378 100644
 --- a/relay/relay_task.go
 +++ b/relay/relay_task.go
-@@ -296,7 +296,7 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp
+@@ -320,7 +320,7 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp
  func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
  	respBuilder, ok := fetchRespBuilders[relayMode]
  	if !ok {
@@ -293,6 +293,48 @@ index 17a13cad..5d7c7aa7 100644
  	}
  	relayV1Router := router.Group("/v1")
  	relayV1Router.Use(middleware.RouteTag("relay"))
+diff --git a/web/default/src/components/ai-elements/prompt-input.tsx b/web/default/src/components/ai-elements/prompt-input.tsx
+index 46ab3f67..25f252b4 100644
+--- a/web/default/src/components/ai-elements/prompt-input.tsx
++++ b/web/default/src/components/ai-elements/prompt-input.tsx
+@@ -438,6 +438,7 @@ export type PromptInputProps = Omit<
+   // Minimal constraints
+   maxFiles?: number
+   maxFileSize?: number // bytes
++  onFilesAdded?: (files: File[]) => void | Promise<void>
+   onError?: (err: {
+     code: 'max_files' | 'max_file_size' | 'accept'
+     message: string
+@@ -462,6 +463,7 @@ export const PromptInput = ({
+   syncHiddenInput,
+   maxFiles,
+   maxFileSize,
++  onFilesAdded,
+   onError,
+   onSubmit,
+   children,
+@@ -562,8 +564,12 @@ export const PromptInput = ({
+     () =>
+       controller
+         ? (files: File[] | FileList) => controller.attachments.add(files)
++        : onFilesAdded
++          ? (files: File[] | FileList) => {
++              void onFilesAdded(Array.from(files))
++            }
+         : addLocal,
+-    [controller, addLocal]
++    [controller, onFilesAdded, addLocal]
+   )
+ 
+   const remove = useMemo(
+@@ -783,6 +789,7 @@ export const PromptInput = ({
+       <form
+         className={cn('w-full', className)}
+         onSubmit={handleSubmit}
++        ref={formRef}
+         {...props}
+       >
+         <InputGroup className={groupClassName}>{children}</InputGroup>
 diff --git a/web/default/src/features/playground/api.ts b/web/default/src/features/playground/api.ts
 index 4f6e205e..4486f8eb 100644
 --- a/web/default/src/features/playground/api.ts
@@ -486,7 +528,7 @@ index c4b436b4..41bc91f8 100644
          </Tooltip>
  
 diff --git a/web/default/src/features/playground/components/input/playground-input.tsx b/web/default/src/features/playground/components/input/playground-input.tsx
-index b06d7cb4..2702228d 100644
+index b06d7cb4..e73f7a2b 100644
 --- a/web/default/src/features/playground/components/input/playground-input.tsx
 +++ b/web/default/src/features/playground/components/input/playground-input.tsx
 @@ -16,50 +16,59 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -575,7 +617,7 @@ index b06d7cb4..2702228d 100644
  }
  
  export function PlaygroundInput({
-@@ -81,37 +90,216 @@ export function PlaygroundInput({
+@@ -81,37 +90,253 @@ export function PlaygroundInput({
    onParameterEnabledChange,
    parameterEnabled,
  }: PlaygroundInputProps) {
@@ -584,34 +626,54 @@ index b06d7cb4..2702228d 100644
 +  const { t } = useTranslation();
 +  const [text, setText] = useState("");
 +  const [attachments, setAttachments] = useState<PlaygroundAttachment[]>([]);
++  const attachmentsRef = useRef<PlaygroundAttachment[]>([]);
++  const attachmentQueueRef = useRef<Promise<void>>(Promise.resolve());
 +  const [isFileDragActive, setIsFileDragActive] = useState(false);
 +  const fileInputRef = useRef<HTMLInputElement>(null);
 +  const photoInputRef = useRef<HTMLInputElement>(null);
 +  const cameraInputRef = useRef<HTMLInputElement>(null);
 +  const modelProfile = getPlaygroundModelProfile(modelValue);
 +
-+  const appendFiles = async (files: File[]) => {
-+    try {
-+      const available = Math.max(0, MAX_ATTACHMENT_COUNT - attachments.length);
-+      const next = await Promise.all(
-+        files.slice(0, available).map(fileToPlaygroundAttachment),
-+      );
-+      const currentBytes = attachments.reduce(
-+        (sum, item) => sum + item.size,
-+        0,
-+      );
-+      const nextBytes = next.reduce((sum, item) => sum + item.size, 0);
-+      if (currentBytes + nextBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
-+        throw new Error("Total attachment size must be 20 MB or smaller");
-+      }
-+      setAttachments((current) => [...current, ...next]);
-+    } catch (error) {
-+      toast.error(
-+        error instanceof Error ? t(error.message) : t("Upload failed"),
-+      );
-+    }
++  const replaceAttachments = (next: PlaygroundAttachment[]) => {
++    attachmentsRef.current = next;
++    setAttachments(next);
 +  };
 +
++  const removeAttachment = (id: string) => {
++    replaceAttachments(
++      attachmentsRef.current.filter((attachment) => attachment.id !== id),
++    );
++  };
++
++  const appendFiles = (files: File[]): Promise<void> => {
++    const task = attachmentQueueRef.current.then(async () => {
++      try {
++        const current = attachmentsRef.current;
++        const available = Math.max(0, MAX_ATTACHMENT_COUNT - current.length);
++        const next = await Promise.all(
++          files.slice(0, available).map(fileToPlaygroundAttachment),
++        );
++        const currentBytes = current.reduce(
++          (sum, item) => sum + item.size,
++          0,
++        );
++        const nextBytes = next.reduce((sum, item) => sum + item.size, 0);
++        if (currentBytes + nextBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
++          throw new Error("Total attachment size must be 20 MB or smaller");
++        }
++        replaceAttachments([...current, ...next]);
++      } catch (error) {
++        toast.error(
++          error instanceof Error ? t(error.message) : t("Upload failed"),
++        );
++      }
++    });
++    attachmentQueueRef.current = task;
++    return task;
++  };
+ 
+-  const handleSubmit = (message: PromptInputMessage) => {
+-    const submittableText = getSubmittableInputText(message, disabled)
 +  const handleAttachmentAction = async (action: string) => {
 +    if (action === "upload-file") fileInputRef.current?.click();
 +    if (action === "upload-photo") photoInputRef.current?.click();
@@ -627,19 +689,22 @@ index b06d7cb4..2702228d 100644
 +    }
 +  };
  
-   const handleSubmit = (message: PromptInputMessage) => {
--    const submittableText = getSubmittableInputText(message, disabled)
-+    const submittableText = message.text?.trim() ?? "";
-+    if (disabled || (!submittableText && attachments.length === 0)) return;
-+    onSubmit(submittableText, attachments);
-+    setText("");
-+    setAttachments([]);
-+  };
- 
 -    if (!submittableText) return
 -    onSubmit(submittableText)
 -    setText('')
 -  }
++  const handleSubmit = async (message: PromptInputMessage) => {
++    await attachmentQueueRef.current;
++    const submittableText = message.text?.trim() ?? "";
++    const submittedAttachments = attachmentsRef.current;
++    if (disabled || (!submittableText && submittedAttachments.length === 0)) {
++      return;
++    }
++    onSubmit(submittableText, submittedAttachments);
++    setText("");
++    replaceAttachments([]);
++  };
++
 +  const handleFileDragEnter = (event: DragEvent<HTMLFormElement>) => {
 +    if (event.dataTransfer.types.includes("Files")) {
 +      setIsFileDragActive(true);
@@ -721,11 +786,30 @@ index b06d7cb4..2702228d 100644
 +                  <button
 +                    aria-label={t("Remove attachment")}
 +                    className="absolute top-1 right-1 grid size-5 place-items-center rounded-full bg-black/75 text-white shadow-sm transition-colors hover:bg-black"
-+                    onClick={() =>
-+                      setAttachments((current) =>
-+                        current.filter((item) => item.id !== attachment.id),
-+                      )
-+                    }
++                    onClick={() => removeAttachment(attachment.id)}
++                    type="button"
++                  >
++                    <XIcon size={12} />
++                  </button>
++                </div>
++              ) : attachment.kind === "video" ? (
++                <div
++                  className="border-border/70 bg-muted/35 group relative size-16 shrink-0 overflow-hidden rounded-md border"
++                  key={attachment.id}
++                  title={attachment.name}
++                >
++                  <video
++                    aria-label={attachment.name}
++                    className="size-full object-cover"
++                    muted
++                    playsInline
++                    preload="metadata"
++                    src={attachment.dataUrl}
++                  />
++                  <button
++                    aria-label={t("Remove attachment")}
++                    className="absolute top-1 right-1 grid size-5 place-items-center rounded-full bg-black/75 text-white shadow-sm transition-colors hover:bg-black"
++                    onClick={() => removeAttachment(attachment.id)}
 +                    type="button"
 +                  >
 +                    <XIcon size={12} />
@@ -744,11 +828,7 @@ index b06d7cb4..2702228d 100644
 +                  <button
 +                    aria-label={t("Remove attachment")}
 +                    className="absolute top-1 right-1 grid size-5 place-items-center rounded-full bg-black/75 text-white shadow-sm transition-colors hover:bg-black"
-+                    onClick={() =>
-+                      setAttachments((current) =>
-+                        current.filter((item) => item.id !== attachment.id),
-+                      )
-+                    }
++                    onClick={() => removeAttachment(attachment.id)}
 +                    type="button"
 +                  >
 +                    <XIcon size={12} />
@@ -808,7 +888,7 @@ index b06d7cb4..2702228d 100644
            <PlaygroundInputControls
              disabled={disabled}
              groups={groups}
-@@ -124,6 +312,7 @@ export function PlaygroundInput({
+@@ -124,6 +349,7 @@ export function PlaygroundInput({
              onModelChange={onModelChange}
              onStop={onStop}
              text={text}
@@ -816,7 +896,7 @@ index b06d7cb4..2702228d 100644
              tools={
                <PlaygroundInputTools
                  config={config}
-@@ -133,11 +322,12 @@ export function PlaygroundInput({
+@@ -133,11 +359,12 @@ export function PlaygroundInput({
                  onClearMessages={onClearMessages}
                  onParameterEnabledChange={onParameterEnabledChange}
                  parameterEnabled={parameterEnabled}
@@ -1326,7 +1406,7 @@ index 7cfd0a9d..d4e44038 100644
 +  );
  }
 diff --git a/web/default/src/features/playground/components/message/playground-message-content.tsx b/web/default/src/features/playground/components/message/playground-message-content.tsx
-index 4a116bf8..7391235f 100644
+index 4a116bf8..0fe0af5c 100644
 --- a/web/default/src/features/playground/components/message/playground-message-content.tsx
 +++ b/web/default/src/features/playground/components/message/playground-message-content.tsx
 @@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
@@ -1360,7 +1440,7 @@ index 4a116bf8..7391235f 100644
  
    return (
      <div
-@@ -134,30 +144,126 @@ export function PlaygroundMessageContent({
+@@ -134,30 +144,145 @@ export function PlaygroundMessageContent({
          </>
        )}
  
@@ -1410,6 +1490,25 @@ index 4a116bf8..7391235f 100644
 +                      </span>
 +                    </div>
 +                  </a>
++                ) : attachment.kind === 'video' ? (
++                  <div
++                    className='border-border/70 bg-muted/20 overflow-hidden rounded-lg border'
++                    key={attachment.id}
++                  >
++                    <video
++                      className='max-h-72 w-full bg-black object-contain'
++                      controls
++                      playsInline
++                      preload='metadata'
++                      src={attachment.dataUrl}
++                    />
++                    <div className='text-muted-foreground flex items-center justify-between gap-2 px-2.5 py-2 text-xs'>
++                      <span className='truncate'>{attachment.name}</span>
++                      <span className='shrink-0'>
++                        {formatFileSize(attachment.size)}
++                      </span>
++                    </div>
++                  </div>
 +                ) : (
 +                  <a
 +                    className='border-border/70 bg-muted/25 hover:bg-muted/40 flex min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors'
@@ -1541,7 +1640,7 @@ index 4026a0f1..9968db86 100644
  
  export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
 diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
-index bfc85f2c..2ceb6ced 100644
+index bfc85f2c..b0a11122 100644
 --- a/web/default/src/features/playground/hooks/use-chat-handler.ts
 +++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
 @@ -20,7 +20,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
@@ -1585,7 +1684,7 @@ index bfc85f2c..2ceb6ced 100644
  import { useStreamRequest } from './use-stream-request'
  
  interface UseChatHandlerOptions {
-@@ -45,12 +67,122 @@ interface UseChatHandlerOptions {
+@@ -45,12 +67,129 @@ interface UseChatHandlerOptions {
  
  const KNOWN_ERROR_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES))
  const STREAM_UPDATE_FLUSH_MS = 50
@@ -1657,6 +1756,13 @@ index bfc85f2c..2ceb6ced 100644
 +    }
 +  }
 +
++  if (attachment.kind === 'video') {
++    return {
++      type: 'video_url',
++      video_url: attachment.dataUrl,
++    }
++  }
++
 +  return {
 +    type: 'file',
 +    file: {
@@ -1708,7 +1814,7 @@ index bfc85f2c..2ceb6ced 100644
  function mergePendingStreamChunk(
    currentChunk: string,
    nextChunk: string
-@@ -279,16 +411,242 @@ export function useChatHandler({
+@@ -279,16 +418,242 @@ export function useChatHandler({
      [config, parameterEnabled, onMessageUpdate, handleStreamError]
    )
  
@@ -2161,10 +2267,10 @@ index b2404d8b..ced13108 100644
  export * from './state/playground-state-utils'
 diff --git a/web/default/src/features/playground/lib/input/attachment-utils.ts b/web/default/src/features/playground/lib/input/attachment-utils.ts
 new file mode 100644
-index 00000000..c05104b6
+index 00000000..e4391d91
 --- /dev/null
 +++ b/web/default/src/features/playground/lib/input/attachment-utils.ts
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,89 @@
 +import { nanoid } from 'nanoid'
 +
 +import type { PlaygroundAttachment } from '../../types'
@@ -2193,7 +2299,11 @@ index 00000000..c05104b6
 +  const dataUrl = await readFileAsDataUrl(file)
 +  return {
 +    id: nanoid(),
-+    kind: file.type.startsWith('image/') ? 'image' : 'file',
++    kind: file.type.startsWith('image/')
++      ? 'image'
++      : file.type.startsWith('video/')
++        ? 'video'
++        : 'file',
 +    name: file.name || 'attachment',
 +    mimeType: file.type || 'application/octet-stream',
 +    size: file.size,
@@ -2349,7 +2459,7 @@ index 00000000..bd688c22
 +  }
 +}
 diff --git a/web/default/src/features/playground/lib/message/message-utils.ts b/web/default/src/features/playground/lib/message/message-utils.ts
-index 90044cc7..f0cdfed1 100644
+index 90044cc7..409575ca 100644
 --- a/web/default/src/features/playground/lib/message/message-utils.ts
 +++ b/web/default/src/features/playground/lib/message/message-utils.ts
 @@ -24,6 +24,7 @@ import type {
@@ -2377,7 +2487,7 @@ index 90044cc7..f0cdfed1 100644
    }
  }
  
-@@ -154,6 +157,28 @@ export function getTextContent(content: string | ContentPart[]): string {
+@@ -154,6 +157,34 @@ export function getTextContent(content: string | ContentPart[]): string {
   */
  export function formatMessageForAPI(message: Message): ChatCompletionMessage {
    const currentVersion = getCurrentVersion(message)
@@ -2390,6 +2500,12 @@ index 90044cc7..f0cdfed1 100644
 +          return {
 +            type: 'image_url',
 +            image_url: { url: attachment.dataUrl },
++          }
++        }
++        if (attachment.kind === 'video') {
++          return {
++            type: 'video_url',
++            video_url: attachment.dataUrl,
 +          }
 +        }
 +        return {
@@ -2406,7 +2522,7 @@ index 90044cc7..f0cdfed1 100644
    return {
      role: message.from,
      content: currentVersion.content,
-@@ -172,5 +197,5 @@ export function isValidMessage(message: Message): boolean {
+@@ -172,5 +203,5 @@ export function isValidMessage(message: Message): boolean {
      return false
    }
  
@@ -2723,7 +2839,7 @@ index e3983a6f..05a84609 100644
    return payload
  }
 diff --git a/web/default/src/features/playground/types.ts b/web/default/src/features/playground/types.ts
-index 855b4833..209eb69d 100644
+index 855b4833..2dff38de 100644
 --- a/web/default/src/features/playground/types.ts
 +++ b/web/default/src/features/playground/types.ts
 @@ -49,6 +49,29 @@ export interface Message {
@@ -2734,7 +2850,7 @@ index 855b4833..209eb69d 100644
 +  media?: PlaygroundMedia[]
 +}
 +
-+export type PlaygroundAttachmentKind = 'image' | 'file'
++export type PlaygroundAttachmentKind = 'image' | 'video' | 'file'
 +
 +export interface PlaygroundAttachment {
 +  id: string
@@ -2756,16 +2872,17 @@ index 855b4833..209eb69d 100644
  }
  
  // API payload types
-@@ -58,11 +81,15 @@ export interface ChatCompletionMessage {
+@@ -58,11 +81,16 @@ export interface ChatCompletionMessage {
  }
  
  export interface ContentPart {
 -  type: 'text' | 'image_url'
-+  type: 'text' | 'image_url' | 'file'
++  type: 'text' | 'image_url' | 'video_url' | 'file'
    text?: string
    image_url?: {
      url: string
    }
++  video_url?: string
 +  file?: {
 +    filename: string
 +    file_data: string
@@ -2773,7 +2890,7 @@ index 855b4833..209eb69d 100644
  }
  
  export interface ChatCompletionRequest {
-@@ -76,6 +103,11 @@ export interface ChatCompletionRequest {
+@@ -76,6 +104,11 @@ export interface ChatCompletionRequest {
    frequency_penalty?: number
    presence_penalty?: number
    seed?: number
@@ -2785,7 +2902,7 @@ index 855b4833..209eb69d 100644
  }
  
  export interface ChatCompletionChunk {
-@@ -126,6 +158,34 @@ export interface PlaygroundConfig {
+@@ -126,6 +159,34 @@ export interface PlaygroundConfig {
    presence_penalty: number
    seed: number | null
    stream: boolean
@@ -2863,45 +2980,3 @@ index 4f1412ac..815f2973 100644
 +    "Chat with image and file understanding; enable search for compatible web-enabled models.": "支持对话、图片与文件理解；搜索开关用于兼容的联网模型。"
    }
  }
-diff --git a/web/default/src/components/ai-elements/prompt-input.tsx b/web/default/src/components/ai-elements/prompt-input.tsx
-index 46ab3f67..25f252b4 100644
---- a/web/default/src/components/ai-elements/prompt-input.tsx
-+++ b/web/default/src/components/ai-elements/prompt-input.tsx
-@@ -438,6 +438,7 @@ export type PromptInputProps = Omit<
-   // Minimal constraints
-   maxFiles?: number
-   maxFileSize?: number // bytes
-+  onFilesAdded?: (files: File[]) => void | Promise<void>
-   onError?: (err: {
-     code: 'max_files' | 'max_file_size' | 'accept'
-     message: string
-@@ -462,6 +463,7 @@ export const PromptInput = ({
-   syncHiddenInput,
-   maxFiles,
-   maxFileSize,
-+  onFilesAdded,
-   onError,
-   onSubmit,
-   children,
-@@ -562,8 +564,12 @@ export const PromptInput = ({
-     () =>
-       controller
-         ? (files: File[] | FileList) => controller.attachments.add(files)
-+        : onFilesAdded
-+          ? (files: File[] | FileList) => {
-+              void onFilesAdded(Array.from(files))
-+            }
-         : addLocal,
--    [controller, addLocal]
-+    [controller, onFilesAdded, addLocal]
-   )
- 
-   const remove = useMemo(
-@@ -783,6 +789,7 @@ export const PromptInput = ({
-       <form
-         className={cn('w-full', className)}
-         onSubmit={handleSubmit}
-+        ref={formRef}
-         {...props}
-       >
-         <InputGroup className={groupClassName}>{children}</InputGroup>

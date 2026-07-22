@@ -1,0 +1,2599 @@
+diff --git a/controller/playground.go b/controller/playground.go
+index 501c4e15..06370195 100644
+--- a/controller/playground.go
++++ b/controller/playground.go
+@@ -12,27 +12,15 @@ import (
+ 	"github.com/gin-gonic/gin"
+ )
+ 
+-func Playground(c *gin.Context) {
+-	var newAPIError *types.NewAPIError
+-
+-	defer func() {
+-		if newAPIError != nil {
+-			c.JSON(newAPIError.StatusCode, gin.H{
+-				"error": newAPIError.ToOpenAIError(),
+-			})
+-		}
+-	}()
+-
++func setupPlaygroundContext(c *gin.Context) *types.NewAPIError {
+ 	useAccessToken := c.GetBool("use_access_token")
+ 	if useAccessToken {
+-		newAPIError = types.NewError(errors.New("暂不支持使用 access token"), types.ErrorCodeAccessDenied, types.ErrOptionWithSkipRetry())
+-		return
++		return types.NewError(errors.New("暂不支持使用 access token"), types.ErrorCodeAccessDenied, types.ErrOptionWithSkipRetry())
+ 	}
+ 
+ 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, nil, nil)
+ 	if err != nil {
+-		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+-		return
++		return types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+ 	}
+ 
+ 	userId := c.GetInt("id")
+@@ -40,8 +28,7 @@ func Playground(c *gin.Context) {
+ 	// Write user context to ensure acceptUnsetRatio is available
+ 	userCache, err := model.GetUserCache(userId)
+ 	if err != nil {
+-		newAPIError = types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+-		return
++		return types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+ 	}
+ 	userCache.WriteContext(c)
+ 
+@@ -51,6 +38,52 @@ func Playground(c *gin.Context) {
+ 		Group:  relayInfo.UsingGroup,
+ 	}
+ 	_ = middleware.SetupContextForToken(c, tempToken)
++	return nil
++}
+ 
+-	Relay(c, types.RelayFormatOpenAI)
++func respondPlaygroundSetupError(c *gin.Context, newAPIError *types.NewAPIError) bool {
++	if newAPIError == nil {
++		return false
++	}
++	c.JSON(newAPIError.StatusCode, gin.H{
++		"error": newAPIError.ToOpenAIError(),
++	})
++	return true
++}
++
++func playgroundRelay(c *gin.Context, relayFormat types.RelayFormat) {
++	if respondPlaygroundSetupError(c, setupPlaygroundContext(c)) {
++		return
++	}
++	Relay(c, relayFormat)
++}
++
++func Playground(c *gin.Context) {
++	playgroundRelay(c, types.RelayFormatOpenAI)
++}
++
++func PlaygroundResponses(c *gin.Context) {
++	playgroundRelay(c, types.RelayFormatOpenAIResponses)
++}
++
++func PlaygroundImage(c *gin.Context) {
++	playgroundRelay(c, types.RelayFormatOpenAIImage)
++}
++
++func PlaygroundAudio(c *gin.Context) {
++	playgroundRelay(c, types.RelayFormatOpenAIAudio)
++}
++
++func PlaygroundTask(c *gin.Context) {
++	if respondPlaygroundSetupError(c, setupPlaygroundContext(c)) {
++		return
++	}
++	RelayTask(c)
++}
++
++func PlaygroundTaskFetch(c *gin.Context) {
++	if respondPlaygroundSetupError(c, setupPlaygroundContext(c)) {
++		return
++	}
++	RelayTaskFetch(c)
+ }
+diff --git a/middleware/distributor.go b/middleware/distributor.go
+index 4234011c..03656378 100644
+--- a/middleware/distributor.go
++++ b/middleware/distributor.go
+@@ -83,20 +83,14 @@ func Distribute() func(c *gin.Context) {
+ 				}
+ 				var selectGroup string
+ 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+-				// check path is /pg/chat/completions
+-				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
+-					playgroundRequest := &dto.PlayGroundRequest{}
+-					err = common.UnmarshalBodyReusable(c, playgroundRequest)
+-					if err != nil {
+-						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
+-						return
+-					}
+-					if playgroundRequest.Group != "" {
+-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
++				if c.GetBool(playgroundRequestContextKey) || strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
++					requestedGroup := modelRequest.Group
++					if requestedGroup != "" {
++						if !service.GroupInUserUsableGroups(usingGroup, requestedGroup) && requestedGroup != usingGroup {
+ 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+ 							return
+ 						}
+-						usingGroup = playgroundRequest.Group
++						usingGroup = requestedGroup
+ 						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
+ 					}
+ 				}
+diff --git a/middleware/playground_path.go b/middleware/playground_path.go
+new file mode 100644
+index 00000000..11df7bd1
+--- /dev/null
++++ b/middleware/playground_path.go
+@@ -0,0 +1,39 @@
++package middleware
++
++import (
++	"strings"
++
++	"github.com/gin-gonic/gin"
++)
++
++const playgroundRequestContextKey = "is_playground_request"
++
++// NormalizePlaygroundRequestPath lets dashboard requests reuse the production
++// /v1 routing and adapter logic without exposing or storing an API token.
++func NormalizePlaygroundRequestPath() gin.HandlerFunc {
++	return func(c *gin.Context) {
++		originalPath := c.Request.URL.Path
++		if !strings.HasPrefix(originalPath, "/pg/") {
++			c.Next()
++			return
++		}
++
++		originalRawPath := c.Request.URL.RawPath
++		originalRequestURI := c.Request.RequestURI
++		translatedPath := "/v1/" + strings.TrimPrefix(originalPath, "/pg/")
++
++		c.Set(playgroundRequestContextKey, true)
++		c.Request.URL.Path = translatedPath
++		c.Request.URL.RawPath = ""
++		c.Request.RequestURI = translatedPath
++		if c.Request.URL.RawQuery != "" {
++			c.Request.RequestURI += "?" + c.Request.URL.RawQuery
++		}
++
++		c.Next()
++
++		c.Request.URL.Path = originalPath
++		c.Request.URL.RawPath = originalRawPath
++		c.Request.RequestURI = originalRequestURI
++	}
++}
+diff --git a/middleware/playground_path_test.go b/middleware/playground_path_test.go
+new file mode 100644
+index 00000000..6486a382
+--- /dev/null
++++ b/middleware/playground_path_test.go
+@@ -0,0 +1,28 @@
++package middleware
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/require"
++)
++
++func TestNormalizePlaygroundRequestPath(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	router := gin.New()
++	router.Use(NormalizePlaygroundRequestPath())
++	router.POST("/pg/images/generations", func(c *gin.Context) {
++		require.Equal(t, "/v1/images/generations", c.Request.URL.Path)
++		require.Equal(t, "/v1/images/generations?preview=true", c.Request.RequestURI)
++		require.True(t, c.GetBool(playgroundRequestContextKey))
++		c.Status(http.StatusNoContent)
++	})
++
++	recorder := httptest.NewRecorder()
++	request := httptest.NewRequest(http.MethodPost, "/pg/images/generations?preview=true", nil)
++	router.ServeHTTP(recorder, request)
++
++	require.Equal(t, http.StatusNoContent, recorder.Code)
++}
+diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
+index 9f460ce5..0ec1dabe 100644
+--- a/relay/common/relay_info.go
++++ b/relay/common/relay_info.go
+@@ -505,7 +505,9 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
+ 		info.RelayMode = c.GetInt("relay_mode")
+ 	}
+ 
+-	if strings.HasPrefix(c.Request.URL.Path, "/pg") {
++	if c.GetBool("is_playground_request") {
++		info.IsPlayground = true
++	} else if strings.HasPrefix(c.Request.URL.Path, "/pg") {
+ 		info.IsPlayground = true
+ 		info.RequestURLPath = strings.TrimPrefix(info.RequestURLPath, "/pg")
+ 		info.RequestURLPath = "/v1" + info.RequestURLPath
+diff --git a/router/relay-router.go b/router/relay-router.go
+index 17a13cad..5d7c7aa7 100644
+--- a/router/relay-router.go
++++ b/router/relay-router.go
+@@ -62,9 +62,18 @@ func SetRelayRouter(router *gin.Engine) {
+ 	playgroundRouter := router.Group("/pg")
+ 	playgroundRouter.Use(middleware.RouteTag("relay"))
+ 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
+-	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute())
++	playgroundRouter.Use(middleware.NormalizePlaygroundRequestPath())
++	playgroundRouter.Use(middleware.UserAuth())
+ 	{
+-		playgroundRouter.POST("/chat/completions", controller.Playground)
++		playgroundSubmitRouter := playgroundRouter.Group("")
++		playgroundSubmitRouter.Use(middleware.Distribute())
++		playgroundSubmitRouter.POST("/chat/completions", controller.Playground)
++		playgroundSubmitRouter.POST("/responses", controller.PlaygroundResponses)
++		playgroundSubmitRouter.POST("/images/generations", controller.PlaygroundImage)
++		playgroundSubmitRouter.POST("/images/edits", controller.PlaygroundImage)
++		playgroundSubmitRouter.POST("/audio/speech", controller.PlaygroundAudio)
++		playgroundSubmitRouter.POST("/videos", controller.PlaygroundTask)
++		playgroundRouter.GET("/videos/:task_id", controller.PlaygroundTaskFetch)
+ 	}
+ 	relayV1Router := router.Group("/v1")
+ 	relayV1Router.Use(middleware.RouteTag("relay"))
+diff --git a/web/default/src/features/playground/api.ts b/web/default/src/features/playground/api.ts
+index 4f6e205e..14d735d1 100644
+--- a/web/default/src/features/playground/api.ts
++++ b/web/default/src/features/playground/api.ts
+@@ -24,6 +24,8 @@ import type {
+   ChatCompletionResponse,
+   ModelOption,
+   GroupOption,
++  ImageGenerationResponse,
++  VideoTaskResponse,
+ } from './types'
+ 
+ /**
+@@ -40,6 +42,62 @@ export async function sendChatCompletion(
+   return res.data
+ }
+ 
++export async function sendImageGeneration(
++  payload: Record<string, unknown>,
++  signal?: AbortSignal
++): Promise<ImageGenerationResponse> {
++  const res = await api.post(API_ENDPOINTS.IMAGE_GENERATIONS, payload, {
++    signal,
++    skipErrorHandler: true,
++  } as Record<string, unknown>)
++  return res.data
++}
++
++export async function sendImageEdit(
++  payload: FormData,
++  signal?: AbortSignal
++): Promise<ImageGenerationResponse> {
++  const res = await api.post(API_ENDPOINTS.IMAGE_EDITS, payload, {
++    signal,
++    skipErrorHandler: true,
++  } as Record<string, unknown>)
++  return res.data
++}
++
++export async function sendSpeech(
++  payload: Record<string, unknown>,
++  signal?: AbortSignal
++): Promise<Blob> {
++  const res = await api.post(API_ENDPOINTS.AUDIO_SPEECH, payload, {
++    responseType: 'blob',
++    signal,
++    skipErrorHandler: true,
++  } as Record<string, unknown>)
++  return res.data
++}
++
++export async function submitVideo(
++  payload: FormData,
++  signal?: AbortSignal
++): Promise<VideoTaskResponse> {
++  const res = await api.post(API_ENDPOINTS.VIDEOS, payload, {
++    signal,
++    skipErrorHandler: true,
++  } as Record<string, unknown>)
++  return res.data
++}
++
++export async function fetchVideoTask(
++  taskId: string,
++  signal?: AbortSignal
++): Promise<VideoTaskResponse> {
++  const res = await api.get(`${API_ENDPOINTS.VIDEOS}/${taskId}`, {
++    signal,
++    skipErrorHandler: true,
++  } as Record<string, unknown>)
++  return res.data
++}
++
+ /**
+  * Get user available models
+  */
+diff --git a/web/default/src/features/playground/components/input/playground-input-controls.tsx b/web/default/src/features/playground/components/input/playground-input-controls.tsx
+index 19ea74f7..d830481f 100644
+--- a/web/default/src/features/playground/components/input/playground-input-controls.tsx
++++ b/web/default/src/features/playground/components/input/playground-input-controls.tsx
+@@ -39,6 +39,7 @@ type PlaygroundInputControlsProps = {
+   onStop?: () => void
+   text: string
+   tools: ReactNode
++  attachmentCount?: number
+ }
+ 
+ export function PlaygroundInputControls({
+@@ -54,6 +55,7 @@ export function PlaygroundInputControls({
+   onStop,
+   text,
+   tools,
++  attachmentCount = 0,
+ }: PlaygroundInputControlsProps) {
+   const { t } = useTranslation()
+   const { canSubmit, isSelectorDisabled, shouldShowStop } =
+@@ -65,6 +67,7 @@ export function PlaygroundInputControls({
+       isModelLoading,
+       models,
+       text,
++      attachmentCount,
+     })
+ 
+   const renderSelector = () => (
+diff --git a/web/default/src/features/playground/components/input/playground-input-tools.tsx b/web/default/src/features/playground/components/input/playground-input-tools.tsx
+index c4b436b4..41bc91f8 100644
+--- a/web/default/src/features/playground/components/input/playground-input-tools.tsx
++++ b/web/default/src/features/playground/components/input/playground-input-tools.tsx
+@@ -38,11 +38,7 @@ import {
+   TooltipTrigger,
+ } from '@/components/ui/tooltip'
+ 
+-import {
+-  ATTACHMENT_ACTIONS,
+-  getAttachmentActionNotice,
+-  getSearchActionNotice,
+-} from '../../lib'
++import { ATTACHMENT_ACTIONS, getPlaygroundModelKind } from '../../lib'
+ import type { ParameterEnabled, PlaygroundConfig } from '../../types'
+ import { PlaygroundParameterPanel } from './playground-parameter-panel'
+ 
+@@ -60,6 +56,7 @@ type PlaygroundInputToolsProps = {
+     value: boolean
+   ) => void
+   parameterEnabled: ParameterEnabled
++  onAttachmentAction: (action: string) => void
+ }
+ 
+ export function PlaygroundInputTools({
+@@ -70,21 +67,11 @@ export function PlaygroundInputTools({
+   onConfigChange,
+   onParameterEnabledChange,
+   parameterEnabled,
++  onAttachmentAction,
+ }: PlaygroundInputToolsProps) {
+   const { t } = useTranslation()
+   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
+-
+-  const handleFileAction = (action: string) => {
+-    const notice = getAttachmentActionNotice(action)
+-    toast.info(t(notice.title), {
+-      description: notice.description,
+-    })
+-  }
+-
+-  const handleSearchAction = () => {
+-    const notice = getSearchActionNotice()
+-    toast.info(t(notice.title))
+-  }
++  const searchAvailable = getPlaygroundModelKind(config.model) === 'chat'
+ 
+   const handleClearMessages = () => {
+     onClearMessages?.()
+@@ -120,7 +107,7 @@ export function PlaygroundInputTools({
+               {ATTACHMENT_ACTIONS.map(({ action, icon: Icon, label }) => (
+                 <DropdownMenuItem
+                   key={action}
+-                  onClick={() => handleFileAction(action)}
++                  onClick={() => onAttachmentAction(action)}
+                 >
+                   <Icon className='mr-2' size={16} />
+                   {t(label)}
+@@ -135,9 +122,13 @@ export function PlaygroundInputTools({
+             render={
+               <PromptInputButton
+                 aria-label={t('Search')}
+-                className='text-muted-foreground hover:text-foreground hover:bg-muted/70 font-medium'
+-                disabled={disabled}
+-                onClick={handleSearchAction}
++                className={
++                  config.webSearch
++                    ? 'bg-primary/15 text-primary hover:bg-primary/20 font-medium'
++                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/70 font-medium'
++                }
++                disabled={disabled || !searchAvailable}
++                onClick={() => onConfigChange('webSearch', !config.webSearch)}
+                 variant='ghost'
+               >
+                 <GlobeIcon size={16} />
+@@ -145,7 +136,11 @@ export function PlaygroundInputTools({
+             }
+           />
+           <TooltipContent>
+-            <p>{t('Search')}</p>
++            <p>
++              {searchAvailable
++                ? t('Search')
++                : t('Web search is available for chat models')}
++            </p>
+           </TooltipContent>
+         </Tooltip>
+ 
+diff --git a/web/default/src/features/playground/components/input/playground-input.tsx b/web/default/src/features/playground/components/input/playground-input.tsx
+index b06d7cb4..951f207b 100644
+--- a/web/default/src/features/playground/components/input/playground-input.tsx
++++ b/web/default/src/features/playground/components/input/playground-input.tsx
+@@ -16,50 +16,59 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { useState } from 'react'
+-import { useTranslation } from 'react-i18next'
++import { FileIcon, ImageIcon, XIcon } from "lucide-react";
++import { useRef, useState } from "react";
++import { useTranslation } from "react-i18next";
++import { toast } from "sonner";
+ 
+ import {
+   PromptInput,
+   PromptInputFooter,
+   PromptInputTextarea,
+   type PromptInputMessage,
+-} from '@/components/ai-elements/prompt-input'
++} from "@/components/ai-elements/prompt-input";
+ 
+-import { getSubmittableInputText } from '../../lib'
++import {
++  capturePlaygroundScreenshot,
++  fileToPlaygroundAttachment,
++  MAX_ATTACHMENT_COUNT,
++  MAX_TOTAL_ATTACHMENT_BYTES,
++  getPlaygroundModelProfile,
++} from "../../lib";
+ import type {
+   ModelOption,
+   GroupOption,
+   ParameterEnabled,
+   PlaygroundConfig,
+-} from '../../types'
+-import { PlaygroundInputControls } from './playground-input-controls'
+-import { PlaygroundInputTools } from './playground-input-tools'
++  PlaygroundAttachment,
++} from "../../types";
++import { PlaygroundInputControls } from "./playground-input-controls";
++import { PlaygroundInputTools } from "./playground-input-tools";
+ 
+ interface PlaygroundInputProps {
+-  config: PlaygroundConfig
+-  onSubmit: (text: string) => void
+-  onStop?: () => void
+-  disabled?: boolean
+-  isGenerating?: boolean
+-  models: ModelOption[]
+-  modelValue: string
+-  onModelChange: (value: string) => void
+-  isModelLoading?: boolean
+-  groups: GroupOption[]
+-  groupValue: string
+-  onGroupChange: (value: string) => void
+-  hasMessages?: boolean
++  config: PlaygroundConfig;
++  onSubmit: (text: string, attachments?: PlaygroundAttachment[]) => void;
++  onStop?: () => void;
++  disabled?: boolean;
++  isGenerating?: boolean;
++  models: ModelOption[];
++  modelValue: string;
++  onModelChange: (value: string) => void;
++  isModelLoading?: boolean;
++  groups: GroupOption[];
++  groupValue: string;
++  onGroupChange: (value: string) => void;
++  hasMessages?: boolean;
+   onConfigChange: <K extends keyof PlaygroundConfig>(
+     key: K,
+-    value: PlaygroundConfig[K]
+-  ) => void
+-  onClearMessages?: () => void
++    value: PlaygroundConfig[K],
++  ) => void;
++  onClearMessages?: () => void;
+   onParameterEnabledChange: (
+     key: keyof ParameterEnabled,
+-    value: boolean
+-  ) => void
+-  parameterEnabled: ParameterEnabled
++    value: boolean,
++  ) => void;
++  parameterEnabled: ParameterEnabled;
+ }
+ 
+ export function PlaygroundInput({
+@@ -81,37 +90,169 @@ export function PlaygroundInput({
+   onParameterEnabledChange,
+   parameterEnabled,
+ }: PlaygroundInputProps) {
+-  const { t } = useTranslation()
+-  const [text, setText] = useState('')
++  const { t } = useTranslation();
++  const [text, setText] = useState("");
++  const [attachments, setAttachments] = useState<PlaygroundAttachment[]>([]);
++  const fileInputRef = useRef<HTMLInputElement>(null);
++  const photoInputRef = useRef<HTMLInputElement>(null);
++  const cameraInputRef = useRef<HTMLInputElement>(null);
++  const modelProfile = getPlaygroundModelProfile(modelValue);
+ 
+-  const handleSubmit = (message: PromptInputMessage) => {
+-    const submittableText = getSubmittableInputText(message, disabled)
++  const appendFiles = async (files: File[]) => {
++    try {
++      const available = Math.max(0, MAX_ATTACHMENT_COUNT - attachments.length);
++      const next = await Promise.all(
++        files.slice(0, available).map(fileToPlaygroundAttachment),
++      );
++      const currentBytes = attachments.reduce(
++        (sum, item) => sum + item.size,
++        0,
++      );
++      const nextBytes = next.reduce((sum, item) => sum + item.size, 0);
++      if (currentBytes + nextBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
++        throw new Error("Total attachment size must be 20 MB or smaller");
++      }
++      setAttachments((current) => [...current, ...next]);
++    } catch (error) {
++      toast.error(
++        error instanceof Error ? t(error.message) : t("Upload failed"),
++      );
++    }
++  };
++
++  const handleAttachmentAction = async (action: string) => {
++    if (action === "upload-file") fileInputRef.current?.click();
++    if (action === "upload-photo") photoInputRef.current?.click();
++    if (action === "take-photo") cameraInputRef.current?.click();
++    if (action === "take-screenshot") {
++      try {
++        await appendFiles([await capturePlaygroundScreenshot()]);
++      } catch (error) {
++        toast.error(
++          error instanceof Error ? t(error.message) : t("Capture failed"),
++        );
++      }
++    }
++  };
+ 
+-    if (!submittableText) return
+-    onSubmit(submittableText)
+-    setText('')
+-  }
++  const handleSubmit = (message: PromptInputMessage) => {
++    const submittableText = message.text?.trim() ?? "";
++    if (disabled || (!submittableText && attachments.length === 0)) return;
++    onSubmit(submittableText, attachments);
++    setText("");
++    setAttachments([]);
++  };
+ 
+   return (
+-    <div className='grid shrink-0 gap-4 px-1 md:pb-4'>
++    <div className="grid shrink-0 gap-4 px-1 md:pb-4">
+       <PromptInput
+-        className='relative'
+-        groupClassName='bg-background/95 dark:bg-background/80 border-border/70 shadow-[0_18px_60px_-32px_rgba(0,0,0,0.65)] ring-1 ring-foreground/5 rounded-xl overflow-hidden transition-all duration-200 focus-within:border-primary/45 focus-within:ring-primary/15 focus-within:shadow-[0_22px_70px_-34px_rgba(0,0,0,0.75)]'
++        className="relative"
++        groupClassName="bg-background/95 dark:bg-background/80 border-border/70 shadow-[0_18px_60px_-32px_rgba(0,0,0,0.65)] ring-1 ring-foreground/5 rounded-xl overflow-hidden transition-all duration-200 focus-within:border-primary/45 focus-within:ring-primary/15 focus-within:shadow-[0_22px_70px_-34px_rgba(0,0,0,0.75)]"
+         onSubmit={handleSubmit}
+       >
++        <input
++          className="hidden"
++          multiple
++          onChange={(event) => {
++            void appendFiles([...(event.target.files ?? [])]);
++            event.target.value = "";
++          }}
++          ref={fileInputRef}
++          type="file"
++        />
++        <input
++          accept="image/*"
++          className="hidden"
++          multiple
++          onChange={(event) => {
++            void appendFiles([...(event.target.files ?? [])]);
++            event.target.value = "";
++          }}
++          ref={photoInputRef}
++          type="file"
++        />
++        <input
++          accept="image/*"
++          capture="environment"
++          className="hidden"
++          onChange={(event) => {
++            void appendFiles([...(event.target.files ?? [])]);
++            event.target.value = "";
++          }}
++          ref={cameraInputRef}
++          type="file"
++        />
++
++        {attachments.length > 0 && (
++          <div className="flex flex-wrap gap-2 px-4 pt-3">
++            {attachments.map((attachment) => (
++              <div
++                className="border-border/70 bg-muted/35 flex max-w-56 items-center gap-2 rounded-md border px-2 py-1.5"
++                key={attachment.id}
++              >
++                {attachment.kind === "image" ? (
++                  <ImageIcon className="text-muted-foreground size-4 shrink-0" />
++                ) : (
++                  <FileIcon className="text-muted-foreground size-4 shrink-0" />
++                )}
++                <span className="truncate text-xs">{attachment.name}</span>
++                <button
++                  aria-label={t("Remove attachment")}
++                  className="text-muted-foreground hover:text-destructive shrink-0"
++                  onClick={() =>
++                    setAttachments((current) =>
++                      current.filter((item) => item.id !== attachment.id),
++                    )
++                  }
++                  type="button"
++                >
++                  <XIcon size={14} />
++                </button>
++              </div>
++            ))}
++          </div>
++        )}
++
++        <div className="border-border/60 bg-muted/15 grid min-w-0 gap-2 border-b px-4 py-2.5">
++          <div className="flex min-w-0 items-center gap-2">
++            <span className="border-border/70 bg-background/70 shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold">
++              {t(modelProfile.badge)}
++            </span>
++            <span className="text-muted-foreground min-w-0 truncate text-xs">
++              {t(modelProfile.description)}
++            </span>
++            <code className="text-muted-foreground/80 ml-auto hidden shrink-0 font-mono text-[10px] sm:block">
++              POST {modelProfile.endpoint}
++            </code>
++          </div>
++
++          {modelProfile.requestHints && (
++            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
++              {modelProfile.requestHints.map((hint) => (
++                <code
++                  className="border-border/60 bg-background/65 text-muted-foreground rounded border px-1.5 py-0.5 font-mono text-[10px]"
++                  key={`${hint.label}-${hint.value}`}
++                >
++                  {hint.label}: {t(hint.value)}
++                </code>
++              ))}
++            </div>
++          )}
++        </div>
++
+         <PromptInputTextarea
+-          autoComplete='off'
+-          autoCorrect='off'
+-          autoCapitalize='off'
++          autoComplete="off"
++          autoCorrect="off"
++          autoCapitalize="off"
+           spellCheck={false}
+-          className='min-h-20 px-5 pt-4 pb-3 leading-7 md:min-h-24 md:text-base'
++          className="min-h-20 px-5 pt-4 pb-3 leading-7 md:min-h-24 md:text-base"
+           disabled={disabled}
+           onChange={(event) => setText(event.target.value)}
+-          placeholder={t('Ask anything')}
++          placeholder={t("Ask anything")}
+           value={text}
+         />
+ 
+-        <PromptInputFooter className='border-border/60 bg-muted/20 dark:bg-muted/10 border-t px-3 py-2.5 backdrop-blur'>
++        <PromptInputFooter className="border-border/60 bg-muted/20 dark:bg-muted/10 border-t px-3 py-2.5 backdrop-blur">
+           <PlaygroundInputControls
+             disabled={disabled}
+             groups={groups}
+@@ -124,6 +265,7 @@ export function PlaygroundInput({
+             onModelChange={onModelChange}
+             onStop={onStop}
+             text={text}
++            attachmentCount={attachments.length}
+             tools={
+               <PlaygroundInputTools
+                 config={config}
+@@ -133,11 +275,12 @@ export function PlaygroundInput({
+                 onClearMessages={onClearMessages}
+                 onParameterEnabledChange={onParameterEnabledChange}
+                 parameterEnabled={parameterEnabled}
++                onAttachmentAction={handleAttachmentAction}
+               />
+             }
+           />
+         </PromptInputFooter>
+       </PromptInput>
+     </div>
+-  )
++  );
+ }
+diff --git a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
+index 7cfd0a9d..32cd1abe 100644
+--- a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
++++ b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
+@@ -16,60 +16,61 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { SlidersHorizontalIcon } from 'lucide-react'
+-import { useTranslation } from 'react-i18next'
++import { SlidersHorizontalIcon } from "lucide-react";
++import { useTranslation } from "react-i18next";
+ 
+-import { PromptInputButton } from '@/components/ai-elements/prompt-input'
+-import { Badge } from '@/components/ui/badge'
+-import { Input } from '@/components/ui/input'
++import { PromptInputButton } from "@/components/ai-elements/prompt-input";
++import { Badge } from "@/components/ui/badge";
++import { Input } from "@/components/ui/input";
+ import {
+   Popover,
+   PopoverContent,
+   PopoverTrigger,
+-} from '@/components/ui/popover'
++} from "@/components/ui/popover";
+ import {
+   Sheet,
+   SheetContent,
+   SheetHeader,
+   SheetTitle,
+   SheetTrigger,
+-} from '@/components/ui/sheet'
+-import { Slider } from '@/components/ui/slider'
+-import { Switch } from '@/components/ui/switch'
++} from "@/components/ui/sheet";
++import { Slider } from "@/components/ui/slider";
++import { Switch } from "@/components/ui/switch";
+ import {
+   Tooltip,
+   TooltipContent,
+   TooltipTrigger,
+-} from '@/components/ui/tooltip'
+-import { useIsMobile } from '@/hooks/use-mobile'
+-import { cn } from '@/lib/utils'
++} from "@/components/ui/tooltip";
++import { useIsMobile } from "@/hooks/use-mobile";
++import { cn } from "@/lib/utils";
+ 
++import { getPlaygroundModelProfile } from "../../lib/model/model-profiles";
+ import {
+   getParameterControlValueText,
+   normalizeParameterNumberValue,
+   PLAYGROUND_PARAMETER_CONTROLS,
+   PLAYGROUND_PARAMETER_PANEL_SCROLL_CLASS,
+   type PlaygroundParameterKey,
+-} from '../../lib/parameters/playground-parameters'
+-import type { ParameterEnabled, PlaygroundConfig } from '../../types'
++} from "../../lib/parameters/playground-parameters";
++import type { ParameterEnabled, PlaygroundConfig } from "../../types";
+ 
+ type PlaygroundParameterPanelProps = {
+-  config: PlaygroundConfig
+-  disabled?: boolean
++  config: PlaygroundConfig;
++  disabled?: boolean;
+   onConfigChange: <K extends keyof PlaygroundConfig>(
+     key: K,
+-    value: PlaygroundConfig[K]
+-  ) => void
++    value: PlaygroundConfig[K],
++  ) => void;
+   onParameterEnabledChange: (
+     key: PlaygroundParameterKey,
+-    value: boolean
+-  ) => void
+-  parameterEnabled: ParameterEnabled
+-}
++    value: boolean,
++  ) => void;
++  parameterEnabled: ParameterEnabled;
++};
+ 
+ type PlaygroundParameterContentProps = PlaygroundParameterPanelProps & {
+-  compact?: boolean
+-}
++  compact?: boolean;
++};
+ 
+ function PlaygroundParameterContent({
+   compact = false,
+@@ -79,64 +80,181 @@ function PlaygroundParameterContent({
+   onParameterEnabledChange,
+   parameterEnabled,
+ }: PlaygroundParameterContentProps) {
+-  const { t } = useTranslation()
++  const { t } = useTranslation();
++  const modelProfile = getPlaygroundModelProfile(config.model);
++  const modelKind = modelProfile.kind;
+ 
+   const updateParameterConfig = (
+     key: PlaygroundParameterKey,
+-    value: number | null
++    value: number | null,
+   ) => {
+-    if (key === 'seed') {
+-      onConfigChange('seed', value)
+-      return
++    if (key === "seed") {
++      onConfigChange("seed", value);
++      return;
+     }
+ 
+-    onConfigChange(key, value ?? 0)
++    onConfigChange(key, value ?? 0);
++  };
++
++  if (modelKind !== "chat") {
++    return (
++      <div className={cn("grid gap-3", compact ? "px-4 pb-4" : "p-1")}>
++        {modelKind === "image" && (
++          <>
++            <label className="grid gap-1.5 text-sm font-medium">
++              {t("Image size")}
++              <select
++                className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                disabled={disabled}
++                onChange={(event) =>
++                  onConfigChange("imageSize", event.target.value)
++                }
++                value={config.imageSize}
++              >
++                {(modelProfile.imageSizes ?? []).map((option) => (
++                  <option key={option.value} value={option.value}>
++                    {option.label}
++                  </option>
++                ))}
++              </select>
++            </label>
++            {modelProfile.defaultImageQuality !== "auto" && (
++              <label className="grid gap-1.5 text-sm font-medium">
++                {t("Quality")}
++                <select
++                  className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                  disabled={disabled}
++                  onChange={(event) =>
++                    onConfigChange("imageQuality", event.target.value)
++                  }
++                  value={config.imageQuality}
++                >
++                  <option value="standard">{t("Standard")}</option>
++                  <option value="high">{t("High")}</option>
++                  <option value="hd">HD</option>
++                </select>
++              </label>
++            )}
++          </>
++        )}
++
++        {modelKind === "video" && (
++          <>
++            <label className="grid gap-1.5 text-sm font-medium">
++              {t("Duration")}
++              <Input
++                disabled={disabled}
++                max={30}
++                min={1}
++                onChange={(event) =>
++                  onConfigChange(
++                    "videoSeconds",
++                    Math.max(1, Math.min(30, Number(event.target.value) || 1)),
++                  )
++                }
++                type="number"
++                value={config.videoSeconds}
++              />
++            </label>
++            <label className="grid gap-1.5 text-sm font-medium">
++              {t("Resolution")}
++              <select
++                className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                disabled={disabled}
++                onChange={(event) =>
++                  onConfigChange("videoSize", event.target.value)
++                }
++                value={config.videoSize}
++              >
++                <option value="1280x720">1280x720 (16:9)</option>
++                <option value="720x1280">720x1280 (9:16)</option>
++                <option value="1920x1080">1920x1080 (16:9)</option>
++                <option value="1080x1920">1080x1920 (9:16)</option>
++              </select>
++            </label>
++          </>
++        )}
++
++        {modelKind === "tts" && (
++          <>
++            <label className="grid gap-1.5 text-sm font-medium">
++              {t(modelProfile.ttsVoiceLabel || "Voice")}
++              <Input
++                disabled={disabled}
++                onChange={(event) =>
++                  onConfigChange("ttsVoice", event.target.value)
++                }
++                placeholder={modelProfile.ttsVoicePlaceholder}
++                value={config.ttsVoice}
++              />
++            </label>
++            <label className="grid gap-1.5 text-sm font-medium">
++              {t("Audio format")}
++              <select
++                className="border-input bg-background h-9 rounded-md border px-3 text-sm"
++                disabled={disabled}
++                onChange={(event) =>
++                  onConfigChange("ttsFormat", event.target.value)
++                }
++                value={config.ttsFormat}
++              >
++                {(modelProfile.ttsFormats ?? []).map((option) => (
++                  <option key={option.value} value={option.value}>
++                    {option.label}
++                  </option>
++                ))}
++              </select>
++            </label>
++          </>
++        )}
++      </div>
++    );
+   }
+ 
+   return (
+     <div
+       className={cn(
+-        'grid gap-3',
++        "grid gap-3",
+         PLAYGROUND_PARAMETER_PANEL_SCROLL_CLASS,
+-        compact ? 'px-4 pb-4' : 'p-1'
++        compact ? "px-4 pb-4" : "p-1",
+       )}
+     >
+       {PLAYGROUND_PARAMETER_CONTROLS.map((control) => {
+-        const enabled = parameterEnabled[control.key]
+-        const value = config[control.key]
+-        const controlId = `playground-${control.key}`
++        const enabled = parameterEnabled[control.key];
++        const value = config[control.key];
++        const controlId = `playground-${control.key}`;
+ 
+         return (
+           <div
+             className={cn(
+-              'border-border/70 bg-background/60 grid gap-2 rounded-lg border p-3 transition-opacity',
+-              (!enabled || disabled) && 'opacity-55'
++              "border-border/70 bg-background/60 grid gap-2 rounded-lg border p-3 transition-opacity",
++              (!enabled || disabled) && "opacity-55",
+             )}
+             key={control.key}
+           >
+-            <div className='flex items-start justify-between gap-3'>
+-              <div className='min-w-0 space-y-1'>
+-                <div className='flex min-w-0 items-center gap-2'>
++            <div className="flex items-start justify-between gap-3">
++              <div className="min-w-0 space-y-1">
++                <div className="flex min-w-0 items-center gap-2">
+                   <label
+-                    className='truncate text-sm leading-5 font-medium'
++                    className="truncate text-sm leading-5 font-medium"
+                     htmlFor={controlId}
+                   >
+                     {t(control.labelKey)}
+                   </label>
+                   <Badge
+-                    className='h-5 max-w-24 shrink-0 px-1.5 font-mono text-[11px]'
+-                    variant='outline'
++                    className="h-5 max-w-24 shrink-0 px-1.5 font-mono text-[11px]"
++                    variant="outline"
+                   >
+                     {t(getParameterControlValueText(control.key, value))}
+                   </Badge>
+                 </div>
+-                <p className='text-muted-foreground text-xs leading-4'>
++                <p className="text-muted-foreground text-xs leading-4">
+                   {t(control.descriptionKey)}
+                 </p>
+               </div>
+ 
+               <Switch
+-                aria-label={t('Enable {{parameter}}', {
++                aria-label={t("Enable {{parameter}}", {
+                   parameter: t(control.labelKey),
+                 })}
+                 checked={enabled}
+@@ -144,13 +262,13 @@ function PlaygroundParameterContent({
+                 onCheckedChange={(checked) =>
+                   onParameterEnabledChange(control.key, checked)
+                 }
+-                size='sm'
++                size="sm"
+               />
+             </div>
+ 
+-            {control.valueType === 'slider' ? (
++            {control.valueType === "slider" ? (
+               <Slider
+-                className='py-1.5'
++                className="py-1.5"
+                 disabled={disabled || !enabled}
+                 id={controlId}
+                 max={control.max}
+@@ -158,11 +276,11 @@ function PlaygroundParameterContent({
+                 onValueChange={(nextValue) => {
+                   const firstValue = Array.isArray(nextValue)
+                     ? nextValue[0]
+-                    : nextValue
++                    : nextValue;
+                   updateParameterConfig(
+                     control.key,
+-                    normalizeParameterNumberValue(control.key, firstValue)
+-                  )
++                    normalizeParameterNumberValue(control.key, firstValue),
++                  );
+                 }}
+                 step={control.step}
+                 value={[Number(value)]}
+@@ -171,7 +289,7 @@ function PlaygroundParameterContent({
+               <Input
+                 disabled={disabled || !enabled}
+                 id={controlId}
+-                inputMode='numeric'
++                inputMode="numeric"
+                 max={control.max}
+                 min={control.min}
+                 onChange={(event) => {
+@@ -179,42 +297,51 @@ function PlaygroundParameterContent({
+                     control.key,
+                     normalizeParameterNumberValue(
+                       control.key,
+-                      event.target.value
+-                    )
+-                  )
++                      event.target.value,
++                    ),
++                  );
+                 }}
+                 step={control.step}
+-                type='number'
+-                value={value ?? ''}
++                type="number"
++                value={value ?? ""}
+               />
+             )}
+           </div>
+-        )
++        );
+       })}
+     </div>
+-  )
++  );
+ }
+ 
+ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+-  const { t } = useTranslation()
+-  const isMobile = useIsMobile()
+-  const activeCount = PLAYGROUND_PARAMETER_CONTROLS.filter(
+-    (control) => props.parameterEnabled[control.key]
+-  ).length
++  const { t } = useTranslation();
++  const isMobile = useIsMobile();
++  const modelKind = getPlaygroundModelProfile(props.config.model).kind;
++  let activeCount = 2;
++  if (modelKind === "chat") {
++    activeCount = PLAYGROUND_PARAMETER_CONTROLS.filter(
++      (control) => props.parameterEnabled[control.key],
++    ).length;
++  } else if (
++    modelKind === "image" &&
++    getPlaygroundModelProfile(props.config.model).defaultImageQuality === "auto"
++  ) {
++    activeCount = 1;
++  }
+ 
+   const trigger = (
+     <PromptInputButton
+-      aria-label={t('Parameters')}
+-      className='text-muted-foreground hover:text-foreground hover:bg-muted/70 relative font-medium'
++      aria-label={t("Parameters")}
++      className="text-muted-foreground hover:text-foreground hover:bg-muted/70 relative font-medium"
+       disabled={props.disabled}
+-      variant='ghost'
++      variant="ghost"
+     >
+       <SlidersHorizontalIcon size={16} />
+-      <span className='bg-primary text-primary-foreground absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] leading-none font-semibold'>
++      <span className="bg-primary text-primary-foreground absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] leading-none font-semibold">
+         {activeCount}
+       </span>
+     </PromptInputButton>
+-  )
++  );
+ 
+   if (isMobile) {
+     return (
+@@ -222,20 +349,20 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+         <Tooltip>
+           <TooltipTrigger render={<SheetTrigger render={trigger} />} />
+           <TooltipContent>
+-            <p>{t('Parameters')}</p>
++            <p>{t("Parameters")}</p>
+           </TooltipContent>
+         </Tooltip>
+         <SheetContent
+-          className='max-h-[85vh] overflow-hidden rounded-t-xl'
+-          side='bottom'
++          className="max-h-[85vh] overflow-hidden rounded-t-xl"
++          side="bottom"
+         >
+           <SheetHeader>
+-            <SheetTitle>{t('Parameter settings')}</SheetTitle>
++            <SheetTitle>{t("Parameter settings")}</SheetTitle>
+           </SheetHeader>
+           <PlaygroundParameterContent {...props} compact />
+         </SheetContent>
+       </Sheet>
+-    )
++    );
+   }
+ 
+   return (
+@@ -243,24 +370,24 @@ export function PlaygroundParameterPanel(props: PlaygroundParameterPanelProps) {
+       <Tooltip>
+         <TooltipTrigger render={<PopoverTrigger render={trigger} />} />
+         <TooltipContent>
+-          <p>{t('Parameters')}</p>
++          <p>{t("Parameters")}</p>
+         </TooltipContent>
+       </Tooltip>
+       <PopoverContent
+-        align='start'
+-        className='w-[22rem] max-w-[calc(100vw-2rem)] gap-3 p-3'
++        align="start"
++        className="w-[22rem] max-w-[calc(100vw-2rem)] gap-3 p-3"
+         collisionPadding={8}
+-        side='top'
++        side="top"
+         sideOffset={8}
+       >
+-        <div className='space-y-1 px-1'>
+-          <div className='text-sm font-semibold'>{t('Parameter settings')}</div>
+-          <div className='text-muted-foreground text-xs leading-4'>
+-            {t('Only enabled parameters are sent with the request.')}
++        <div className="space-y-1 px-1">
++          <div className="text-sm font-semibold">{t("Parameter settings")}</div>
++          <div className="text-muted-foreground text-xs leading-4">
++            {t("Only enabled parameters are sent with the request.")}
+           </div>
+         </div>
+         <PlaygroundParameterContent {...props} />
+       </PopoverContent>
+     </Popover>
+-  )
++  );
+ }
+diff --git a/web/default/src/features/playground/components/message/playground-message-content.tsx b/web/default/src/features/playground/components/message/playground-message-content.tsx
+index 4a116bf8..7391235f 100644
+--- a/web/default/src/features/playground/components/message/playground-message-content.tsx
++++ b/web/default/src/features/playground/components/message/playground-message-content.tsx
+@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
++import { DownloadIcon, FileIcon } from 'lucide-react'
+ import type { ReactNode } from 'react'
+ import { useTranslation } from 'react-i18next'
+ 
+@@ -52,6 +53,12 @@ import type { Message } from '../../types'
+ import { MessageError } from './message-error'
+ import { MessageMetadata } from './message-metadata'
+ 
++function formatFileSize(size: number): string {
++  if (size < 1024) return `${size} B`
++  if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} KB`
++  return `${(size / (1024 * 1024)).toFixed(1)} MB`
++}
++
+ type PlaygroundMessageContentProps = {
+   actions: ReactNode
+   alignment: MessageAlignment
+@@ -83,6 +90,9 @@ export function PlaygroundMessageContent({
+   const isMessageFinal =
+     message.status !== MESSAGE_STATUS.LOADING &&
+     message.status !== MESSAGE_STATUS.STREAMING
++  const attachments = message.attachments ?? []
++  const media = message.media ?? []
++  const hasRichContent = attachments.length > 0 || media.length > 0
+ 
+   return (
+     <div
+@@ -134,30 +144,126 @@ export function PlaygroundMessageContent({
+         </>
+       )}
+ 
+-      {!isError && showMessageContent && (
++      {!isError && (showMessageContent || hasRichContent) && (
+         <>
+-          {isSourceVisible ? (
+-            <CodeBlock
+-              code={versionContent}
+-              className='my-0 group-[.is-assistant]:w-full group-[.is-assistant]:max-w-[78ch]'
+-              collapsedLines={24}
+-              defaultCollapsed={false}
+-              language='markdown'
+-              maxExpandedLines={48}
+-              showLineNumbers
+-              showToolbar
+-              title={t('Raw response')}
+-            >
+-              <CodeBlockCopyButton />
+-            </CodeBlock>
+-          ) : (
+-            <MessageContent
+-              variant='flat'
+-              className={cn(getMessageContentStyles())}
+-            >
+-              <Response final={isMessageFinal}>{displayContent}</Response>
+-            </MessageContent>
++          {attachments.length > 0 && (
++            <div className='mb-2 grid max-w-2xl gap-2 sm:grid-cols-2'>
++              {attachments.map((attachment) =>
++                attachment.kind === 'image' ? (
++                  <a
++                    className='border-border/70 bg-muted/20 overflow-hidden rounded-lg border'
++                    download={attachment.name}
++                    href={attachment.dataUrl}
++                    key={attachment.id}
++                  >
++                    <img
++                      alt={attachment.name}
++                      className='max-h-72 w-full object-contain'
++                      src={attachment.dataUrl}
++                    />
++                    <div className='text-muted-foreground flex items-center justify-between gap-2 px-2.5 py-2 text-xs'>
++                      <span className='truncate'>{attachment.name}</span>
++                      <span className='shrink-0'>
++                        {formatFileSize(attachment.size)}
++                      </span>
++                    </div>
++                  </a>
++                ) : (
++                  <a
++                    className='border-border/70 bg-muted/25 hover:bg-muted/40 flex min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors'
++                    download={attachment.name}
++                    href={attachment.dataUrl}
++                    key={attachment.id}
++                  >
++                    <FileIcon className='text-muted-foreground size-5 shrink-0' />
++                    <span className='min-w-0 flex-1'>
++                      <span className='block truncate text-sm font-medium'>
++                        {attachment.name}
++                      </span>
++                      <span className='text-muted-foreground text-xs'>
++                        {formatFileSize(attachment.size)}
++                      </span>
++                    </span>
++                    <DownloadIcon className='text-muted-foreground size-4 shrink-0' />
++                  </a>
++                )
++              )}
++            </div>
++          )}
++
++          {media.length > 0 && (
++            <div className='mb-2 grid max-w-3xl gap-3'>
++              {media.map((item) => (
++                <div
++                  className='border-border/70 bg-muted/15 overflow-hidden rounded-lg border'
++                  key={`${item.kind}-${item.url}`}
++                >
++                  {item.kind === 'image' && (
++                    <a href={item.url} rel='noreferrer' target='_blank'>
++                      <img
++                        alt={item.name || t('Generated image')}
++                        className='max-h-[36rem] w-full object-contain'
++                        src={item.url}
++                      />
++                    </a>
++                  )}
++                  {item.kind === 'video' && (
++                    <video
++                      className='max-h-[36rem] w-full bg-black'
++                      controls
++                      playsInline
++                      preload='metadata'
++                      src={item.url}
++                    />
++                  )}
++                  {item.kind === 'audio' && (
++                    <div className='p-3'>
++                      <audio
++                        className='w-full'
++                        controls
++                        preload='metadata'
++                        src={item.url}
++                      />
++                    </div>
++                  )}
++                  <div className='border-border/60 flex items-center justify-end border-t px-3 py-2'>
++                    <a
++                      className='text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs font-medium'
++                      download={item.name || undefined}
++                      href={item.url}
++                    >
++                      <DownloadIcon size={14} />
++                      {t('Download')}
++                    </a>
++                  </div>
++                </div>
++              ))}
++            </div>
+           )}
++
++          {showMessageContent &&
++            (isSourceVisible ? (
++              <CodeBlock
++                code={versionContent}
++                className='my-0 group-[.is-assistant]:w-full group-[.is-assistant]:max-w-[78ch]'
++                collapsedLines={24}
++                defaultCollapsed={false}
++                language='markdown'
++                maxExpandedLines={48}
++                showLineNumbers
++                showToolbar
++                title={t('Raw response')}
++              >
++                <CodeBlockCopyButton />
++              </CodeBlock>
++            ) : (
++              <MessageContent
++                variant='flat'
++                className={cn(getMessageContentStyles())}
++              >
++                <Response final={isMessageFinal}>{displayContent}</Response>
++              </MessageContent>
++            ))}
+           <MessageMetadata alignment={alignment} message={message} />
+           {actions}
+         </>
+diff --git a/web/default/src/features/playground/constants.ts b/web/default/src/features/playground/constants.ts
+index 4026a0f1..07ce830d 100644
+--- a/web/default/src/features/playground/constants.ts
++++ b/web/default/src/features/playground/constants.ts
+@@ -35,6 +35,11 @@ export const MESSAGE_STATUS = {
+ // API endpoints
+ export const API_ENDPOINTS = {
+   CHAT_COMPLETIONS: '/pg/chat/completions',
++  RESPONSES: '/pg/responses',
++  IMAGE_GENERATIONS: '/pg/images/generations',
++  IMAGE_EDITS: '/pg/images/edits',
++  AUDIO_SPEECH: '/pg/audio/speech',
++  VIDEOS: '/pg/videos',
+   USER_MODELS: '/api/user/models',
+   USER_GROUPS: '/api/user/self/groups',
+ } as const
+@@ -54,6 +59,13 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
+   presence_penalty: 0,
+   seed: null,
+   stream: true,
++  webSearch: false,
++  imageSize: '1024x1024',
++  imageQuality: 'standard',
++  videoSeconds: 5,
++  videoSize: '1280x720',
++  ttsVoice: 'alloy',
++  ttsFormat: 'mp3',
+ }
+ 
+ export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
+diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
+index bfc85f2c..cc046e65 100644
+--- a/web/default/src/features/playground/hooks/use-chat-handler.ts
++++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
+@@ -20,7 +20,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
+ import { useTranslation } from 'react-i18next'
+ import { toast } from 'sonner'
+ 
+-import { sendChatCompletion } from '../api'
++import {
++  fetchVideoTask,
++  sendChatCompletion,
++  sendImageEdit,
++  sendImageGeneration,
++  sendSpeech,
++  submitVideo,
++} from '../api'
+ import { ERROR_MESSAGES } from '../constants'
+ import {
+   applyStreamingChunk,
+@@ -33,8 +40,20 @@ import {
+   hasChatCompletionChoice,
+   isAssistantMessageFinal,
+   isAssistantMessagePending,
++  dataUrlToBlob,
++  getMessageContent,
++  getPlaygroundModelKind,
++  isGeminiImageModel,
++  updateCurrentVersionContent,
+ } from '../lib'
+-import type { Message, PlaygroundConfig, ParameterEnabled } from '../types'
++import type {
++  Message,
++  PlaygroundConfig,
++  ParameterEnabled,
++  PlaygroundMedia,
++  ContentPart,
++  PlaygroundAttachment,
++} from '../types'
+ import { useStreamRequest } from './use-stream-request'
+ 
+ interface UseChatHandlerOptions {
+@@ -45,12 +64,121 @@ interface UseChatHandlerOptions {
+ 
+ const KNOWN_ERROR_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES))
+ const STREAM_UPDATE_FLUSH_MS = 50
++const VIDEO_POLL_INTERVAL_MS = 3000
++const VIDEO_POLL_TIMEOUT_MS = 12 * 60 * 1000
+ 
+ type PendingStreamChunks = {
+   content: string
+   reasoning: string
+ }
+ 
++function getLastUserMessage(messages: Message[]): Message | undefined {
++  return [...messages].reverse().find((message) => message.from === 'user')
++}
++
++function makeObjectUrl(dataUrl: string): string {
++  return URL.createObjectURL(dataUrlToBlob(dataUrl))
++}
++
++function imageResponseMedia(response: {
++  data?: Array<{ url?: string; b64_json?: string; revised_prompt?: string }>
++}): { media: PlaygroundMedia; text: string } {
++  const item = response.data?.[0]
++  if (!item) throw new Error('Image generation returned no image')
++  const text = item.revised_prompt || 'Image generated'
++  if (item.url) {
++    return { media: { kind: 'image', url: item.url }, text }
++  }
++  if (item.b64_json) {
++    return {
++      media: {
++        kind: 'image',
++        url: makeObjectUrl(`data:image/png;base64,${item.b64_json}`),
++        mimeType: 'image/png',
++        revokeOnDispose: true,
++      },
++      text,
++    }
++  }
++  throw new Error('Image generation returned no usable image data')
++}
++
++function geminiImageMedia(content: string): {
++  media: PlaygroundMedia
++  text: string
++} {
++  const match = content.match(/data:(image\/[^;]+);base64,([A-Za-z0-9+/=]+)/)
++  if (!match) throw new Error('Gemini image response did not contain an image')
++  return {
++    media: {
++      kind: 'image',
++      url: makeObjectUrl(match[0]),
++      mimeType: match[1],
++      revokeOnDispose: true,
++    },
++    text:
++      content.replaceAll(/!\[[^\]]*\]\(data:image[^)]+\)/g, '').trim() ||
++      'Image generated',
++  }
++}
++
++function attachmentToContentPart(
++  attachment: PlaygroundAttachment
++): ContentPart {
++  if (attachment.kind === 'image') {
++    return {
++      type: 'image_url',
++      image_url: { url: attachment.dataUrl },
++    }
++  }
++
++  return {
++    type: 'file',
++    file: {
++      filename: attachment.name,
++      file_data: attachment.dataUrl,
++    },
++  }
++}
++
++function buildGeminiImageContent(
++  prompt: string,
++  attachments: PlaygroundAttachment[]
++): string | ContentPart[] {
++  if (attachments.length === 0) {
++    return prompt
++  }
++
++  return [
++    { type: 'text', text: prompt },
++    ...attachments.map(attachmentToContentPart),
++  ]
++}
++
++function getGeminiImageSize(size: string): '1K' | '2K' | '4K' {
++  if (size.includes('3840')) {
++    return '4K'
++  }
++  if (size.includes('2160')) {
++    return '2K'
++  }
++  return '1K'
++}
++
++function waitForVideoPoll(signal: AbortSignal): Promise<void> {
++  return new Promise((resolve, reject) => {
++    const handleAbort = () => {
++      window.clearTimeout(timeout)
++      reject(new DOMException('Aborted', 'AbortError'))
++    }
++    const timeout = window.setTimeout(() => {
++      signal.removeEventListener('abort', handleAbort)
++      resolve()
++    }, VIDEO_POLL_INTERVAL_MS)
++    signal.addEventListener('abort', handleAbort, { once: true })
++  })
++}
++
+ function mergePendingStreamChunk(
+   currentChunk: string,
+   nextChunk: string
+@@ -279,16 +407,202 @@ export function useChatHandler({
+     [config, parameterEnabled, onMessageUpdate, handleStreamError]
+   )
+ 
++  const completeMediaMessage = useCallback(
++    (text: string, media: PlaygroundMedia[]) => {
++      onMessageUpdate((prev) =>
++        updateLastAssistantMessage(prev, (message) =>
++          completeAssistantMessage({
++            ...updateCurrentVersionContent(message, text),
++            media,
++          })
++        )
++      )
++    },
++    [onMessageUpdate]
++  )
++
++  const sendSpecializedRequest = useCallback(
++    async (messages: Message[]) => {
++      const requestId = requestIdRef.current + 1
++      const abortController = new AbortController()
++      requestIdRef.current = requestId
++      abortControllerRef.current = abortController
++      setIsRequesting(true)
++
++      try {
++        const userMessage = getLastUserMessage(messages)
++        const prompt = userMessage ? getMessageContent(userMessage) : ''
++        const attachments = userMessage?.attachments ?? []
++        const imageAttachment = attachments.find(
++          (attachment) => attachment.kind === 'image'
++        )
++        const modelKind = getPlaygroundModelKind(config.model)
++
++        if (modelKind === 'image') {
++          if (isGeminiImageModel(config.model)) {
++            const requestContent = buildGeminiImageContent(prompt, attachments)
++            const response = await sendChatCompletion(
++              {
++                model: config.model,
++                group: config.group,
++                messages: [
++                  {
++                    role: 'user',
++                    content: requestContent,
++                  },
++                ],
++                stream: false,
++                extra_body: {
++                  google: {
++                    image_config: {
++                      image_size: getGeminiImageSize(config.imageSize),
++                    },
++                  },
++                },
++              },
++              abortController.signal
++            )
++            const responseContent =
++              response.choices?.[0]?.message?.content || ''
++            const result = geminiImageMedia(responseContent)
++            completeMediaMessage(result.text, [result.media])
++          } else if (imageAttachment) {
++            const payload = new FormData()
++            payload.append('model', config.model)
++            payload.append('group', config.group)
++            payload.append('prompt', prompt || 'Edit this image')
++            payload.append('size', config.imageSize)
++            if (config.imageQuality !== 'auto') {
++              payload.append('quality', config.imageQuality)
++            }
++            payload.append('n', '1')
++            payload.append(
++              'image',
++              dataUrlToBlob(imageAttachment.dataUrl),
++              imageAttachment.name
++            )
++            const result = imageResponseMedia(
++              await sendImageEdit(payload, abortController.signal)
++            )
++            completeMediaMessage(result.text, [result.media])
++          } else {
++            const imagePayload: Record<string, unknown> = {
++              model: config.model,
++              group: config.group,
++              prompt,
++              size: config.imageSize,
++              n: 1,
++            }
++            if (config.imageQuality !== 'auto') {
++              imagePayload.quality = config.imageQuality
++            }
++            const result = imageResponseMedia(
++              await sendImageGeneration(imagePayload, abortController.signal)
++            )
++            completeMediaMessage(result.text, [result.media])
++          }
++          return
++        }
++
++        if (modelKind === 'tts') {
++          const audio = await sendSpeech(
++            {
++              model: config.model,
++              group: config.group,
++              input: prompt,
++              voice: config.ttsVoice,
++              response_format: config.ttsFormat,
++            },
++            abortController.signal
++          )
++          const audioUrl = URL.createObjectURL(audio)
++          completeMediaMessage(t('Speech generated'), [
++            {
++              kind: 'audio',
++              url: audioUrl,
++              mimeType: audio.type,
++              name: `speech.${config.ttsFormat}`,
++              revokeOnDispose: true,
++            },
++          ])
++          return
++        }
++
++        if (modelKind === 'video') {
++          const payload = new FormData()
++          payload.append('model', config.model)
++          payload.append('group', config.group)
++          payload.append('prompt', prompt)
++          payload.append('seconds', String(config.videoSeconds))
++          payload.append('size', config.videoSize)
++          if (imageAttachment) {
++            payload.append(
++              'input_reference',
++              dataUrlToBlob(imageAttachment.dataUrl),
++              imageAttachment.name
++            )
++          }
++
++          const created = await submitVideo(payload, abortController.signal)
++          const taskId = created.id || created.task_id
++          if (!taskId) throw new Error('Video request returned no task ID')
++
++          const startedAt = Date.now()
++          let task = created
++          while (Date.now() - startedAt < VIDEO_POLL_TIMEOUT_MS) {
++            const status = String(task.status || '').toLowerCase()
++            if (status === 'completed' || status === 'succeeded') {
++              completeMediaMessage(t('Video generated'), [
++                {
++                  kind: 'video',
++                  url: `/v1/videos/${encodeURIComponent(taskId)}/content`,
++                  name: `${config.model}-${taskId}.mp4`,
++                },
++              ])
++              return
++            }
++            if (status === 'failed' || task.error) {
++              throw new Error('Video generation failed')
++            }
++            await waitForVideoPoll(abortController.signal)
++            task = await fetchVideoTask(taskId, abortController.signal)
++          }
++          throw new Error('Video generation timed out')
++        }
++      } catch (error: unknown) {
++        if (abortController.signal.aborted) return
++        const { errorCode, errorMessage } = parseRequestErrorDetails(error)
++        handleStreamError(errorMessage, errorCode)
++      } finally {
++        if (requestIdRef.current === requestId) {
++          abortControllerRef.current = null
++          setIsRequesting(false)
++        }
++      }
++    },
++    [config, completeMediaMessage, handleStreamError, t]
++  )
++
+   // Send chat request (stream or non-stream based on config)
+   const sendChat = useCallback(
+     (messages: Message[]) => {
++      if (getPlaygroundModelKind(config.model) !== 'chat') {
++        void sendSpecializedRequest(messages)
++        return
++      }
+       if (config.stream) {
+         sendStreamingChat(messages)
+       } else {
+         sendNonStreamingChat(messages)
+       }
+     },
+-    [config.stream, sendStreamingChat, sendNonStreamingChat]
++    [
++      config.model,
++      config.stream,
++      sendStreamingChat,
++      sendNonStreamingChat,
++      sendSpecializedRequest,
++    ]
+   )
+ 
+   // Stop generation
+diff --git a/web/default/src/features/playground/hooks/use-playground-conversation.ts b/web/default/src/features/playground/hooks/use-playground-conversation.ts
+index 7f56ce0b..3821678d 100644
+--- a/web/default/src/features/playground/hooks/use-playground-conversation.ts
++++ b/web/default/src/features/playground/hooks/use-playground-conversation.ts
+@@ -24,7 +24,7 @@ import {
+   createRegeneratedMessages,
+   removeMessageByKey,
+ } from '../lib'
+-import type { Message } from '../types'
++import type { Message, PlaygroundAttachment } from '../types'
+ 
+ type UsePlaygroundConversationOptions = {
+   messages: Message[]
+@@ -44,8 +44,8 @@ export function usePlaygroundConversation({
+   )
+ 
+   const handleSendMessage = useCallback(
+-    (text: string) => {
+-      const nextMessages = appendUserMessagePair(messages, text)
++    (text: string, attachments: PlaygroundAttachment[] = []) => {
++      const nextMessages = appendUserMessagePair(messages, text, attachments)
+       updateMessages(nextMessages)
+       sendChat(nextMessages)
+     },
+diff --git a/web/default/src/features/playground/hooks/use-playground-state.ts b/web/default/src/features/playground/hooks/use-playground-state.ts
+index 25b66bc1..d3c4dbaf 100644
+--- a/web/default/src/features/playground/hooks/use-playground-state.ts
++++ b/web/default/src/features/playground/hooks/use-playground-state.ts
+@@ -27,6 +27,8 @@ import {
+   getInitialParameterEnabled,
+   getInitialPlaygroundConfig,
+   loadMessages,
++  revokeMessageResources,
++  revokeRemovedMessageResources,
+   type MessageStateUpdater,
+ } from '../lib'
+ import type {
+@@ -104,6 +106,7 @@ export function usePlaygroundState() {
+         window.clearTimeout(messagesSaveTimerRef.current)
+         saveMessages(latestMessagesRef.current)
+       }
++      revokeMessageResources(latestMessagesRef.current)
+     },
+     []
+   )
+@@ -137,6 +140,7 @@ export function usePlaygroundState() {
+     (updater: MessageStateUpdater) => {
+       setMessages((prev) => {
+         const newMessages = applyMessageStateUpdate(prev, updater)
++        revokeRemovedMessageResources(prev, newMessages)
+         persistMessages(newMessages)
+         return newMessages
+       })
+diff --git a/web/default/src/features/playground/index.tsx b/web/default/src/features/playground/index.tsx
+index 4f225574..d2b85b80 100644
+--- a/web/default/src/features/playground/index.tsx
++++ b/web/default/src/features/playground/index.tsx
+@@ -16,14 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import { PlaygroundChat } from './components/chat/playground-chat'
+-import { PlaygroundInput } from './components/input/playground-input'
++import { useEffect } from "react";
++
++import { PlaygroundChat } from "./components/chat/playground-chat";
++import { PlaygroundInput } from "./components/input/playground-input";
+ import {
+   useChatHandler,
+   usePlaygroundConversation,
+   usePlaygroundOptions,
+   usePlaygroundState,
+-} from './hooks'
++} from "./hooks";
++import { getPlaygroundModelProfile } from "./lib";
+ 
+ export function Playground() {
+   const {
+@@ -39,13 +42,13 @@ export function Playground() {
+     updateConfig,
+     updateParameterEnabled,
+     clearMessages,
+-  } = usePlaygroundState()
++  } = usePlaygroundState();
+ 
+   const { sendChat, stopGeneration, isGenerating } = useChatHandler({
+     config,
+     parameterEnabled,
+     onMessageUpdate: updateMessages,
+-  })
++  });
+ 
+   const {
+     editingMessageKey,
+@@ -59,12 +62,12 @@ export function Playground() {
+     messages,
+     updateMessages,
+     sendChat,
+-  })
++  });
+ 
+   const handleClearMessages = () => {
+-    handleEditOpenChange(false)
+-    clearMessages()
+-  }
++    handleEditOpenChange(false);
++    clearMessages();
++  };
+ 
+   const { isLoadingModels } = usePlaygroundOptions({
+     currentGroup: config.group,
+@@ -72,12 +75,33 @@ export function Playground() {
+     setGroups,
+     setModels,
+     updateConfig,
+-  })
++  });
++
++  useEffect(() => {
++    const profile = getPlaygroundModelProfile(config.model);
++
++    if (profile.defaultImageSize) {
++      updateConfig("imageSize", profile.defaultImageSize);
++    }
++    if (profile.defaultImageQuality) {
++      updateConfig("imageQuality", profile.defaultImageQuality);
++    }
++    if (profile.defaultTtsVoice) {
++      updateConfig("ttsVoice", profile.defaultTtsVoice);
++    }
++    if (profile.defaultTtsFormat) {
++      updateConfig("ttsFormat", profile.defaultTtsFormat);
++    }
++  }, [config.model, updateConfig]);
++
++  const handleModelChange = (value: string) => {
++    updateConfig("model", value);
++  };
+ 
+   return (
+-    <div className='relative flex size-full min-h-0 flex-col overflow-hidden'>
++    <div className="relative flex size-full min-h-0 flex-col overflow-hidden">
+       {/* Full-width scroll container: scrolling works even over side whitespace */}
+-      <div className='flex min-h-0 flex-1 flex-col overflow-hidden'>
++      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+         <PlaygroundChat
+           messages={messages}
+           isLoadingMessages={isLoadingMessages}
+@@ -94,7 +118,7 @@ export function Playground() {
+       </div>
+ 
+       {/* Input area: center content and constrain to the same container width */}
+-      <div className='mx-auto w-full max-w-4xl'>
++      <div className="mx-auto w-full max-w-4xl">
+         <PlaygroundInput
+           config={config}
+           disabled={isGenerating}
+@@ -104,10 +128,10 @@ export function Playground() {
+           isModelLoading={isLoadingModels}
+           modelValue={config.model}
+           models={models}
+-          onGroupChange={(value) => updateConfig('group', value)}
++          onGroupChange={(value) => updateConfig("group", value)}
+           onConfigChange={updateConfig}
+           onClearMessages={handleClearMessages}
+-          onModelChange={(value) => updateConfig('model', value)}
++          onModelChange={handleModelChange}
+           onParameterEnabledChange={updateParameterEnabled}
+           onStop={stopGeneration}
+           onSubmit={handleSendMessage}
+@@ -116,5 +140,5 @@ export function Playground() {
+         />
+       </div>
+     </div>
+-  )
++  );
+ }
+diff --git a/web/default/src/features/playground/lib/index.ts b/web/default/src/features/playground/lib/index.ts
+index b2404d8b..ced13108 100644
+--- a/web/default/src/features/playground/lib/index.ts
++++ b/web/default/src/features/playground/lib/index.ts
+@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
+ */
+ export * from './input/input-control-utils'
+ export * from './input/input-tool-utils'
++export * from './input/attachment-utils'
+ export * from './message/conversation-message-utils'
+ export * from './message/message-action-utils'
+ export * from './message/message-content-utils'
+@@ -25,11 +26,14 @@ export * from './message/message-editor-utils'
+ export * from './message/message-error-utils'
+ export * from './message/message-layout-utils'
+ export * from './message/message-reasoning-utils'
++export * from './message/message-resource-utils'
+ export * from './message/message-streaming-utils'
+ export * from './message/message-styles'
+ export * from './message/message-timing-utils'
+ export * from './message/message-update-utils'
+ export * from './message/message-utils'
++export * from './model/model-capabilities'
++export * from './model/model-profiles'
+ export * from './options/playground-option-utils'
+ export * from './parameters/playground-parameters'
+ export * from './state/playground-state-utils'
+diff --git a/web/default/src/features/playground/lib/input/attachment-utils.ts b/web/default/src/features/playground/lib/input/attachment-utils.ts
+new file mode 100644
+index 00000000..c05104b6
+--- /dev/null
++++ b/web/default/src/features/playground/lib/input/attachment-utils.ts
+@@ -0,0 +1,85 @@
++import { nanoid } from 'nanoid'
++
++import type { PlaygroundAttachment } from '../../types'
++
++export const MAX_ATTACHMENT_COUNT = 4
++export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
++export const MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024
++
++function readFileAsDataUrl(file: File): Promise<string> {
++  return new Promise((resolve, reject) => {
++    const reader = new FileReader()
++    reader.addEventListener('error', () =>
++      reject(reader.error ?? new Error('File read failed'))
++    )
++    reader.addEventListener('load', () => resolve(String(reader.result ?? '')))
++    reader.readAsDataURL(file)
++  })
++}
++
++export async function fileToPlaygroundAttachment(
++  file: File
++): Promise<PlaygroundAttachment> {
++  if (file.size > MAX_ATTACHMENT_BYTES) {
++    throw new Error('Each attachment must be 10 MB or smaller')
++  }
++  const dataUrl = await readFileAsDataUrl(file)
++  return {
++    id: nanoid(),
++    kind: file.type.startsWith('image/') ? 'image' : 'file',
++    name: file.name || 'attachment',
++    mimeType: file.type || 'application/octet-stream',
++    size: file.size,
++    dataUrl,
++  }
++}
++
++export async function capturePlaygroundScreenshot(): Promise<File> {
++  if (!navigator.mediaDevices?.getDisplayMedia) {
++    throw new Error('Screen capture is not supported by this browser')
++  }
++
++  const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
++  try {
++    const video = document.createElement('video')
++    video.srcObject = stream
++    video.muted = true
++    await video.play()
++
++    const width = video.videoWidth
++    const height = video.videoHeight
++    if (!width || !height) throw new Error('Unable to read captured screen')
++
++    const canvas = document.createElement('canvas')
++    canvas.width = width
++    canvas.height = height
++    const context = canvas.getContext('2d')
++    if (!context) throw new Error('Unable to create screenshot')
++    context.drawImage(video, 0, 0, width, height)
++
++    const blob = await new Promise<Blob>((resolve, reject) => {
++      canvas.toBlob(
++        (result) =>
++          result ? resolve(result) : reject(new Error('Screenshot failed')),
++        'image/png'
++      )
++    })
++    return new File([blob], `screenshot-${Date.now()}.png`, {
++      type: 'image/png',
++    })
++  } finally {
++    stream.getTracks().forEach((track) => track.stop())
++  }
++}
++
++export function dataUrlToBlob(dataUrl: string): Blob {
++  const [header, payload] = dataUrl.split(',', 2)
++  const mimeType =
++    /data:([^;]+)/.exec(header)?.[1] || 'application/octet-stream'
++  const binary = atob(payload || '')
++  const bytes = new Uint8Array(binary.length)
++  for (let index = 0; index < binary.length; index++) {
++    bytes[index] = binary.charCodeAt(index)
++  }
++  return new Blob([bytes], { type: mimeType })
++}
+diff --git a/web/default/src/features/playground/lib/input/input-control-utils.ts b/web/default/src/features/playground/lib/input/input-control-utils.ts
+index 0f2b03ec..7c8258bd 100644
+--- a/web/default/src/features/playground/lib/input/input-control-utils.ts
++++ b/web/default/src/features/playground/lib/input/input-control-utils.ts
+@@ -26,6 +26,7 @@ type InputControlStateOptions = {
+   isModelLoading?: boolean
+   models: ModelOption[]
+   text: string
++  attachmentCount?: number
+ }
+ 
+ type InputControlState = {
+@@ -57,11 +58,13 @@ export function getInputControlState({
+   isModelLoading,
+   models,
+   text,
++  attachmentCount = 0,
+ }: InputControlStateOptions): InputControlState {
+   const hasModels = models.length > 0
+ 
+   return {
+-    canSubmit: !disabled && hasModels && text.trim().length > 0,
++    canSubmit:
++      !disabled && hasModels && (text.trim().length > 0 || attachmentCount > 0),
+     isSelectorDisabled: disabled || isModelLoading || groups.length === 0,
+     shouldShowStop: Boolean(isGenerating && hasStopHandler),
+   }
+diff --git a/web/default/src/features/playground/lib/message/conversation-message-utils.ts b/web/default/src/features/playground/lib/message/conversation-message-utils.ts
+index ed5dc8e3..d8b6e338 100644
+--- a/web/default/src/features/playground/lib/message/conversation-message-utils.ts
++++ b/web/default/src/features/playground/lib/message/conversation-message-utils.ts
+@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ */
+-import type { Message } from '../../types'
++import type { Message, PlaygroundAttachment } from '../../types'
+ import {
+   createLoadingAssistantMessage,
+   createUserMessage,
+@@ -38,13 +38,14 @@ type ChatMessageRenderState = {
+ 
+ export function appendUserMessagePair(
+   messages: Message[],
+-  content: string
++  content: string,
++  attachments: PlaygroundAttachment[] = []
+ ): Message[] {
+   const submittedAt = Date.now()
+ 
+   return [
+     ...messages,
+-    createUserMessage(content, submittedAt),
++    createUserMessage(content, submittedAt, attachments),
+     createLoadingAssistantMessage(submittedAt),
+   ]
+ }
+diff --git a/web/default/src/features/playground/lib/message/message-resource-utils.ts b/web/default/src/features/playground/lib/message/message-resource-utils.ts
+new file mode 100644
+index 00000000..bd688c22
+--- /dev/null
++++ b/web/default/src/features/playground/lib/message/message-resource-utils.ts
+@@ -0,0 +1,35 @@
++import type { Message } from '../../types'
++
++function getDisposableObjectUrls(messages: Message[]): Set<string> {
++  const urls = new Set<string>()
++
++  for (const message of messages) {
++    for (const media of message.media ?? []) {
++      if (media.revokeOnDispose && media.url.startsWith('blob:')) {
++        urls.add(media.url)
++      }
++    }
++  }
++
++  return urls
++}
++
++export function revokeRemovedMessageResources(
++  previousMessages: Message[],
++  nextMessages: Message[]
++): void {
++  const previousUrls = getDisposableObjectUrls(previousMessages)
++  const nextUrls = getDisposableObjectUrls(nextMessages)
++
++  for (const url of previousUrls) {
++    if (!nextUrls.has(url)) {
++      URL.revokeObjectURL(url)
++    }
++  }
++}
++
++export function revokeMessageResources(messages: Message[]): void {
++  for (const url of getDisposableObjectUrls(messages)) {
++    URL.revokeObjectURL(url)
++  }
++}
+diff --git a/web/default/src/features/playground/lib/message/message-utils.ts b/web/default/src/features/playground/lib/message/message-utils.ts
+index 90044cc7..f0cdfed1 100644
+--- a/web/default/src/features/playground/lib/message/message-utils.ts
++++ b/web/default/src/features/playground/lib/message/message-utils.ts
+@@ -24,6 +24,7 @@ import type {
+   MessageVersion,
+   ChatCompletionMessage,
+   ContentPart,
++  PlaygroundAttachment,
+ } from '../../types'
+ 
+ /**
+@@ -76,13 +77,15 @@ export function updateCurrentVersionContent(
+  */
+ export function createUserMessage(
+   content: string,
+-  createdAt: number = Date.now()
++  createdAt: number = Date.now(),
++  attachments: PlaygroundAttachment[] = []
+ ): Message {
+   return {
+     key: nanoid(),
+     from: MESSAGE_ROLES.USER,
+     versions: [createMessageVersion(content)],
+     createdAt,
++    attachments,
+   }
+ }
+ 
+@@ -154,6 +157,28 @@ export function getTextContent(content: string | ContentPart[]): string {
+  */
+ export function formatMessageForAPI(message: Message): ChatCompletionMessage {
+   const currentVersion = getCurrentVersion(message)
++  const attachments = message.attachments ?? []
++  if (message.from === MESSAGE_ROLES.USER && attachments.length > 0) {
++    const content: ContentPart[] = [
++      { type: 'text', text: currentVersion.content },
++      ...attachments.map((attachment): ContentPart => {
++        if (attachment.kind === 'image') {
++          return {
++            type: 'image_url',
++            image_url: { url: attachment.dataUrl },
++          }
++        }
++        return {
++          type: 'file',
++          file: {
++            filename: attachment.name,
++            file_data: attachment.dataUrl,
++          },
++        }
++      }),
++    ]
++    return { role: message.from, content }
++  }
+   return {
+     role: message.from,
+     content: currentVersion.content,
+@@ -172,5 +197,5 @@ export function isValidMessage(message: Message): boolean {
+     return false
+   }
+ 
+-  return true
++  return hasMessageContent(message) || Boolean(message.attachments?.length)
+ }
+diff --git a/web/default/src/features/playground/lib/model/model-capabilities.ts b/web/default/src/features/playground/lib/model/model-capabilities.ts
+new file mode 100644
+index 00000000..cb7e61e9
+--- /dev/null
++++ b/web/default/src/features/playground/lib/model/model-capabilities.ts
+@@ -0,0 +1,19 @@
++import type { PlaygroundModelKind } from '../../types'
++
++const VIDEO_MODEL_PATTERN =
++  /(?:^|[-_.])(video|veo|sora|seedance|kling|hailuo|wan2?\.?\d)(?:$|[-_.])/i
++const TTS_MODEL_PATTERN = /(?:tts|text[-_.]?to[-_.]?speech|speechify)/i
++const IMAGE_MODEL_PATTERN =
++  /(?:gpt[-_.]?image|image[-_.]?\d|imagen|dall[-_.]?e|flux|ideogram|recraft|grok[-_.]?imagine[-_.]?image|nano[-_.]?banana|image[-_.]?preview)/i
++
++export function getPlaygroundModelKind(model: string): PlaygroundModelKind {
++  const normalized = model.trim()
++  if (TTS_MODEL_PATTERN.test(normalized)) return 'tts'
++  if (VIDEO_MODEL_PATTERN.test(normalized)) return 'video'
++  if (IMAGE_MODEL_PATTERN.test(normalized)) return 'image'
++  return 'chat'
++}
++
++export function isGeminiImageModel(model: string): boolean {
++  return /gemini/i.test(model) && /image|imagen|banana/i.test(model)
++}
+diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
+new file mode 100644
+index 00000000..c4a4e6e4
+--- /dev/null
++++ b/web/default/src/features/playground/lib/model/model-profiles.ts
+@@ -0,0 +1,147 @@
++import type { PlaygroundModelKind } from "../../types";
++import { getPlaygroundModelKind } from "./model-capabilities";
++
++export type PlaygroundSelectOption = {
++  label: string;
++  value: string;
++};
++
++export type PlaygroundModelProfile = {
++  badge: string;
++  description: string;
++  endpoint: string;
++  kind: PlaygroundModelKind;
++  requestHints?: PlaygroundSelectOption[];
++  imageSizes?: PlaygroundSelectOption[];
++  defaultImageQuality?: string;
++  defaultImageSize?: string;
++  defaultTtsFormat?: string;
++  defaultTtsVoice?: string;
++  ttsFormats?: PlaygroundSelectOption[];
++  ttsVoiceLabel?: string;
++  ttsVoicePlaceholder?: string;
++};
++
++export const MOSS_TTS_DEFAULT_VOICE_ID = "90879748-4a4c-5852-b81a-7a18aefebf0b";
++
++const STANDARD_IMAGE_SIZES: PlaygroundSelectOption[] = [
++  { value: "1024x1024", label: "1:1 | 1024x1024" },
++  { value: "1536x1024", label: "3:2 | 1536x1024" },
++  { value: "1024x1536", label: "2:3 | 1024x1536" },
++];
++
++const GPT_IMAGE_2_4K_SIZES: PlaygroundSelectOption[] = [
++  { value: "3840x2160", label: "16:9 | 3840x2160 | UHD 4K" },
++  {
++    value: "1024x1024",
++    label: "1:1 | Request 1024x1024 | Output 2880x2880",
++  },
++];
++
++const STANDARD_TTS_FORMATS: PlaygroundSelectOption[] = [
++  { value: "mp3", label: "MP3" },
++  { value: "wav", label: "WAV" },
++  { value: "opus", label: "Opus" },
++  { value: "flac", label: "FLAC" },
++];
++
++export function isMossTtsModel(model: string): boolean {
++  return /(?:^|[-_.])(moss[-_.]?tts|speechify[-_.]?tts)(?:$|[-_.])/i.test(
++    model,
++  );
++}
++
++export function isGptImage2FourKModel(model: string): boolean {
++  return /gpt[-_.]?image[-_.]?2[-_.]?4k/i.test(model);
++}
++
++export function getPlaygroundModelProfile(
++  model: string,
++): PlaygroundModelProfile {
++  const kind = getPlaygroundModelKind(model);
++
++  if (isGptImage2FourKModel(model)) {
++    return {
++      badge: "4K Image",
++      description:
++        "Native 4K image generation verified at 3840x2160; enter a prompt and generate the result directly.",
++      endpoint: "/v1/images/generations",
++      kind,
++      requestHints: [
++        { label: "model", value: model },
++        { label: "size", value: "3840x2160" },
++        { label: "n", value: "1" },
++      ],
++      imageSizes: GPT_IMAGE_2_4K_SIZES,
++      defaultImageSize: "3840x2160",
++      defaultImageQuality: "auto",
++    };
++  }
++
++  if (kind === "image") {
++    return {
++      badge: "Image",
++      description:
++        "Generate images from text or upload an image to test compatible editing models.",
++      endpoint: "/v1/images/generations",
++      kind,
++      imageSizes: STANDARD_IMAGE_SIZES,
++      defaultImageSize: "1024x1024",
++      defaultImageQuality: "standard",
++    };
++  }
++
++  if (isMossTtsModel(model)) {
++    return {
++      badge: "Voice",
++      description:
++        "MOSS speech synthesis using the verified OpenAI-compatible audio request.",
++      endpoint: "/v1/audio/speech",
++      kind,
++      requestHints: [
++        { label: "model", value: model },
++        { label: "input", value: "Text" },
++        { label: "voice", value: "Voice ID" },
++        { label: "response_format", value: "mp3" },
++      ],
++      defaultTtsVoice: MOSS_TTS_DEFAULT_VOICE_ID,
++      defaultTtsFormat: "mp3",
++      ttsFormats: [{ value: "mp3", label: "MP3" }],
++      ttsVoiceLabel: "Voice ID",
++      ttsVoicePlaceholder: MOSS_TTS_DEFAULT_VOICE_ID,
++    };
++  }
++
++  if (kind === "tts") {
++    return {
++      badge: "Voice",
++      description:
++        "Enter text and choose a voice and audio format supported by the model.",
++      endpoint: "/v1/audio/speech",
++      kind,
++      defaultTtsVoice: "alloy",
++      defaultTtsFormat: "mp3",
++      ttsFormats: STANDARD_TTS_FORMATS,
++      ttsVoiceLabel: "Voice",
++      ttsVoicePlaceholder: "alloy / voice ID",
++    };
++  }
++
++  if (kind === "video") {
++    return {
++      badge: "Video",
++      description:
++        "Generate video from text or upload an image for compatible image-to-video models.",
++      endpoint: "/v1/videos",
++      kind,
++    };
++  }
++
++  return {
++    badge: "Chat",
++    description:
++      "Chat with image and file understanding; enable search for compatible web-enabled models.",
++    endpoint: "/v1/chat/completions",
++    kind,
++  };
++}
+diff --git a/web/default/src/features/playground/lib/storage/storage-schema.ts b/web/default/src/features/playground/lib/storage/storage-schema.ts
+index 6bcfd2de..70eb8fda 100644
+--- a/web/default/src/features/playground/lib/storage/storage-schema.ts
++++ b/web/default/src/features/playground/lib/storage/storage-schema.ts
+@@ -34,6 +34,13 @@ export const playgroundConfigSchema = z.object({
+   presence_penalty: z.number().optional(),
+   seed: z.number().nullable().optional(),
+   stream: z.boolean().optional(),
++  webSearch: z.boolean().optional(),
++  imageSize: z.string().optional(),
++  imageQuality: z.string().optional(),
++  videoSeconds: z.number().optional(),
++  videoSize: z.string().optional(),
++  ttsVoice: z.string().optional(),
++  ttsFormat: z.string().optional(),
+ })
+ 
+ export const parameterEnabledSchema = z.object({
+diff --git a/web/default/src/features/playground/lib/streaming/payload-builder.ts b/web/default/src/features/playground/lib/streaming/payload-builder.ts
+index e3983a6f..05a84609 100644
+--- a/web/default/src/features/playground/lib/streaming/payload-builder.ts
++++ b/web/default/src/features/playground/lib/streaming/payload-builder.ts
+@@ -68,5 +68,21 @@ export function buildChatCompletionPayload(
+     payload.seed = config.seed
+   }
+ 
++  if (config.webSearch) {
++    if (/gemini/i.test(config.model)) {
++      payload.tools = [
++        {
++          type: 'function',
++          function: {
++            name: 'googleSearch',
++            description: 'Search the web for current information',
++          },
++        },
++      ]
++    } else {
++      payload.web_search_options = { search_context_size: 'medium' }
++    }
++  }
++
+   return payload
+ }
+diff --git a/web/default/src/features/playground/types.ts b/web/default/src/features/playground/types.ts
+index 855b4833..a7b11bc8 100644
+--- a/web/default/src/features/playground/types.ts
++++ b/web/default/src/features/playground/types.ts
+@@ -49,6 +49,29 @@ export interface Message {
+   isContentComplete?: boolean
+   status?: MessageStatus
+   errorCode?: string | null
++  attachments?: PlaygroundAttachment[]
++  media?: PlaygroundMedia[]
++}
++
++export type PlaygroundAttachmentKind = 'image' | 'file'
++
++export interface PlaygroundAttachment {
++  id: string
++  kind: PlaygroundAttachmentKind
++  name: string
++  mimeType: string
++  size: number
++  dataUrl: string
++}
++
++export type PlaygroundMediaKind = 'image' | 'video' | 'audio' | 'file'
++
++export interface PlaygroundMedia {
++  kind: PlaygroundMediaKind
++  url: string
++  mimeType?: string
++  name?: string
++  revokeOnDispose?: boolean
+ }
+ 
+ // API payload types
+@@ -58,11 +81,15 @@ export interface ChatCompletionMessage {
+ }
+ 
+ export interface ContentPart {
+-  type: 'text' | 'image_url'
++  type: 'text' | 'image_url' | 'file'
+   text?: string
+   image_url?: {
+     url: string
+   }
++  file?: {
++    filename: string
++    file_data: string
++  }
+ }
+ 
+ export interface ChatCompletionRequest {
+@@ -76,6 +103,11 @@ export interface ChatCompletionRequest {
+   frequency_penalty?: number
+   presence_penalty?: number
+   seed?: number
++  web_search_options?: {
++    search_context_size: 'low' | 'medium' | 'high'
++  }
++  tools?: Array<Record<string, unknown>>
++  extra_body?: Record<string, unknown>
+ }
+ 
+ export interface ChatCompletionChunk {
+@@ -126,6 +158,33 @@ export interface PlaygroundConfig {
+   presence_penalty: number
+   seed: number | null
+   stream: boolean
++  webSearch: boolean
++  imageSize: string
++  imageQuality: string
++  videoSeconds: number
++  videoSize: string
++  ttsVoice: string
++  ttsFormat: string
++}
++
++export type PlaygroundModelKind = 'chat' | 'image' | 'video' | 'tts'
++
++export interface ImageGenerationResponse {
++  data?: Array<{
++    url?: string
++    b64_json?: string
++    revised_prompt?: string
++  }>
++}
++
++export interface VideoTaskResponse {
++  id?: string
++  task_id?: string
++  status?: string
++  url?: string
++  result_url?: string
++  error?: unknown
++  data?: Record<string, unknown>
+ }
+ 
+ export interface ParameterEnabled {
+diff --git a/web/default/src/i18n/locales/zh.json b/web/default/src/i18n/locales/zh.json
+index 4f1412ac..c5e586f1 100644
+--- a/web/default/src/i18n/locales/zh.json
++++ b/web/default/src/i18n/locales/zh.json
+@@ -5169,6 +5169,32 @@
+     "Zero retention": "零数据保留",
+     "Zhipu": "智谱",
+     "Zhipu V4": "智谱 V4",
+-    "Zoom": "缩放"
++    "Zoom": "缩放",
++    "Upload failed": "上传失败",
++    "Capture failed": "截图失败",
++    "Image size": "图片尺寸",
++    "Quality": "画质",
++    "High": "高",
++    "Resolution": "分辨率",
++    "Voice": "音色",
++    "Audio format": "音频格式",
++    "Speech generated": "语音生成完成",
++    "Video generated": "视频生成完成",
++    "Web search is available for chat models": "网页搜索仅适用于对话模型",
++    "Each attachment must be 10 MB or smaller": "单个附件不能超过 10 MB",
++    "Total attachment size must be 20 MB or smaller": "附件总大小不能超过 20 MB",
++    "Screen capture is not supported by this browser": "当前浏览器不支持屏幕截图",
++    "Unable to read captured screen": "无法读取截图画面",
++    "Unable to create screenshot": "无法创建截图",
++    "Screenshot failed": "截图失败",
++    "File read failed": "文件读取失败",
++    "4K Image": "4K 图片",
++    "Native 4K image generation verified at 3840x2160; enter a prompt and generate the result directly.": "已验证 3840x2160 原生 4K 生图，输入提示词即可直接生成。",
++    "Generate images from text or upload an image to test compatible editing models.": "支持文生图；上传图片后可测试兼容的图片编辑能力。",
++    "MOSS speech synthesis using the verified OpenAI-compatible audio request.": "MOSS 语音合成，使用已验证的 OpenAI 兼容音频调用方式。",
++    "Voice ID": "音色 ID",
++    "Enter text and choose a voice and audio format supported by the model.": "输入文字并选择模型支持的音色与音频格式。",
++    "Generate video from text or upload an image for compatible image-to-video models.": "支持文生视频；上传图片后可测试兼容的图生视频能力。",
++    "Chat with image and file understanding; enable search for compatible web-enabled models.": "支持对话、图片与文件理解；搜索开关用于兼容的联网模型。"
+   }
+ }

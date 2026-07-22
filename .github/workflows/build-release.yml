@@ -51,12 +51,27 @@ jobs:
           go-version-file: source/go.mod
           cache-dependency-path: source/go.sum
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install frontend dependencies
+        working-directory: source/web
+        run: bun install --frozen-lockfile
+
       - name: Verify billing patch formatting
         working-directory: source
         run: |
           files=(
+            controller/playground.go
+            middleware/distributor.go
+            middleware/playground_path.go
+            middleware/playground_path_test.go
+            relay/common/relay_info.go
             relay/relay_task.go
             relay/relay_task_billing_test.go
+            router/relay-router.go
             service/quota.go
             service/quota_audio_test.go
           )
@@ -66,9 +81,16 @@ jobs:
             exit 1
           fi
 
-      - name: Test billing paths
+      - name: Test backend paths
         working-directory: source
-        run: go test ./relay ./service
+        run: go test ./controller ./middleware ./relay/common ./relay ./router ./service
+
+      - name: Verify playground frontend
+        working-directory: source/web/default
+        run: |
+          bun run typecheck
+          ../node_modules/.bin/oxlint -c .oxlintrc.json src/features/playground
+          bun run build
 
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
@@ -89,4 +111,4 @@ jobs:
             mad-new-api.tar.gz.sha256 \
             upstream-commit.txt \
             --title "Mad New API latest build" \
-            --notes "Automated build from the latest upstream New API source with the Mad API email verification patch."
+            --notes "Automated build from the pinned upstream New API source with Mad API billing, branding, recharge, and multi-model playground customizations."

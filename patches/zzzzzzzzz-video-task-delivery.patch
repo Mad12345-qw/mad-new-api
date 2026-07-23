@@ -1,0 +1,291 @@
+diff --git a/controller/video_proxy.go b/controller/video_proxy.go
+index ec8b93e7d509c1230c13a33853a457dd62909b95..3efa362e4d322cb79b7e47463bb0df88fb59bc60 100644
+--- a/controller/video_proxy.go
++++ b/controller/video_proxy.go
+@@ -30,6 +30,29 @@ func videoProxyError(c *gin.Context, status int, errType, message string) {
+ 	})
+ }
+ 
++func copyVideoRangeHeaders(dst, src http.Header) {
++	for _, key := range []string{"Range", "If-Range"} {
++		if value := src.Get(key); value != "" {
++			dst.Set(key, value)
++		}
++	}
++}
++
++func copyVideoResponseHeaders(dst, src http.Header) {
++	for _, key := range []string{
++		"Accept-Ranges",
++		"Content-Length",
++		"Content-Range",
++		"Content-Type",
++		"ETag",
++		"Last-Modified",
++	} {
++		if value := src.Get(key); value != "" {
++			dst.Set(key, value)
++		}
++	}
++}
++
+ func VideoProxy(c *gin.Context) {
+ 	taskID := c.Param("task_id")
+ 	if taskID == "" {
+@@ -81,7 +104,7 @@ func VideoProxy(c *gin.Context) {
+ 		}
+ 	}
+ 
+-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
++	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+ 	defer cancel()
+ 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "", nil)
+ 	if err != nil {
+@@ -154,6 +177,7 @@ func VideoProxy(c *gin.Context) {
+ 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy request")
+ 		return
+ 	}
++	copyVideoRangeHeaders(req.Header, c.Request.Header)
+ 
+ 	resp, err := client.Do(req)
+ 	if err != nil {
+@@ -196,9 +220,7 @@ func VideoProxy(c *gin.Context) {
+ 			videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create video request")
+ 			return
+ 		}
+-		if rangeHeader := c.GetHeader("Range"); rangeHeader != "" {
+-			resolvedReq.Header.Set("Range", rangeHeader)
+-		}
++		copyVideoRangeHeaders(resolvedReq.Header, c.Request.Header)
+ 
+ 		resp, err = client.Do(resolvedReq)
+ 		if err != nil {
+@@ -215,13 +237,16 @@ func VideoProxy(c *gin.Context) {
+ 	}
+ 	defer resp.Body.Close()
+ 
+-	for key, values := range resp.Header {
+-		for _, value := range values {
+-			c.Writer.Header().Add(key, value)
+-		}
++	copyVideoResponseHeaders(c.Writer.Header(), resp.Header)
++	c.Writer.Header().Set("Cache-Control", "private, no-store")
++	if c.Query("download") == "1" {
++		c.Writer.Header().Set(
++			"Content-Disposition",
++			fmt.Sprintf("attachment; filename=\"madapi-video-%s.mp4\"", taskID),
++		)
++	} else {
++		c.Writer.Header().Set("Content-Disposition", "inline")
+ 	}
+-
+-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+ 	c.Writer.WriteHeader(resp.StatusCode)
+ 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
+ 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
+diff --git a/controller/video_proxy_content_test.go b/controller/video_proxy_content_test.go
+index 757a9ce5245471475bfc5167fc6afdc5c3cae059..2e1860d8b52c4db392214fda974b6a9201b16733 100644
+--- a/controller/video_proxy_content_test.go
++++ b/controller/video_proxy_content_test.go
+@@ -1,11 +1,42 @@
+ package controller
+ 
+ import (
++	"net/http"
+ 	"testing"
+ 
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++func TestCopyVideoRangeHeaders(t *testing.T) {
++	src := http.Header{}
++	src.Set("Range", "bytes=100-200")
++	src.Set("If-Range", "etag-value")
++	dst := http.Header{}
++
++	copyVideoRangeHeaders(dst, src)
++
++	require.Equal(t, "bytes=100-200", dst.Get("Range"))
++	require.Equal(t, "etag-value", dst.Get("If-Range"))
++}
++
++func TestCopyVideoResponseHeadersOnlyCopiesStreamingMetadata(t *testing.T) {
++	src := http.Header{}
++	src.Set("Content-Type", "video/mp4")
++	src.Set("Content-Range", "bytes 100-200/1000")
++	src.Set("Content-Length", "101")
++	src.Set("Accept-Ranges", "bytes")
++	src.Set("Connection", "keep-alive")
++	dst := http.Header{}
++
++	copyVideoResponseHeaders(dst, src)
++
++	require.Equal(t, "video/mp4", dst.Get("Content-Type"))
++	require.Equal(t, "bytes 100-200/1000", dst.Get("Content-Range"))
++	require.Equal(t, "101", dst.Get("Content-Length"))
++	require.Equal(t, "bytes", dst.Get("Accept-Ranges"))
++	require.Empty(t, dst.Get("Connection"))
++}
++
+ func TestExtractVideoURLFromContentResponse(t *testing.T) {
+ 	url := extractVideoURLFromContentResponse([]byte(`{
+ 		"status":"done",
+diff --git a/web/default/src/features/usage-logs/components/columns/task-logs-columns.tsx b/web/default/src/features/usage-logs/components/columns/task-logs-columns.tsx
+index 24836e627846be18a82a557ad9f2baa100691cd7..43adee8a57fc185d2c4eb08b8da79eb8145293c3 100644
+--- a/web/default/src/features/usage-logs/components/columns/task-logs-columns.tsx
++++ b/web/default/src/features/usage-logs/components/columns/task-logs-columns.tsx
+@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ For commercial licensing, please contact support@quantumnous.com
+ */
+ import type { ColumnDef } from '@tanstack/react-table'
+-import { Music } from 'lucide-react'
++import { Download, Music, Play } from 'lucide-react'
+ /* eslint-disable react-refresh/only-export-components */
+ import { useState, useMemo } from 'react'
+ import { useTranslation } from 'react-i18next'
+@@ -36,6 +36,7 @@ import {
+   type AudioClip,
+ } from '../dialogs/audio-preview-dialog'
+ import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
++import { VideoPreviewDialog } from '../dialogs/video-preview-dialog'
+ import { useUsageLogsContext } from '../usage-logs-provider'
+ import {
+   createDurationColumn,
+@@ -90,6 +91,41 @@ function AudioPreviewCell({ log }: { log: TaskLog }) {
+   )
+ }
+ 
++function VideoPreviewCell({ log }: { log: TaskLog }) {
++  const { t } = useTranslation()
++  const [open, setOpen] = useState(false)
++  const taskId = String(log.task_id || '')
++  const downloadUrl = `/v1/videos/${encodeURIComponent(taskId)}/content?download=1`
++
++  return (
++    <>
++      <div className='flex items-center gap-2 whitespace-nowrap text-xs'>
++        <button
++          type='button'
++          className='text-foreground inline-flex items-center gap-1 hover:underline'
++          onClick={() => setOpen(true)}
++        >
++          <Play className='size-3' />
++          {t('Preview video')}
++        </button>
++        <a
++          href={downloadUrl}
++          download
++          className='text-foreground inline-flex items-center gap-1 hover:underline'
++        >
++          <Download className='size-3' />
++          {t('Download')}
++        </a>
++      </div>
++      <VideoPreviewDialog
++        open={open}
++        onOpenChange={setOpen}
++        taskId={taskId}
++      />
++    </>
++  )
++}
++
+ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
+   const { t } = useTranslation()
+   const columns: ColumnDef<TaskLog>[] = [
+@@ -245,20 +281,8 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
+           log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
+           log.action === TASK_ACTIONS.REMIX_GENERATE
+         const isSuccess = status === TASK_STATUS.SUCCESS
+-        const isUrl = failReason?.startsWith('http')
+-
+-        if (isSuccess && isVideoTask && isUrl) {
+-          const videoUrl = `/v1/videos/${log.task_id}/content`
+-          return (
+-            <a
+-              href={videoUrl}
+-              target='_blank'
+-              rel='noopener noreferrer'
+-              className='text-foreground text-xs hover:underline'
+-            >
+-              {t('Click to preview video')}
+-            </a>
+-          )
++        if (isSuccess && isVideoTask && log.task_id) {
++          return <VideoPreviewCell log={log} />
+         }
+ 
+         if (!failReason) {
+diff --git a/web/default/src/features/usage-logs/components/dialogs/video-preview-dialog.tsx b/web/default/src/features/usage-logs/components/dialogs/video-preview-dialog.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..3ccc0262ac0f76b72f816346487762cf40b2ff5c
+--- /dev/null
++++ b/web/default/src/features/usage-logs/components/dialogs/video-preview-dialog.tsx
+@@ -0,0 +1,67 @@
++/*
++Copyright (C) 2023-2026 QuantumNous
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU Affero General Public License as
++published by the Free Software Foundation, either version 3 of the
++License, or (at your option) any later version.
++*/
++import { Download, Video } from 'lucide-react'
++import { useTranslation } from 'react-i18next'
++
++import { Dialog } from '@/components/dialog'
++import { Button } from '@/components/ui/button'
++import { IconBadge } from '@/components/ui/icon-badge'
++
++interface VideoPreviewDialogProps {
++  open: boolean
++  onOpenChange: (open: boolean) => void
++  taskId: string
++}
++
++export function VideoPreviewDialog({
++  open,
++  onOpenChange,
++  taskId,
++}: VideoPreviewDialogProps) {
++  const { t } = useTranslation()
++  const videoUrl = `/v1/videos/${encodeURIComponent(taskId)}/content`
++  const downloadUrl = `${videoUrl}?download=1`
++
++  return (
++    <Dialog
++      open={open}
++      onOpenChange={onOpenChange}
++      title={
++        <>
++          <IconBadge tone='chart-4' size='sm'>
++            <Video />
++          </IconBadge>
++          {t('Video Preview')}
++        </>
++      }
++      contentClassName='sm:max-w-3xl'
++      titleClassName='flex items-center gap-2'
++      contentHeight='auto'
++      bodyClassName='space-y-3'
++    >
++      {open && (
++        <video
++          src={videoUrl}
++          controls
++          preload='metadata'
++          playsInline
++          className='bg-muted aspect-video max-h-[65vh] w-full rounded-md object-contain'
++        />
++      )}
++      <div className='flex justify-end'>
++        <Button asChild size='sm' className='gap-1.5'>
++          <a href={downloadUrl} download>
++            <Download className='size-4' />
++            {t('Download video')}
++          </a>
++        </Button>
++      </div>
++    </Dialog>
++  )
++}

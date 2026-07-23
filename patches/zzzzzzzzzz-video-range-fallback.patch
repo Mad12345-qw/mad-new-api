@@ -56,7 +56,7 @@ index 3efa362..f2a6659 100644
  func VideoProxy(c *gin.Context) {
  	taskID := c.Param("task_id")
  	if taskID == "" {
-@@ -247,8 +287,34 @@ func VideoProxy(c *gin.Context) {
+@@ -247,8 +287,35 @@ func VideoProxy(c *gin.Context) {
  	} else {
  		c.Writer.Header().Set("Content-Disposition", "inline")
  	}
@@ -68,6 +68,7 @@ index 3efa362..f2a6659 100644
 +		start, end, ok := parseSingleByteRange(c.GetHeader("Range"), resp.ContentLength)
 +		if !ok {
 +			c.Writer.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", resp.ContentLength))
++			c.Writer.Header().Set("Content-Length", "0")
 +			c.Status(http.StatusRequestedRangeNotSatisfiable)
 +			return
 +		}

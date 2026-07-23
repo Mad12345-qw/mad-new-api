@@ -1,0 +1,162 @@
+diff --git a/controller/video_proxy.go b/controller/video_proxy.go
+index 7247471a81070d29ea9d21a8c09b3f422b6f7a3d..0033e2dec0ccb5aa07c5630997610ac341e62c85 100644
+--- a/controller/video_proxy.go
++++ b/controller/video_proxy.go
+@@ -2,6 +2,8 @@ package controller
+ 
+ import (
+ 	"context"
++	"crypto/hmac"
++	"crypto/sha256"
+ 	"encoding/base64"
+ 	"fmt"
+ 	"io"
+@@ -93,6 +95,49 @@ func parseSingleByteRange(value string, total int64) (int64, int64, bool) {
+ 	return start, end, true
+ }
+ 
++func videoSignature(key, taskID, expires string) string {
++	mac := hmac.New(sha256.New, []byte(key))
++	_, _ = mac.Write([]byte(taskID + "\n" + expires))
++	return fmt.Sprintf("%x", mac.Sum(nil))
++}
++
++func validateSignedVideoURL(taskID, expires, signature string, tokens []*model.Token, now int64) bool {
++	expiresAt, err := strconv.ParseInt(expires, 10, 64)
++	if err != nil || expiresAt < now || expiresAt > now+15*60 {
++		return false
++	}
++	for _, token := range tokens {
++		if token == nil || token.Status == common.TokenStatusDisabled {
++			continue
++		}
++		expected := videoSignature(token.Key, taskID, expires)
++		if hmac.Equal([]byte(expected), []byte(signature)) {
++			return true
++		}
++	}
++	return false
++}
++
++func getVideoTaskForRequest(c *gin.Context, taskID string) (*model.Task, bool, error) {
++	expires := c.Query("expires")
++	signature := c.Query("signature")
++	if expires == "" || signature == "" {
++		return model.GetByTaskId(c.GetInt("id"), taskID)
++	}
++	task, exists, err := model.GetByTaskIdAnyUser(taskID)
++	if err != nil || !exists || task == nil {
++		return task, exists, err
++	}
++	tokens, err := model.GetAllUserTokens(task.UserId, 0, 1000)
++	if err != nil {
++		return nil, false, err
++	}
++	if !validateSignedVideoURL(taskID, expires, signature, tokens, time.Now().Unix()) {
++		return nil, false, nil
++	}
++	return task, true, nil
++}
++
+ func VideoProxy(c *gin.Context) {
+ 	taskID := c.Param("task_id")
+ 	if taskID == "" {
+@@ -100,8 +145,7 @@ func VideoProxy(c *gin.Context) {
+ 		return
+ 	}
+ 
+-	userID := c.GetInt("id")
+-	task, exists, err := model.GetByTaskId(userID, taskID)
++	task, exists, err := getVideoTaskForRequest(c, taskID)
+ 	if err != nil {
+ 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to query task %s: %s", taskID, err.Error()))
+ 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")
+diff --git a/controller/video_proxy_content_test.go b/controller/video_proxy_content_test.go
+index 5744ab3721c18a63a89c469bdf7424ce49940461..8250e974e576134d11c3c5c6c75bc845cc13eb77 100644
+--- a/controller/video_proxy_content_test.go
++++ b/controller/video_proxy_content_test.go
+@@ -4,6 +4,9 @@ import (
+ 	"net/http"
+ 	"testing"
+ 
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/model"
++
+ 	"github.com/stretchr/testify/require"
+ )
+ 
+@@ -57,6 +60,23 @@ func TestParseSingleByteRange(t *testing.T) {
+ 	require.False(t, ok)
+ }
+ 
++func TestValidateSignedVideoURL(t *testing.T) {
++	now := int64(1_800_000_000)
++	expires := "1800000600"
++	tokens := []*model.Token{
++		{Key: "activekey", Status: common.TokenStatusEnabled},
++		{Key: "disabledkey", Status: common.TokenStatusDisabled},
++	}
++
++	signature := videoSignature("activekey", "task_public", expires)
++	require.True(t, validateSignedVideoURL("task_public", expires, signature, tokens, now))
++	require.False(t, validateSignedVideoURL("task_other", expires, signature, tokens, now))
++	require.False(t, validateSignedVideoURL("task_public", "1799999999", signature, tokens, now))
++
++	disabledSignature := videoSignature("disabledkey", "task_public", expires)
++	require.False(t, validateSignedVideoURL("task_public", expires, disabledSignature, tokens, now))
++}
++
+ func TestExtractVideoURLFromContentResponse(t *testing.T) {
+ 	url := extractVideoURLFromContentResponse([]byte(`{
+ 		"status":"done",
+diff --git a/model/task.go b/model/task.go
+index cf936ed1f9674a699ecede3989bad10485f1a7f0..e8fbddaa5e4696c6008b13ee87c28e95d2fbed00 100644
+--- a/model/task.go
++++ b/model/task.go
+@@ -359,6 +359,19 @@ func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
+ 	return task, exist, err
+ }
+ 
++func GetByTaskIdAnyUser(taskId string) (*Task, bool, error) {
++	if taskId == "" {
++		return nil, false, nil
++	}
++	var task *Task
++	err := DB.Where("task_id = ?", taskId).First(&task).Error
++	exist, err := RecordExist(err)
++	if err != nil {
++		return nil, false, err
++	}
++	return task, exist, nil
++}
++
+ func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
+ 	if len(taskIds) == 0 {
+ 		return nil, nil
+diff --git a/router/video-router.go b/router/video-router.go
+index 461451104520c274380089f3a37141ec60b89594..06689f90c5b2fc17b1d4c42aee3ea68a8e82be7c 100644
+--- a/router/video-router.go
++++ b/router/video-router.go
+@@ -7,11 +7,21 @@ import (
+ 	"github.com/gin-gonic/gin"
+ )
+ 
++func videoContentAuth() gin.HandlerFunc {
++	return func(c *gin.Context) {
++		if c.Query("expires") != "" && c.Query("signature") != "" {
++			c.Next()
++			return
++		}
++		middleware.TokenOrUserAuth()(c)
++	}
++}
++
+ func SetVideoRouter(router *gin.Engine) {
+ 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
+ 	videoProxyRouter := router.Group("/v1")
+ 	videoProxyRouter.Use(middleware.RouteTag("relay"))
+-	videoProxyRouter.Use(middleware.TokenOrUserAuth())
++	videoProxyRouter.Use(videoContentAuth())
+ 	{
+ 		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
+ 	}

@@ -3,6 +3,8 @@ import base64
 import binascii
 import ctypes
 import gc
+import hashlib
+import hmac
 import json
 import logging
 import math
@@ -32,6 +34,7 @@ TIMEOUT = int(os.getenv("UPSTREAM_TIMEOUT", "650"))
 IMAGE_DOWNLOAD_TIMEOUT = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT", "180"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(64 * 1024 * 1024)))
 GEMINI_IMAGE_CONCURRENCY = int(os.getenv("GEMINI_IMAGE_CONCURRENCY", "2"))
+SIGNED_VIDEO_URL_TTL = int(os.getenv("SIGNED_VIDEO_URL_TTL", "600"))
 GEMINI_IMAGE_SLOTS = threading.BoundedSemaphore(max(1, GEMINI_IMAGE_CONCURRENCY))
 try:
     LIBC = ctypes.CDLL("libc.so.6")
@@ -525,6 +528,31 @@ def public_video_content_url(task_id):
     )
 
 
+def authorization_token_key(authorization):
+    value = str(authorization or "").strip()
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    if value.startswith("sk-"):
+        value = value[3:]
+    return value.split("-", 1)[0].strip()
+
+
+def signed_video_content_url(task_id, authorization, now=None):
+    content_url = public_video_content_url(task_id)
+    token_key = authorization_token_key(authorization)
+    if not content_url or not token_key:
+        return content_url
+    expires = int(time.time() if now is None else now) + SIGNED_VIDEO_URL_TTL
+    expires_text = str(expires)
+    payload = (task_id + "\n" + expires_text).encode("utf-8")
+    signature = hmac.new(
+        token_key.encode("utf-8"), payload, hashlib.sha256
+    ).hexdigest()
+    return content_url + "?" + urllib.parse.urlencode(
+        {"expires": expires_text, "signature": signature}
+    )
+
+
 def normalize_video_create_response(content_type, response_body):
     if "application/json" not in content_type.lower():
         return response_body, "video-create"
@@ -547,7 +575,9 @@ def normalize_video_create_response(content_type, response_body):
     ).encode("utf-8"), "video-create-normalized"
 
 
-def normalize_video_status_response(path, content_type, response_body):
+def normalize_video_status_response(
+    path, content_type, response_body, authorization=""
+):
     if "application/json" not in content_type.lower():
         return response_body, "video-status"
     try:
@@ -575,7 +605,7 @@ def normalize_video_status_response(path, content_type, response_body):
             payload, ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8"), "video-status-normalized"
 
-    content_url = public_video_content_url(public_task_id)
+    content_url = signed_video_content_url(public_task_id, authorization)
     if not content_url:
         return response_body, "video-status"
 
@@ -795,7 +825,7 @@ def transform_image_response(request_json, content_type, response_body):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ImageURLCompat/6.1"
+    server_version = "ImageURLCompat/6.2"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -882,6 +912,7 @@ class Handler(BaseHTTPRequestHandler):
                         self.path,
                         response_headers.get("Content-Type", ""),
                         response_body,
+                        self.headers.get("Authorization", ""),
                     )
                 self.forward_response(
                     client_status, response_headers, response_body, mode

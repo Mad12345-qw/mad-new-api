@@ -1,10 +1,13 @@
 import base64
+import hashlib
+import hmac
 import importlib.util
 import json
 import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -641,6 +644,32 @@ class ImageURLCompatTest(unittest.TestCase):
             self.assertEqual(normalized_payload["url"], historical_url)
             self.assertEqual(
                 normalized_payload["content"]["video_url"], historical_url
+            )
+
+            signed_body, signed_mode = service.normalize_video_status_response(
+                "/v1/contents/generations/tasks/task_public",
+                "application/json",
+                historical_body,
+                "Bearer sk-activekey",
+            )
+            signed_payload = json.loads(signed_body)
+            signed_url = urllib.parse.urlparse(signed_payload["url"])
+            signed_query = urllib.parse.parse_qs(signed_url.query)
+            signed_expires = signed_query["expires"][0]
+            expected_signature = hmac.new(
+                b"activekey",
+                ("task_public\n" + signed_expires).encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            self.assertEqual(signed_mode, "video-status-normalized")
+            self.assertEqual(
+                signed_url.path, "/v1/videos/task_public/content"
+            )
+            self.assertEqual(
+                signed_query["signature"][0], expected_signature
+            )
+            self.assertEqual(
+                signed_payload["content"]["video_url"], signed_payload["url"]
             )
 
             for prefix in service.VIDEO_STATUS_PREFIXES:

@@ -1,0 +1,93 @@
+diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
+--- a/web/default/src/features/playground/hooks/use-chat-handler.ts
++++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
+@@ -454,32 +454,54 @@ export function useChatHandler({
+ 
+         if (modelKind === 'image') {
+           if (isGeminiImageModel(config.model)) {
+-            const requestContent = buildGeminiImageContent(prompt, attachments)
+-            const response = await sendChatCompletion(
+-              {
+-                model: config.model,
+-                group: config.group,
+-                messages: [
+-                  {
+-                    role: 'user',
+-                    content: requestContent,
+-                  },
+-                ],
+-                stream: false,
+-                extra_body: {
+-                  google: {
+-                    image_config: {
+-                      image_size: getGeminiImageSize(config.imageSize),
++            if (attachments.length === 0) {
++              const imageSize = getGeminiImageSize(config.imageSize)
++              const result = imageResponseMedia(
++                await sendImageGeneration(
++                  {
++                    model: config.model,
++                    group: config.group,
++                    prompt,
++                    image_size: imageSize,
++                    size: imageSize,
++                    response_format: 'url',
++                    n: 1,
++                  },
++                  abortController.signal
++                )
++              )
++              completeMediaMessage(result.text, [result.media])
++            } else {
++              const requestContent = buildGeminiImageContent(
++                prompt,
++                attachments
++              )
++              const response = await sendChatCompletion(
++                {
++                  model: config.model,
++                  group: config.group,
++                  messages: [
++                    {
++                      role: 'user',
++                      content: requestContent,
++                    },
++                  ],
++                  stream: false,
++                  extra_body: {
++                    google: {
++                      image_config: {
++                        image_size: getGeminiImageSize(config.imageSize),
++                      },
+                     },
+                   },
+                 },
+-              },
+-              abortController.signal
+-            )
+-            const responseContent =
+-              response.choices?.[0]?.message?.content || ''
+-            const result = geminiImageMedia(responseContent)
+-            completeMediaMessage(result.text, [result.media])
++                abortController.signal
++              )
++              const responseContent =
++                response.choices?.[0]?.message?.content || ''
++              const result = geminiImageMedia(responseContent)
++              completeMediaMessage(result.text, [result.media])
++            }
+           } else if (imageAttachment) {
+             const payload = new FormData()
+             payload.append('model', config.model)
+diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
+--- a/web/default/src/features/playground/lib/model/model-profiles.ts
++++ b/web/default/src/features/playground/lib/model/model-profiles.ts
+@@ -182,7 +182,7 @@ export function getPlaygroundModelProfile(
+       badge: "4K Image",
+       description:
+         "Gemini native 4K image generation; the playground always requests 4K output.",
+-      endpoint: "/v1/chat/completions",
++      endpoint: "/v1/images/generations",
+       kind,
+       requestHints: [
+         { label: "model", value: model },

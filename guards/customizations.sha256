@@ -46,7 +46,7 @@ b4060682d4a6d28d53cc689b338dfcbd64190f8b05d9587435fac04f524efea4  web/default/sr
 7ff968b44f036bac2078dc2fcf70188f9dd7f063951ac175b3c5c175365a846e  web/default/src/features/playground/components/input/playground-parameter-panel.tsx
 1b4e8675bc4adfab78523471b281de043ba1ed61a31f6e0ba5f4dd3a5dfaeaab  web/default/src/features/playground/components/message/playground-message-content.tsx
 2ee3978ee4b5cee4adb5c8f303aea1f7ec11005f89c26ce953d7444766b0c1cd  web/default/src/features/playground/constants.ts
-62a783bfadc4ef53ef4dd2c923c399afca50702f6375649fd7fdf5283f1d4b39  web/default/src/features/playground/hooks/use-chat-handler.ts
+6c83ae670f81f0a36d42bae0047c71a829f6a2dae6da2e4130e1df866fb35ce1  web/default/src/features/playground/hooks/use-chat-handler.ts
 c3184e51bd61bca99fa3752f3821affba4798d5dbffc51255ad85e2f0441289c  web/default/src/features/playground/hooks/use-playground-conversation.ts
 3825da047055cae1386d3c86f5454b6e8897262853cb176a974afae7f00ba5df  web/default/src/features/playground/hooks/use-playground-state.ts
 10dbf7d8a8a4294ccedcdfffb9835e5e2052099406d1b61336c3f58ccbb285ba  web/default/src/features/playground/index.tsx
@@ -57,7 +57,7 @@ c41f66cee704e6685754ec5b9eb630c0491bc049635f921c1065a9c803497a5f  web/default/sr
 37772fab447a1d64584063c825056ebcba3429f5fb48bf2b940cf0aab460794d  web/default/src/features/playground/lib/message/message-resource-utils.ts
 47217a07dd6286947d323ba3adc79cd986ec5ecc07d26d9336f9cc04d39f9c23  web/default/src/features/playground/lib/message/message-utils.ts
 7b992700f611185afc9d4b652bf7e8dae1e822c8376d1d420ff63221febdc889  web/default/src/features/playground/lib/model/model-capabilities.ts
-bb9fa09de8b061aa242fb45e32ecc4ca9a8a2c97760a83d68273a271a52eedc0  web/default/src/features/playground/lib/model/model-profiles.ts
+39d661359279b37e116fb3dc3230684e3c1729825989251a0ea96b4382900b47  web/default/src/features/playground/lib/model/model-profiles.ts
 e9d02e3350ca469752240e386c49a8e17e1a4f0d3fe4b9c2cb1ad72591f78484  web/default/src/features/playground/lib/storage/storage-schema.ts
 c1ceff1fcb6c5fd6ec44eb9ef8b77ef13038d01d3885e7aed6cc86681ba025fd  web/default/src/features/playground/lib/streaming/payload-builder.ts
 265aa6389fbea36bdedee34e4a5f795da99cc2b2d0e23455fff30463ac2f69ec  web/default/src/features/playground/types.ts

@@ -18,6 +18,37 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"test-image"
 PNG_B64 = base64.b64encode(PNG_BYTES).decode("ascii")
 
 
+def multipart_body(fields, files):
+    boundary = "----mad-image-compat-test"
+    chunks = []
+    for name, value in fields.items():
+        chunks.extend(
+            [
+                f"--{boundary}\r\n".encode("ascii"),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(
+                    "ascii"
+                ),
+                str(value).encode("utf-8"),
+                b"\r\n",
+            ]
+        )
+    for name, filename, mime_type, raw in files:
+        chunks.extend(
+            [
+                f"--{boundary}\r\n".encode("ascii"),
+                (
+                    f'Content-Disposition: form-data; name="{name}"; '
+                    f'filename="{filename}"\r\n'
+                ).encode("ascii"),
+                f"Content-Type: {mime_type}\r\n\r\n".encode("ascii"),
+                raw,
+                b"\r\n",
+            ]
+        )
+    chunks.append(f"--{boundary}--\r\n".encode("ascii"))
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
 class MockUpstreamHandler(BaseHTTPRequestHandler):
     last_request = None
     last_path = None
@@ -168,18 +199,67 @@ class ImageURLCompatTest(unittest.TestCase):
                 "group": "vip",
             }
         ).encode("utf-8")
-        request_json, path, upstream_body = service.prepare_upstream_request(
+        request_json, path, upstream_body, content_type = service.prepare_upstream_request(
             "/v1/images/generations", original
         )
         payload = json.loads(upstream_body)
         self.assertEqual(request_json["model"], "gemini-3-pro-image-preview")
         self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(content_type, "application/json")
         self.assertEqual(payload["messages"][0]["content"], "golden city")
         self.assertEqual(payload["group"], "vip")
         self.assertEqual(
             payload["extra_body"]["google"]["image_config"],
             {"image_size": "2K", "aspect_ratio": "4:3"},
         )
+
+    def test_gemini_image_edit_multipart_uses_multimodal_chat(self):
+        original, content_type = multipart_body(
+            {
+                "model": "gemini-3.1-flash-image-preview",
+                "prompt": "change the sky to gold",
+                "size": "2048x1536",
+                "response_format": "url",
+                "group": "vip",
+            },
+            [("image", "input.png", "image/png", PNG_BYTES)],
+        )
+        request_json, path, upstream_body, upstream_content_type = (
+            service.prepare_upstream_request(
+                "/v1/images/edits", original, content_type
+            )
+        )
+        payload = json.loads(upstream_body)
+        content = payload["messages"][0]["content"]
+        self.assertEqual(request_json["response_format"], "url")
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(upstream_content_type, "application/json")
+        self.assertEqual(content[0]["text"], "change the sky to gold")
+        self.assertTrue(
+            content[1]["image_url"]["url"].startswith(
+                "data:image/png;base64,"
+            )
+        )
+        self.assertEqual(payload["group"], "vip")
+        self.assertEqual(
+            payload["extra_body"]["google"]["image_config"]["image_size"],
+            "2K",
+        )
+
+    def test_non_gemini_image_edit_multipart_is_unchanged(self):
+        original, content_type = multipart_body(
+            {"model": "gpt-image-2", "prompt": "keep passthrough"},
+            [("image", "input.png", "image/png", PNG_BYTES)],
+        )
+        request_json, path, upstream_body, upstream_content_type = (
+            service.prepare_upstream_request(
+                "/v1/images/edits", original, content_type
+            )
+        )
+        self.assertEqual(request_json["model"], "gpt-image-2")
+        self.assertEqual(path, "/v1/images/edits")
+        self.assertEqual(upstream_body, original)
+        self.assertEqual(upstream_content_type, content_type)
 
     def test_gemini_chat_response_becomes_image_response(self):
         chat_body = json.dumps(
@@ -287,6 +367,32 @@ class ImageURLCompatTest(unittest.TestCase):
                 "4K",
             )
             self.assertEqual(gemini_payload["data"][0]["b64_json"], PNG_B64)
+
+            edit_body, edit_content_type = multipart_body(
+                {
+                    "model": "gemini-3-pro-image-preview",
+                    "prompt": "edit test",
+                    "response_format": "url",
+                },
+                [("image", "input.png", "image/png", PNG_BYTES)],
+            )
+            edit_request = urllib.request.Request(
+                f"http://127.0.0.1:{compat.server_port}/v1/images/edits",
+                data=edit_body,
+                headers={"Content-Type": edit_content_type},
+                method="POST",
+            )
+            with urllib.request.urlopen(edit_request) as response:
+                edit_payload = json.load(response)
+                self.assertEqual(
+                    response.headers["X-Image-URL-Compat"], "gemini-url"
+                )
+            self.assertEqual(MockUpstreamHandler.last_path, "/v1/chat/completions")
+            self.assertIsInstance(
+                MockUpstreamHandler.last_request["messages"][0]["content"], list
+            )
+            self.assertIn("url", edit_payload["data"][0])
+            self.assertNotIn("b64_json", edit_payload["data"][0])
 
             playground_base64_request = urllib.request.Request(
                 endpoint,

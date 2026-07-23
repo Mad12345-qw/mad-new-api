@@ -26,7 +26,7 @@ curl -fL --retry 3 --connect-timeout 15 --max-time 900 \
   -o "$work_dir/mad-new-api.tar.gz" "$RELEASE_BASE/mad-new-api.tar.gz?cb=$cache_bust"
 curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
   -o "$work_dir/mad-new-api.tar.gz.sha256" "$RELEASE_BASE/mad-new-api.tar.gz.sha256?cb=$cache_bust"
-for asset in image-url-compat.py image-url-compat.service; do
+for asset in image-url-compat.py image-url-compat.service patch-image-compat-nginx.py; do
   curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
     -o "$work_dir/$asset" "$RELEASE_BASE/$asset?cb=$cache_bust"
   curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
@@ -37,8 +37,9 @@ cd "$work_dir"
 sha256sum -c mad-new-api.tar.gz.sha256
 sha256sum -c image-url-compat.py.sha256
 sha256sum -c image-url-compat.service.sha256
+sha256sum -c patch-image-compat-nginx.py.sha256
 release_sha=$(sha256sum mad-new-api.tar.gz | awk '{print $1}')
-compat_sha=$(cat image-url-compat.py.sha256 image-url-compat.service.sha256 | sha256sum | awk '{print $1}')
+compat_sha=$(cat image-url-compat.py.sha256 image-url-compat.service.sha256 patch-image-compat-nginx.py.sha256 | sha256sum | awk '{print $1}')
 
 if [ ! -f "$COMPAT_STATE_FILE" ] || [ "$(cat "$COMPAT_STATE_FILE")" != "$compat_sha" ]; then
   compat_backup_dir="$COMPOSE_DIR/backups/image-compat-$(date +%Y%m%d-%H%M%S)"
@@ -70,6 +71,8 @@ if [ ! -f "$COMPAT_STATE_FILE" ] || [ "$(cat "$COMPAT_STATE_FILE")" != "$compat_
     systemctl restart image-url-compat.service || true
     exit 2
   fi
+
+  python3 "$work_dir/patch-image-compat-nginx.py"
 
   printf '%s\n' "$compat_sha" > "$COMPAT_STATE_FILE"
   logger -t new-api-autoupdate "image compatibility service updated successfully: $compat_sha"

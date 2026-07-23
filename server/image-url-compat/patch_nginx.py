@@ -11,9 +11,17 @@ from pathlib import Path
 DEFAULT_SITE = Path("/etc/nginx/sites-enabled/mad.myddns.me")
 DEFAULT_BACKUP_DIR = Path("/opt/new-api/backups/nginx")
 INSERT_BEFORE = "    # image-url-compat managed block\n"
-BLOCK_MARKER = "    # image-url-compat playground block\n"
-PLAYGROUND_BLOCK = """    # image-url-compat playground block
-    location = /pg/images/generations {
+ROUTES = (
+    ("/pg/images/generations", "playground-generation"),
+    ("/v1/images/edits", "external-edits"),
+    ("/pg/images/edits", "playground-edits"),
+)
+
+
+def route_block(path, label):
+    return f"""    # image-url-compat {label} block
+    location = {path} {{
+        client_max_body_size 64m;
         proxy_pass http://127.0.0.1:3010;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -25,17 +33,25 @@ PLAYGROUND_BLOCK = """    # image-url-compat playground block
         proxy_cache off;
         proxy_read_timeout 700s;
         proxy_send_timeout 700s;
-    }
+    }}
 
 """
 
 
+PLAYGROUND_BLOCK = route_block(*ROUTES[0])
+
+
 def patched_config(content):
-    if BLOCK_MARKER in content:
-        return content, False
     if INSERT_BEFORE not in content:
         raise RuntimeError("image compatibility marker not found")
-    return content.replace(INSERT_BEFORE, PLAYGROUND_BLOCK + INSERT_BEFORE, 1), True
+    missing = [
+        route_block(path, label)
+        for path, label in ROUTES
+        if f"location = {path}" not in content
+    ]
+    if not missing:
+        return content, False
+    return content.replace(INSERT_BEFORE, "".join(missing) + INSERT_BEFORE, 1), True
 
 
 def write_atomic(path, content):

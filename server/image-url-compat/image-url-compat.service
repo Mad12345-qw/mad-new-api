@@ -15,6 +15,7 @@ Environment=CACHE_TTL=1800
 Environment=CLEAN_INTERVAL=300
 Environment=IMAGE_DOWNLOAD_TIMEOUT=180
 Environment=MAX_IMAGE_BYTES=67108864
+Environment=MAX_BODY=67108864
 ExecStart=/usr/bin/python3 /opt/image-url-compat/service.py
 Restart=always
 RestartSec=2

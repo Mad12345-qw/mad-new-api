@@ -11,6 +11,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -20,7 +22,7 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://mad.myddns.me")
 CACHE_DIR = Path(os.getenv("CACHE_DIR", "/opt/image-url-cache"))
 CACHE_TTL = int(os.getenv("CACHE_TTL", "1800"))
 CLEAN_INTERVAL = int(os.getenv("CLEAN_INTERVAL", "300"))
-MAX_BODY = int(os.getenv("MAX_BODY", str(2 * 1024 * 1024)))
+MAX_BODY = int(os.getenv("MAX_BODY", str(64 * 1024 * 1024)))
 TIMEOUT = int(os.getenv("UPSTREAM_TIMEOUT", "650"))
 IMAGE_DOWNLOAD_TIMEOUT = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT", "180"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(64 * 1024 * 1024)))
@@ -49,6 +51,11 @@ IMAGE_GENERATION_PATHS = {
     "/v1/images/generations",
     "/pg/images/generations",
 }
+IMAGE_EDIT_PATHS = {
+    "/v1/images/edits",
+    "/pg/images/edits",
+}
+IMAGE_PATHS = IMAGE_GENERATION_PATHS | IMAGE_EDIT_PATHS
 
 
 def is_image2_model(model):
@@ -87,17 +94,39 @@ def gemini_chat_path(path):
     return target + (separator + query if separator else "")
 
 
-def build_gemini_chat_body(request_json):
+def build_gemini_chat_body(request_json, image_parts=None):
     image_config = {"image_size": gemini_image_size(request_json)}
     aspect_ratio = str(request_json.get("aspect_ratio") or "").strip()
     if aspect_ratio:
         image_config["aspect_ratio"] = aspect_ratio
+    content = str(request_json.get("prompt") or "Generate an image")
+    if image_parts:
+        content = [{"type": "text", "text": content}]
+        for field_name, mime_type, raw in image_parts:
+            if field_name == "mask":
+                content.append(
+                    {
+                        "type": "text",
+                        "text": "Use the following image as the edit mask.",
+                    }
+                )
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": (
+                            f"data:{mime_type};base64,"
+                            + base64.b64encode(raw).decode("ascii")
+                        )
+                    },
+                }
+            )
     payload = {
         "model": request_json.get("model"),
         "messages": [
             {
                 "role": "user",
-                "content": str(request_json.get("prompt") or "Generate an image"),
+                "content": content,
             }
         ],
         "stream": False,
@@ -107,6 +136,50 @@ def build_gemini_chat_body(request_json):
     if isinstance(group, str) and group.strip():
         payload["group"] = group
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def parse_multipart_image_request(content_type, body):
+    try:
+        header = (
+            "Content-Type: "
+            + content_type
+            + "\r\nMIME-Version: 1.0\r\n\r\n"
+        ).encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("invalid multipart content type") from exc
+    message = BytesParser(policy=policy.default).parsebytes(header + body)
+    if not message.is_multipart():
+        raise ValueError("invalid multipart image request")
+
+    fields = {}
+    image_parts = []
+    for part in message.iter_parts():
+        field_name = part.get_param("name", header="content-disposition")
+        if not field_name:
+            continue
+        raw = part.get_payload(decode=True) or b""
+        filename = part.get_filename()
+        if filename is not None or field_name in {"image", "image[]", "mask"}:
+            mime_type = part.get_content_type().lower()
+            if not mime_type.startswith("image/"):
+                raise ValueError("uploaded edit input is not an image")
+            if not raw:
+                raise ValueError("uploaded edit image is empty")
+            if len(raw) > MAX_IMAGE_BYTES:
+                raise ValueError("uploaded edit image is too large")
+            normalized_name = "mask" if field_name == "mask" else "image"
+            image_parts.append((normalized_name, mime_type, raw))
+            continue
+
+        charset = part.get_content_charset() or "utf-8"
+        try:
+            fields[field_name] = raw.decode(charset)
+        except (LookupError, UnicodeDecodeError) as exc:
+            raise ValueError("invalid multipart text field") from exc
+
+    if not image_parts:
+        raise ValueError("image edit request does not contain an image")
+    return fields, image_parts
 
 
 def image_extension(raw):
@@ -169,13 +242,30 @@ def prepare_upstream_body(body):
     return request_json, upstream_body
 
 
-def prepare_upstream_request(path, body):
+def prepare_upstream_request(path, body, content_type="application/json"):
+    route = path.split("?", 1)[0]
+    if route in IMAGE_EDIT_PATHS and "multipart/form-data" in content_type.lower():
+        request_json, image_parts = parse_multipart_image_request(content_type, body)
+        if is_gemini_image_model(request_json.get("model")):
+            return (
+                request_json,
+                gemini_chat_path(path),
+                build_gemini_chat_body(request_json, image_parts),
+                "application/json",
+            )
+        return request_json, path, body, content_type
+
     request_json, upstream_body = prepare_upstream_body(body)
     if isinstance(request_json, dict) and is_gemini_image_model(
         request_json.get("model")
     ):
-        return request_json, gemini_chat_path(path), build_gemini_chat_body(request_json)
-    return request_json, path, upstream_body
+        return (
+            request_json,
+            gemini_chat_path(path),
+            build_gemini_chat_body(request_json),
+            "application/json",
+        )
+    return request_json, path, upstream_body, content_type
 
 
 def decode_base64_image(value):
@@ -359,7 +449,7 @@ def transform_image_response(request_json, content_type, response_body):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ImageURLCompat/4.0"
+    server_version = "ImageURLCompat/5.0"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -376,13 +466,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def upstream_headers(self, body_length=None):
+    def upstream_headers(self, body_length=None, content_type=None):
         headers = {}
         for key, value in self.headers.items():
-            if key.lower() not in HOP_HEADERS and key.lower() != "host":
+            if (
+                key.lower() not in HOP_HEADERS
+                and key.lower() != "host"
+                and not (content_type and key.lower() == "content-type")
+            ):
                 headers[key] = value
         if body_length is not None:
             headers["Content-Length"] = str(body_length)
+        if content_type:
+            headers["Content-Type"] = content_type
         return headers
 
     def forward_response(self, status, response_headers, response_body, mode):
@@ -433,7 +529,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json_error(502, "upstream request failed")
 
     def do_POST(self):
-        if self.path.split("?", 1)[0] not in IMAGE_GENERATION_PATHS:
+        if self.path.split("?", 1)[0] not in IMAGE_PATHS:
             self.send_json_error(404, "not found")
             return
         try:
@@ -446,14 +542,24 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         body = self.rfile.read(length)
-        request_json, upstream_path, upstream_body = prepare_upstream_request(
-            self.path, body
-        )
+        try:
+            request_json, upstream_path, upstream_body, upstream_content_type = (
+                prepare_upstream_request(
+                    self.path,
+                    body,
+                    self.headers.get("Content-Type", "application/octet-stream"),
+                )
+            )
+        except ValueError as exc:
+            self.send_json_error(400, str(exc))
+            return
         try:
             status, response_headers, response_body = self.request_upstream(
                 "POST",
                 body=upstream_body,
-                headers=self.upstream_headers(len(upstream_body)),
+                headers=self.upstream_headers(
+                    len(upstream_body), content_type=upstream_content_type
+                ),
                 path=upstream_path,
             )
         except Exception:

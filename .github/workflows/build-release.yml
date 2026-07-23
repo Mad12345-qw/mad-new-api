@@ -104,9 +104,11 @@ jobs:
           sha256sum mad-new-api.tar.gz > mad-new-api.tar.gz.sha256
           cp server/image-url-compat/service.py image-url-compat.py
           cp server/image-url-compat/image-url-compat.service image-url-compat.service
+          cp server/image-url-compat/patch_nginx.py patch-image-compat-nginx.py
           cp server/new-api-autoupdate.sh new-api-autoupdate.sh
           sha256sum image-url-compat.py > image-url-compat.py.sha256
           sha256sum image-url-compat.service > image-url-compat.service.sha256
+          sha256sum patch-image-compat-nginx.py > patch-image-compat-nginx.py.sha256
           sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
           git -C source rev-parse HEAD > upstream-commit.txt
 
@@ -122,6 +124,8 @@ jobs:
             image-url-compat.py.sha256 \
             image-url-compat.service \
             image-url-compat.service.sha256 \
+            patch-image-compat-nginx.py \
+            patch-image-compat-nginx.py.sha256 \
             new-api-autoupdate.sh \
             new-api-autoupdate.sh.sha256 \
             upstream-commit.txt \

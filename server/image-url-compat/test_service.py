@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -57,6 +58,7 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
         return
 
     def do_OPTIONS(self):
+        type(self).last_path = self.path
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Content-Length", "0")
@@ -69,6 +71,22 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path.startswith("/v1/videos/"):
+            task_id = self.path.rsplit("/", 1)[-1]
+            body = json.dumps(
+                {
+                    "id": task_id,
+                    "status": "completed",
+                    "metadata": {"url": "https://media.example/result.mp4"},
+                }
+            ).encode("utf-8")
+            type(self).last_path = self.path
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         self.send_response(200)
         self.send_header("Content-Type", "image/png")
         self.send_header("Content-Length", str(len(PNG_BYTES)))
@@ -79,6 +97,18 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         type(self).last_request = json.loads(self.rfile.read(length))
         type(self).last_path = self.path
+        if self.path in {"/v1/video/generations", "/pg/videos"}:
+            if type(self).last_request.get("model") == "force-404":
+                body = b'{"error":{"message":"upstream route missing"}}'
+                self.send_response(404)
+            else:
+                body = b'{"id":"task_seedance","status":"queued"}'
+                self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.endswith("/chat/completions"):
             body = json.dumps(
                 {
@@ -188,6 +218,36 @@ class ImageURLCompatTest(unittest.TestCase):
         self.assertEqual(request_json["model"], "other-image")
         self.assertEqual(upstream_body, original)
 
+    def test_image_aliases_map_to_canonical_paths(self):
+        generation = json.dumps(
+            {"model": "gpt-image-2", "prompt": "alias test"}
+        ).encode("utf-8")
+        for path in service.IMAGE_GENERATION_PATHS:
+            _request, upstream_path, _body, _content_type = (
+                service.prepare_upstream_request(path, generation)
+            )
+            expected = (
+                "/pg/images/generations"
+                if path.startswith("/pg/")
+                else "/v1/images/generations"
+            )
+            self.assertEqual(upstream_path, expected, path)
+
+        edit_body, edit_content_type = multipart_body(
+            {"model": "gpt-image-2", "prompt": "edit alias"},
+            [("image", "input.png", "image/png", PNG_BYTES)],
+        )
+        for path in service.IMAGE_EDIT_PATHS:
+            _request, upstream_path, _body, _upstream_content_type = (
+                service.prepare_upstream_request(path, edit_body, edit_content_type)
+            )
+            expected = (
+                "/pg/images/edits"
+                if path.startswith("/pg/")
+                else "/v1/images/edits"
+            )
+            self.assertEqual(upstream_path, expected, path)
+
     def test_gemini_image_request_uses_chat_completions(self):
         original = json.dumps(
             {
@@ -211,6 +271,27 @@ class ImageURLCompatTest(unittest.TestCase):
         self.assertEqual(
             payload["extra_body"]["google"]["image_config"],
             {"image_size": "2K", "aspect_ratio": "4:3"},
+        )
+
+    def test_gemini_json_reference_image_uses_multimodal_chat(self):
+        original = json.dumps(
+            {
+                "model": "gemini-3.1-flash-image-preview",
+                "prompt": "restyle this image",
+                "image": "data:image/png;base64," + PNG_B64,
+                "response_format": "url",
+            }
+        ).encode("utf-8")
+        _request_json, path, upstream_body, content_type = (
+            service.prepare_upstream_request("/images/generations", original)
+        )
+        payload = json.loads(upstream_body)
+        content = payload["messages"][0]["content"]
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(content_type, "application/json")
+        self.assertEqual(content[0]["text"], "restyle this image")
+        self.assertEqual(
+            content[1]["image_url"]["url"], "data:image/png;base64," + PNG_B64
         )
 
     def test_gemini_image_edit_multipart_uses_multimodal_chat(self):
@@ -260,6 +341,79 @@ class ImageURLCompatTest(unittest.TestCase):
         self.assertEqual(path, "/v1/images/edits")
         self.assertEqual(upstream_body, original)
         self.assertEqual(upstream_content_type, content_type)
+
+    def test_openai_style_video_request_is_normalized(self):
+        _original, normalized = service.normalize_video_request(
+            json.dumps(
+                {
+                    "model": "doubao-seedance-2.0-cf-1080p",
+                    "group": "vip",
+                    "prompt": "animate the skyline",
+                    "image_url": "data:image/png;base64," + PNG_B64,
+                    "reference_image_urls": ["https://media.example/ref.png"],
+                    "aspect_ratio": "9:16",
+                    "resolution": "1080p",
+                    "duration": 4,
+                    "audio": True,
+                }
+            ).encode("utf-8")
+        )
+        payload = json.loads(normalized)
+        self.assertEqual(payload["group"], "vip")
+        self.assertEqual(payload["duration"], 4)
+        self.assertEqual(payload["seconds"], "4")
+        self.assertEqual(len(payload["images"]), 2)
+        self.assertEqual(payload["metadata"]["ratio"], "9:16")
+        self.assertEqual(payload["metadata"]["resolution"], "1080p")
+        self.assertTrue(payload["metadata"]["generate_audio"])
+
+    def test_native_seedance_content_request_is_normalized(self):
+        content = [
+            {"type": "image_url", "image_url": {"url": "https://x/input.png"}},
+            {"type": "text", "text": "native Seedance prompt"},
+        ]
+        _original, normalized = service.normalize_video_request(
+            json.dumps(
+                {
+                    "model": "doubao-seedance-2.0-cf-1080p",
+                    "content": content,
+                    "ratio": "16:9",
+                    "resolution": "1080p",
+                    "duration": 4,
+                }
+            ).encode("utf-8")
+        )
+        payload = json.loads(normalized)
+        self.assertEqual(payload["prompt"], "native Seedance prompt")
+        self.assertEqual(payload["seconds"], "4")
+        self.assertEqual(payload["images"], ["https://x/input.png"])
+        self.assertEqual(payload["metadata"]["content"], content)
+        self.assertEqual(payload["metadata"]["ratio"], "16:9")
+
+    def test_video_size_derives_ratio_and_resolution(self):
+        _original, normalized = service.normalize_video_request(
+            json.dumps(
+                {
+                    "model": "doubao-seedance-2.0-cf-1080p",
+                    "prompt": "portrait video",
+                    "size": "2160x3840",
+                    "duration": "4",
+                }
+            ).encode("utf-8")
+        )
+        payload = json.loads(normalized)
+        self.assertEqual(payload["metadata"]["ratio"], "9:16")
+        self.assertEqual(payload["metadata"]["resolution"], "1080p")
+
+    def test_all_video_status_aliases_map_to_canonical_fetch(self):
+        for prefix in service.VIDEO_STATUS_PREFIXES:
+            target = service.video_status_target(prefix + "/task_123")
+            expected = (
+                "/pg/videos/task_123"
+                if prefix == "/pg/videos"
+                else "/v1/videos/task_123"
+            )
+            self.assertEqual(target, expected, prefix)
 
     def test_gemini_chat_response_becomes_image_response(self):
         chat_body = json.dumps(
@@ -394,6 +548,55 @@ class ImageURLCompatTest(unittest.TestCase):
             self.assertIn("url", edit_payload["data"][0])
             self.assertNotIn("b64_json", edit_payload["data"][0])
 
+            for alias in service.VIDEO_CREATE_PATHS:
+                video_request = urllib.request.Request(
+                    f"http://127.0.0.1:{compat.server_port}{alias}",
+                    data=json.dumps(
+                        {
+                            "model": "doubao-seedance-2.0-cf-1080p",
+                            "prompt": "video test",
+                            "aspect_ratio": "16:9",
+                            "duration": 4,
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(video_request) as response:
+                    video_payload = json.load(response)
+                    self.assertEqual(
+                        response.headers["X-Mad-Compat"], "video-create"
+                    )
+                expected_path = "/pg/videos" if alias == "/pg/videos" else "/v1/video/generations"
+                self.assertEqual(MockUpstreamHandler.last_path, expected_path, alias)
+                self.assertEqual(video_payload["id"], "task_seedance")
+                self.assertEqual(MockUpstreamHandler.last_request["duration"], 4)
+                self.assertEqual(
+                    MockUpstreamHandler.last_request["metadata"]["ratio"], "16:9"
+                )
+
+            status_request = urllib.request.Request(
+                f"http://127.0.0.1:{compat.server_port}/v1/contents/generations/tasks/task_seedance",
+                method="GET",
+            )
+            with urllib.request.urlopen(status_request) as response:
+                status_payload = json.load(response)
+                self.assertEqual(response.headers["X-Mad-Compat"], "video-status")
+            self.assertEqual(MockUpstreamHandler.last_path, "/v1/videos/task_seedance")
+            self.assertEqual(status_payload["status"], "completed")
+
+            stop_fallback_request = urllib.request.Request(
+                f"http://127.0.0.1:{compat.server_port}/videos/generations",
+                data=json.dumps(
+                    {"model": "force-404", "prompt": "do not retry"}
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(stop_fallback_request)
+            self.assertEqual(raised.exception.code, 502)
+
             playground_base64_request = urllib.request.Request(
                 endpoint,
                 data=json.dumps(
@@ -416,6 +619,15 @@ class ImageURLCompatTest(unittest.TestCase):
             with urllib.request.urlopen(options) as response:
                 self.assertEqual(response.status, 204)
                 self.assertEqual(response.headers["Access-Control-Allow-Origin"], "*")
+            self.assertEqual(MockUpstreamHandler.last_path, "/pg/images/generations")
+
+            video_options = urllib.request.Request(
+                f"http://127.0.0.1:{compat.server_port}/v1/contents/generations/tasks",
+                method="OPTIONS",
+            )
+            with urllib.request.urlopen(video_options) as response:
+                self.assertEqual(response.status, 204)
+            self.assertEqual(MockUpstreamHandler.last_path, "/v1/video/generations")
         finally:
             compat.shutdown()
             compat.server_close()

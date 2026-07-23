@@ -1,0 +1,138 @@
+diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
+--- a/web/default/src/features/playground/hooks/use-chat-handler.ts
++++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
+@@ -57,8 +57,6 @@ import type {
+   PlaygroundConfig,
+   ParameterEnabled,
+   PlaygroundMedia,
+-  ContentPart,
+-  PlaygroundAttachment,
+   VideoTaskResponse,
+ } from '../types'
+ import { useStreamRequest } from './use-stream-request'
+@@ -109,65 +107,6 @@ function imageResponseMedia(response: {
+   throw new Error('Image generation returned no usable image data')
+ }
+-
+-function geminiImageMedia(content: string): {
+-  media: PlaygroundMedia
+-  text: string
+-} {
+-  const match = content.match(/data:(image\/[^;]+);base64,([A-Za-z0-9+/=]+)/)
+-  if (!match) throw new Error('Gemini image response did not contain an image')
+-  return {
+-    media: {
+-      kind: 'image',
+-      url: makeObjectUrl(match[0]),
+-      mimeType: match[1],
+-      revokeOnDispose: true,
+-    },
+-    text:
+-      content.replaceAll(/!\[[^\]]*\]\(data:image[^)]+\)/g, '').trim() ||
+-      'Image generated',
+-  }
+-}
+-
+-function attachmentToContentPart(
+-  attachment: PlaygroundAttachment
+-): ContentPart {
+-  if (attachment.kind === 'image') {
+-    return {
+-      type: 'image_url',
+-      image_url: { url: attachment.dataUrl },
+-    }
+-  }
+-
+-  if (attachment.kind === 'video') {
+-    return {
+-      type: 'video_url',
+-      video_url: attachment.dataUrl,
+-    }
+-  }
+-
+-  return {
+-    type: 'file',
+-    file: {
+-      filename: attachment.name,
+-      file_data: attachment.dataUrl,
+-    },
+-  }
+-}
+-
+-function buildGeminiImageContent(
+-  prompt: string,
+-  attachments: PlaygroundAttachment[]
+-): string | ContentPart[] {
+-  if (attachments.length === 0) {
+-    return prompt
+-  }
+-
+-  return [
+-    { type: 'text', text: prompt },
+-    ...attachments.map(attachmentToContentPart),
+-  ]
+-}
+-
++
+ function getGeminiImageSize(size: string): '1K' | '2K' | '4K' {
+   const normalized = size.trim().toUpperCase()
+   if (normalized === '4K' || normalized.includes('3840')) {
+@@ -486,34 +425,32 @@ export function useChatHandler({
+               )
+               completeMediaMessage(result.text, [result.media])
+             } else {
+-              const requestContent = buildGeminiImageContent(
+-                prompt,
+-                attachments
++              const imageAttachments = attachments.filter(
++                (attachment) => attachment.kind === 'image'
+               )
+-              const response = await sendChatCompletion(
+-                {
+-                  model: config.model,
+-                  group: config.group,
+-                  messages: [
+-                    {
+-                      role: 'user',
+-                      content: requestContent,
+-                    },
+-                  ],
+-                  stream: false,
+-                  extra_body: {
+-                    google: {
+-                      image_config: {
+-                        image_size: getGeminiImageSize(config.imageSize),
+-                      },
+-                    },
+-                  },
+-                },
+-                abortController.signal
++              if (imageAttachments.length === 0) {
++                throw new Error('Image editing requires an image attachment')
++              }
++              const payload = new FormData()
++              payload.append('model', config.model)
++              payload.append('group', config.group)
++              payload.append('prompt', prompt || 'Edit this image')
++              payload.append(
++                'image_size',
++                getGeminiImageSize(config.imageSize)
+               )
+-              const responseContent =
+-                response.choices?.[0]?.message?.content || ''
+-              const result = geminiImageMedia(responseContent)
++              payload.append('response_format', 'url')
++              payload.append('n', '1')
++              for (const attachment of imageAttachments) {
++                payload.append(
++                  'image',
++                  dataUrlToBlob(attachment.dataUrl),
++                  attachment.name
++                )
++              }
++              const result = imageResponseMedia(
++                await sendImageEdit(payload, abortController.signal)
++              )
+               completeMediaMessage(result.text, [result.media])
+             }
+           } else if (imageAttachment) {

@@ -15,7 +15,51 @@ ROUTES = (
     ("/pg/images/generations", "playground-generation"),
     ("/v1/images/edits", "external-edits"),
     ("/pg/images/edits", "playground-edits"),
+    ("/images/generations", "image-generation-alias"),
+    ("/images/edits", "image-edits-alias"),
+    ("/v1/edits", "image-edits-short-v1"),
+    ("/edits", "image-edits-short"),
+    ("/images/variations", "image-variations-alias"),
+    ("/v1/images/variations", "image-variations-v1"),
+    ("/pg/videos", "playground-video-create"),
+    ("/videos/generations", "video-create-root"),
+    ("/v1/videos/generations", "video-create-v1-plural"),
+    ("/video/generations", "video-create-root-singular"),
+    ("/contents/generations/tasks", "video-create-content-root"),
+    ("/v1/contents/generations/tasks", "video-create-content-v1"),
+    ("/volc/v1/contents/generations/tasks", "video-create-volc"),
+    ("/api/v3/contents/generations/tasks", "video-create-api-v3"),
+    ("/v3/contents/generations/tasks", "video-create-v3"),
+    ("/ark/api/v3/contents/generations/tasks", "video-create-ark-v3"),
 )
+VIDEO_STATUS_MARKER = "    # mad-media-compat video-status block\n"
+VIDEO_STATUS_BLOCK = r"""    # mad-media-compat video-status block
+    location ~ ^/(?:pg/videos|(?:v1/)?(?:videos/generations|video/generations|contents/generations/tasks)|volc/v1/contents/generations/tasks|api/v3/contents/generations/tasks|v3/contents/generations/tasks|ark/api/v3/contents/generations/tasks|(?:v1/)?tasks)/[^/]+$ {
+        proxy_pass http://127.0.0.1:3010;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 700s;
+        proxy_send_timeout 700s;
+    }
+
+"""
+DUPLICATE_PREFIX_MARKER = "    # mad-media-compat duplicate-prefix block\n"
+DUPLICATE_PREFIX_BLOCK = r"""    # mad-media-compat duplicate-prefix block
+    location ~ ^/v1/v1beta/(.*)$ {
+        rewrite ^/v1/v1beta/(.*)$ /v1beta/$1 last;
+    }
+
+    location ~ ^/v1/v1/(.*)$ {
+        rewrite ^/v1/v1/(.*)$ /v1/$1 last;
+    }
+
+"""
 
 
 def route_block(path, label):
@@ -49,6 +93,10 @@ def patched_config(content):
         for path, label in ROUTES
         if f"location = {path}" not in content
     ]
+    if VIDEO_STATUS_MARKER not in content:
+        missing.append(VIDEO_STATUS_BLOCK)
+    if DUPLICATE_PREFIX_MARKER not in content:
+        missing.append(DUPLICATE_PREFIX_BLOCK)
     if not missing:
         return content, False
     return content.replace(INSERT_BEFORE, "".join(missing) + INSERT_BEFORE, 1), True
@@ -75,7 +123,7 @@ def main():
     original = args.site.read_text(encoding="utf-8")
     updated, changed = patched_config(original)
     if not changed:
-        print("nginx playground route already configured")
+        print("nginx media compatibility routes already configured")
         return
 
     args.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -95,7 +143,7 @@ def main():
         shutil.copy2(backup, args.site)
         subprocess.run(["nginx", "-t"], check=False)
         raise
-    print("nginx playground route configured and reloaded")
+    print("nginx media compatibility routes configured and reloaded")
 
 
 if __name__ == "__main__":

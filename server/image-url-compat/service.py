@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import base64
 import binascii
+import ctypes
+import gc
 import json
 import logging
+import math
 import os
 import secrets
 import signal
@@ -11,6 +14,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +30,12 @@ MAX_BODY = int(os.getenv("MAX_BODY", str(64 * 1024 * 1024)))
 TIMEOUT = int(os.getenv("UPSTREAM_TIMEOUT", "650"))
 IMAGE_DOWNLOAD_TIMEOUT = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT", "180"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(64 * 1024 * 1024)))
+GEMINI_IMAGE_CONCURRENCY = int(os.getenv("GEMINI_IMAGE_CONCURRENCY", "2"))
+GEMINI_IMAGE_SLOTS = threading.BoundedSemaphore(max(1, GEMINI_IMAGE_CONCURRENCY))
+try:
+    LIBC = ctypes.CDLL("libc.so.6")
+except OSError:
+    LIBC = None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("image-url-compat")
@@ -48,14 +58,52 @@ GEMINI_IMAGE_MODELS = {
     "gemini-3-pro-image-preview",
 }
 IMAGE_GENERATION_PATHS = {
+    "/images/generations",
     "/v1/images/generations",
     "/pg/images/generations",
 }
 IMAGE_EDIT_PATHS = {
+    "/edits",
+    "/v1/edits",
+    "/images/edits",
     "/v1/images/edits",
     "/pg/images/edits",
+    "/images/variations",
+    "/v1/images/variations",
 }
 IMAGE_PATHS = IMAGE_GENERATION_PATHS | IMAGE_EDIT_PATHS
+VIDEO_CREATE_PATHS = {
+    "/pg/videos",
+    "/videos/generations",
+    "/v1/videos/generations",
+    "/video/generations",
+    "/v1/video/generations",
+    "/contents/generations/tasks",
+    "/v1/contents/generations/tasks",
+    "/volc/v1/contents/generations/tasks",
+    "/api/v3/contents/generations/tasks",
+    "/v3/contents/generations/tasks",
+    "/ark/api/v3/contents/generations/tasks",
+}
+VIDEO_STATUS_PREFIXES = VIDEO_CREATE_PATHS | {"/tasks", "/v1/tasks"}
+VIDEO_METADATA_FIELDS = {
+    "callback_url",
+    "return_last_frame",
+    "service_tier",
+    "execution_expires_after",
+    "generate_audio",
+    "draft",
+    "tools",
+    "safety_identifier",
+    "priority",
+    "resolution",
+    "ratio",
+    "frames",
+    "seed",
+    "camera_fixed",
+    "watermark",
+    "audio",
+}
 
 
 def is_image2_model(model):
@@ -94,15 +142,86 @@ def gemini_chat_path(path):
     return target + (separator + query if separator else "")
 
 
+def canonical_image_path(path):
+    route, separator, query = path.partition("?")
+    if route.startswith("/pg/"):
+        target = (
+            "/pg/images/generations"
+            if route in IMAGE_GENERATION_PATHS
+            else "/pg/images/edits"
+        )
+    else:
+        target = (
+            "/v1/images/generations"
+            if route in IMAGE_GENERATION_PATHS
+            else "/v1/images/edits"
+        )
+    return target + (separator + query if separator else "")
+
+
+@contextmanager
+def image_request_slot(request_json):
+    if not is_gemini_image_model(request_json.get("model")):
+        yield
+        return
+    acquired = GEMINI_IMAGE_SLOTS.acquire(timeout=TIMEOUT)
+    if not acquired:
+        raise TimeoutError("Gemini image compatibility queue timed out")
+    try:
+        yield
+    finally:
+        GEMINI_IMAGE_SLOTS.release()
+
+
+def release_process_memory():
+    gc.collect()
+    if LIBC is not None:
+        try:
+            LIBC.malloc_trim(0)
+        except Exception:
+            pass
+
+
+def json_image_references(request_json):
+    references = []
+    for key in ("image", "images", "input_image", "input_images"):
+        value = request_json.get(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            url = media_url_value(item)
+            if url:
+                references.append(("image", url))
+    content = request_json.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "image_url":
+                continue
+            url = media_url_value(item.get("image_url"))
+            if url:
+                references.append(("image", url))
+    return list(dict.fromkeys(references))
+
+
 def build_gemini_chat_body(request_json, image_parts=None):
     image_config = {"image_size": gemini_image_size(request_json)}
     aspect_ratio = str(request_json.get("aspect_ratio") or "").strip()
     if aspect_ratio:
         image_config["aspect_ratio"] = aspect_ratio
     content = str(request_json.get("prompt") or "Generate an image")
+    references = []
     if image_parts:
-        content = [{"type": "text", "text": content}]
         for field_name, mime_type, raw in image_parts:
+            references.append(
+                (
+                    field_name,
+                    f"data:{mime_type};base64," + base64.b64encode(raw).decode("ascii"),
+                )
+            )
+    else:
+        references = json_image_references(request_json)
+    if references:
+        content = [{"type": "text", "text": content}]
+        for field_name, image_url in references:
             if field_name == "mask":
                 content.append(
                     {
@@ -113,12 +232,7 @@ def build_gemini_chat_body(request_json, image_parts=None):
             content.append(
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": (
-                            f"data:{mime_type};base64,"
-                            + base64.b64encode(raw).decode("ascii")
-                        )
-                    },
+                    "image_url": {"url": image_url},
                 }
             )
     payload = {
@@ -253,7 +367,7 @@ def prepare_upstream_request(path, body, content_type="application/json"):
                 build_gemini_chat_body(request_json, image_parts),
                 "application/json",
             )
-        return request_json, path, body, content_type
+        return request_json, canonical_image_path(path), body, content_type
 
     request_json, upstream_body = prepare_upstream_body(body)
     if isinstance(request_json, dict) and is_gemini_image_model(
@@ -265,7 +379,126 @@ def prepare_upstream_request(path, body, content_type="application/json"):
             build_gemini_chat_body(request_json),
             "application/json",
         )
-    return request_json, path, upstream_body, content_type
+    return request_json, canonical_image_path(path), upstream_body, content_type
+
+
+def media_url_value(value):
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        url = value.get("url")
+        if isinstance(url, str):
+            return url.strip()
+    return ""
+
+
+def normalize_video_request(body):
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("invalid video request JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("video request must be a JSON object")
+
+    prompt = str(payload.get("prompt") or "").strip()
+    images = []
+    single_image = payload.get("image")
+    if isinstance(single_image, list):
+        images.extend(url for item in single_image if (url := media_url_value(item)))
+    elif url := media_url_value(single_image):
+        images.append(url)
+    raw_images = payload.get("images")
+    if isinstance(raw_images, list):
+        images.extend(url for item in raw_images if (url := media_url_value(item)))
+    for key in ("image_url", "input_reference"):
+        if url := media_url_value(payload.get(key)):
+            images.append(url)
+    reference_images = payload.get("reference_image_urls")
+    if isinstance(reference_images, list):
+        images.extend(
+            url for item in reference_images if (url := media_url_value(item))
+        )
+
+    content = payload.get("content")
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text" and isinstance(item.get("text"), str):
+                text = item["text"].strip()
+                if text:
+                    text_parts.append(text)
+            if item.get("type") == "image_url":
+                url = media_url_value(item.get("image_url"))
+                if url:
+                    images.append(url)
+        if not prompt and text_parts:
+            prompt = "\n".join(text_parts)
+
+    normalized = {
+        "model": payload.get("model"),
+        "prompt": prompt,
+    }
+    for key in ("group", "duration", "seconds", "size", "mode"):
+        if key in payload:
+            normalized[key] = payload[key]
+    if "duration" in payload and "seconds" not in normalized:
+        normalized["seconds"] = str(payload["duration"])
+    if images:
+        normalized["images"] = list(dict.fromkeys(images))
+
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    else:
+        metadata = dict(metadata)
+    if isinstance(content, list):
+        metadata["content"] = content
+    for key in VIDEO_METADATA_FIELDS:
+        if key in payload:
+            metadata[key] = payload[key]
+    aspect_ratio = payload.get("aspect_ratio")
+    if isinstance(aspect_ratio, str) and aspect_ratio.strip():
+        metadata.setdefault("ratio", aspect_ratio.strip())
+    size = payload.get("size")
+    if isinstance(size, str):
+        match = re.fullmatch(r"(\d{2,5})[Xx](\d{2,5})", size.strip())
+        if match:
+            width, height = int(match.group(1)), int(match.group(2))
+            if width and height:
+                divisor = math.gcd(width, height)
+                ratio = f"{width // divisor}:{height // divisor}"
+                if ratio in {"1:1", "4:3", "3:4", "16:9", "9:16", "21:9"}:
+                    metadata.setdefault("ratio", ratio)
+                metadata.setdefault(
+                    "resolution", "1080p" if max(width, height) >= 1920 else "720p"
+                )
+    if "audio" in payload:
+        metadata.setdefault("generate_audio", payload["audio"])
+    if metadata:
+        normalized["metadata"] = metadata
+
+    return payload, json.dumps(
+        normalized, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def video_status_target(path):
+    route, separator, query = path.partition("?")
+    for prefix in sorted(VIDEO_STATUS_PREFIXES, key=len, reverse=True):
+        marker = prefix + "/"
+        if not route.startswith(marker):
+            continue
+        task_id = route[len(marker) :]
+        if task_id and "/" not in task_id:
+            target = (
+                "/pg/videos/" + task_id
+                if prefix == "/pg/videos"
+                else "/v1/videos/" + task_id
+            )
+            return target + (separator + query if separator else "")
+    return None
 
 
 def decode_base64_image(value):
@@ -449,11 +682,17 @@ def transform_image_response(request_json, content_type, response_body):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ImageURLCompat/5.0"
+    server_version = "ImageURLCompat/6.0"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
         LOG.info("%s %s", self.address_string(), fmt % args)
+
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        finally:
+            release_process_memory()
 
     def send_json_error(self, status, message):
         raw = json.dumps(
@@ -488,6 +727,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header(key, value)
         self.send_header("Content-Length", str(len(response_body)))
         self.send_header("X-Image-URL-Compat", mode)
+        self.send_header("X-Mad-Compat", mode)
         self.end_headers()
         try:
             self.wfile.write(response_body)
@@ -516,12 +756,36 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(raw)
             return
+        status_target = video_status_target(self.path)
+        if status_target:
+            try:
+                status, response_headers, response_body = self.request_upstream(
+                    "GET", headers=self.upstream_headers(), path=status_target
+                )
+                client_status = 502 if status in {404, 405} else status
+                self.forward_response(
+                    client_status, response_headers, response_body, "video-status"
+                )
+            except Exception:
+                LOG.exception("upstream video status request failed")
+                self.send_json_error(502, "upstream request failed")
+            return
         self.send_json_error(404, "not found")
 
     def do_OPTIONS(self):
+        route = self.path.split("?", 1)[0]
+        target = self.path
+        if route in VIDEO_CREATE_PATHS:
+            target = "/pg/videos" if route == "/pg/videos" else "/v1/video/generations"
+        elif route in IMAGE_PATHS:
+            target = canonical_image_path(self.path)
+        else:
+            status_target = video_status_target(self.path)
+            if status_target:
+                target = status_target
         try:
             status, response_headers, response_body = self.request_upstream(
-                "OPTIONS", headers=self.upstream_headers()
+                "OPTIONS", headers=self.upstream_headers(), path=target
             )
             self.forward_response(status, response_headers, response_body, "passthrough")
         except Exception:
@@ -529,7 +793,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json_error(502, "upstream request failed")
 
     def do_POST(self):
-        if self.path.split("?", 1)[0] not in IMAGE_PATHS:
+        route = self.path.split("?", 1)[0]
+        if route not in IMAGE_PATHS and route not in VIDEO_CREATE_PATHS:
             self.send_json_error(404, "not found")
             return
         try:
@@ -542,6 +807,34 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         body = self.rfile.read(length)
+        if route in VIDEO_CREATE_PATHS:
+            try:
+                _request_json, upstream_body = normalize_video_request(body)
+            except ValueError as exc:
+                self.send_json_error(400, str(exc))
+                return
+            try:
+                status, response_headers, response_body = self.request_upstream(
+                    "POST",
+                    body=upstream_body,
+                    headers=self.upstream_headers(
+                        len(upstream_body), content_type="application/json"
+                    ),
+                    path=(
+                        "/pg/videos"
+                        if route == "/pg/videos"
+                        else "/v1/video/generations"
+                    ),
+                )
+                client_status = 502 if status in {404, 405} else status
+                self.forward_response(
+                    client_status, response_headers, response_body, "video-create"
+                )
+            except Exception:
+                LOG.exception("upstream video create request failed")
+                self.send_json_error(502, "upstream request failed")
+            return
+
         try:
             request_json, upstream_path, upstream_body, upstream_content_type = (
                 prepare_upstream_request(
@@ -554,37 +847,35 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json_error(400, str(exc))
             return
         try:
-            status, response_headers, response_body = self.request_upstream(
-                "POST",
-                body=upstream_body,
-                headers=self.upstream_headers(
-                    len(upstream_body), content_type=upstream_content_type
-                ),
-                path=upstream_path,
-            )
-        except Exception:
-            LOG.exception("upstream request failed")
-            self.send_json_error(502, "upstream request failed")
-            return
-
-        mode = "passthrough"
-        content_type = response_headers.get("Content-Type", "")
-        if 200 <= status < 300:
-            try:
-                response_request_json = request_json
-                if (
-                    self.path.split("?", 1)[0] == "/pg/images/generations"
-                    and is_image2_4k_model(request_json.get("model"))
-                ):
-                    response_request_json = dict(request_json)
-                    response_request_json["response_format"] = "url"
-                response_body, mode = transform_image_response(
-                    response_request_json, content_type, response_body
+            with image_request_slot(request_json):
+                status, response_headers, response_body = self.request_upstream(
+                    "POST",
+                    body=upstream_body,
+                    headers=self.upstream_headers(
+                        len(upstream_body), content_type=upstream_content_type
+                    ),
+                    path=upstream_path,
                 )
-            except Exception:
-                LOG.exception("failed to download or normalize upstream image")
-                self.send_json_error(502, "failed to download upstream image")
-                return
+                mode = "passthrough"
+                content_type = response_headers.get("Content-Type", "")
+                if 200 <= status < 300:
+                    response_request_json = request_json
+                    if (
+                        self.path.split("?", 1)[0] == "/pg/images/generations"
+                        and is_image2_4k_model(request_json.get("model"))
+                    ):
+                        response_request_json = dict(request_json)
+                        response_request_json["response_format"] = "url"
+                    response_body, mode = transform_image_response(
+                        response_request_json, content_type, response_body
+                    )
+        except TimeoutError as exc:
+            self.send_json_error(503, str(exc))
+            return
+        except Exception:
+            LOG.exception("upstream image request or normalization failed")
+            self.send_json_error(502, "upstream image request failed")
+            return
         self.forward_response(status, response_headers, response_body, mode)
 
 

@@ -11,6 +11,7 @@ This repository applies a small backend patch to the upstream New API source:
 - a model-aware playground for chat, image, video, file, search, and TTS testing
 - verified presets for `gpt-image-2-4k` and MOSS/Speechify TTS
 - browser-memory attachment and media cleanup without a server upload directory
-- a versioned image compatibility service that preserves reliable `gpt-image-2` responses and converts Gemini text-to-image and multipart image-edit requests into the working multimodal chat route, while honoring `b64_json` and `url` client formats
+- a versioned media compatibility service that normalizes mainstream OpenAI, New API, Gemini, and Seedance/Volc image and video request shapes into the site's verified canonical routes, while honoring image URL/Base64 responses and asynchronous video task polling
+- isolated media resource controls so large Gemini image responses cannot consume the New API container's memory budget, plus route-level handling that prevents endpoint-fallback clients from submitting the same video through multiple aliases
 
 GitHub Actions applies and verifies every patch, runs backend, frontend, and image compatibility tests, builds the Docker image away from the production server, and publishes stable release artifacts. No production credentials are stored in this repository.

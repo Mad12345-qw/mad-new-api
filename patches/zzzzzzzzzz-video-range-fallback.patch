@@ -1,0 +1,126 @@
+diff --git a/controller/video_proxy.go b/controller/video_proxy.go
+index 3efa362..f2a6659 100644
+--- a/controller/video_proxy.go
++++ b/controller/video_proxy.go
+@@ -7,6 +7,7 @@ import (
+ 	"io"
+ 	"net/http"
+ 	"net/url"
++	"strconv"
+ 	"strings"
+ 	"time"
+ 
+@@ -53,6 +54,45 @@ func copyVideoResponseHeaders(dst, src http.Header) {
+ 	}
+ }
+ 
++func parseSingleByteRange(value string, total int64) (int64, int64, bool) {
++	if total <= 0 || !strings.HasPrefix(value, "bytes=") {
++		return 0, 0, false
++	}
++	value = strings.TrimSpace(strings.TrimPrefix(value, "bytes="))
++	if value == "" || strings.Contains(value, ",") {
++		return 0, 0, false
++	}
++	parts := strings.SplitN(value, "-", 2)
++	if len(parts) != 2 {
++		return 0, 0, false
++	}
++	if parts[0] == "" {
++		suffix, err := strconv.ParseInt(parts[1], 10, 64)
++		if err != nil || suffix <= 0 {
++			return 0, 0, false
++		}
++		if suffix > total {
++			suffix = total
++		}
++		return total - suffix, total - 1, true
++	}
++	start, err := strconv.ParseInt(parts[0], 10, 64)
++	if err != nil || start < 0 || start >= total {
++		return 0, 0, false
++	}
++	end := total - 1
++	if parts[1] != "" {
++		end, err = strconv.ParseInt(parts[1], 10, 64)
++		if err != nil || end < start {
++			return 0, 0, false
++		}
++		if end >= total {
++			end = total - 1
++		}
++	}
++	return start, end, true
++}
++
+ func VideoProxy(c *gin.Context) {
+ 	taskID := c.Param("task_id")
+ 	if taskID == "" {
+@@ -247,8 +287,34 @@ func VideoProxy(c *gin.Context) {
+ 	} else {
+ 		c.Writer.Header().Set("Content-Disposition", "inline")
+ 	}
+-	c.Writer.WriteHeader(resp.StatusCode)
+-	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
++	responseStatus := resp.StatusCode
++	copyLength := int64(-1)
++	if resp.StatusCode == http.StatusOK && c.GetHeader("Range") != "" && resp.ContentLength > 0 {
++		start, end, ok := parseSingleByteRange(c.GetHeader("Range"), resp.ContentLength)
++		if !ok {
++			c.Writer.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", resp.ContentLength))
++			c.Status(http.StatusRequestedRangeNotSatisfiable)
++			return
++		}
++		if start > 0 {
++			if _, discardErr := io.CopyN(io.Discard, resp.Body, start); discardErr != nil {
++				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to seek video stream: %s", discardErr.Error()))
++				return
++			}
++		}
++		copyLength = end - start + 1
++		responseStatus = http.StatusPartialContent
++		c.Writer.Header().Set("Accept-Ranges", "bytes")
++		c.Writer.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, resp.ContentLength))
++		c.Writer.Header().Set("Content-Length", strconv.FormatInt(copyLength, 10))
++	}
++	c.Writer.WriteHeader(responseStatus)
++	if copyLength >= 0 {
++		_, err = io.CopyN(c.Writer, resp.Body, copyLength)
++	} else {
++		_, err = io.Copy(c.Writer, resp.Body)
++	}
++	if err != nil {
+ 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
+ 	}
+ }
+diff --git a/controller/video_proxy_content_test.go b/controller/video_proxy_content_test.go
+index 2e1860d..5744ab3 100644
+--- a/controller/video_proxy_content_test.go
++++ b/controller/video_proxy_content_test.go
+@@ -37,6 +37,26 @@ func TestCopyVideoResponseHeadersOnlyCopiesStreamingMetadata(t *testing.T) {
+ 	require.Empty(t, dst.Get("Connection"))
+ }
+ 
++func TestParseSingleByteRange(t *testing.T) {
++	start, end, ok := parseSingleByteRange("bytes=0-0", 1000)
++	require.True(t, ok)
++	require.Equal(t, int64(0), start)
++	require.Equal(t, int64(0), end)
++
++	start, end, ok = parseSingleByteRange("bytes=100-", 1000)
++	require.True(t, ok)
++	require.Equal(t, int64(100), start)
++	require.Equal(t, int64(999), end)
++
++	start, end, ok = parseSingleByteRange("bytes=-25", 1000)
++	require.True(t, ok)
++	require.Equal(t, int64(975), start)
++	require.Equal(t, int64(999), end)
++
++	_, _, ok = parseSingleByteRange("bytes=1000-1001", 1000)
++	require.False(t, ok)
++}
++
+ func TestExtractVideoURLFromContentResponse(t *testing.T) {
+ 	url := extractVideoURLFromContentResponse([]byte(`{
+ 		"status":"done",

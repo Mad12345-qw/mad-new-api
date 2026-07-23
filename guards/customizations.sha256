@@ -46,7 +46,7 @@ b4060682d4a6d28d53cc689b338dfcbd64190f8b05d9587435fac04f524efea4  web/default/sr
 7ff968b44f036bac2078dc2fcf70188f9dd7f063951ac175b3c5c175365a846e  web/default/src/features/playground/components/input/playground-parameter-panel.tsx
 1b4e8675bc4adfab78523471b281de043ba1ed61a31f6e0ba5f4dd3a5dfaeaab  web/default/src/features/playground/components/message/playground-message-content.tsx
 2ee3978ee4b5cee4adb5c8f303aea1f7ec11005f89c26ce953d7444766b0c1cd  web/default/src/features/playground/constants.ts
-6c83ae670f81f0a36d42bae0047c71a829f6a2dae6da2e4130e1df866fb35ce1  web/default/src/features/playground/hooks/use-chat-handler.ts
+8d3d37f9f27b513186c4525df5fbc8923d656070d8ab1b1817c09c4d6c5404c9  web/default/src/features/playground/hooks/use-chat-handler.ts
 c3184e51bd61bca99fa3752f3821affba4798d5dbffc51255ad85e2f0441289c  web/default/src/features/playground/hooks/use-playground-conversation.ts
 3825da047055cae1386d3c86f5454b6e8897262853cb176a974afae7f00ba5df  web/default/src/features/playground/hooks/use-playground-state.ts
 10dbf7d8a8a4294ccedcdfffb9835e5e2052099406d1b61336c3f58ccbb285ba  web/default/src/features/playground/index.tsx

@@ -1,0 +1,99 @@
+diff --git a/relay/channel/task/sora/adaptor.go b/relay/channel/task/sora/adaptor.go
+index 80dac88..54c68cd 100644
+--- a/relay/channel/task/sora/adaptor.go
++++ b/relay/channel/task/sora/adaptor.go
+@@ -148,11 +148,34 @@ func IsApiOkSeedanceModel(model string) bool {
+ 	}
+ }
+ 
+-func apiOkSeedanceContent(model, prompt, content string) string {
++func apiOkSeedanceContent(model, prompt string, content interface{}) interface{} {
++	if !IsApiOkSeedanceModel(model) {
++		return content
++	}
++	if items, ok := content.([]interface{}); ok && len(items) > 0 {
++		return content
++	}
++	text := strings.TrimSpace(prompt)
++	if text == "" {
++		if value, ok := content.(string); ok {
++			text = strings.TrimSpace(value)
++		}
++	}
++	if text == "" {
++		return content
++	}
++	return []ContentItem{{Type: "text", Text: text}}
++}
++
++func apiOkSeedanceMultipartContent(model, prompt, content string) string {
+ 	if !IsApiOkSeedanceModel(model) || strings.TrimSpace(content) != "" {
+ 		return content
+ 	}
+-	return prompt
++	items, err := common.Marshal([]ContentItem{{Type: "text", Text: strings.TrimSpace(prompt)}})
++	if err != nil || strings.TrimSpace(prompt) == "" {
++		return content
++	}
++	return string(items)
+ }
+ 
+ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+@@ -185,8 +208,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
+ 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
+ 			bodyMap["model"] = info.UpstreamModelName
+ 			prompt, _ := bodyMap["prompt"].(string)
+-			content, _ := bodyMap["content"].(string)
+-			if compatContent := apiOkSeedanceContent(info.OriginModelName, prompt, content); strings.TrimSpace(compatContent) != "" {
++			content := bodyMap["content"]
++			if compatContent := apiOkSeedanceContent(info.OriginModelName, prompt, content); compatContent != nil {
+ 				bodyMap["content"] = compatContent
+ 			}
+ 			if newBody, err := common.Marshal(bodyMap); err == nil {
+@@ -225,7 +248,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
+ 				writer.WriteField(key, v)
+ 			}
+ 		}
+-		if compatContent := apiOkSeedanceContent(info.OriginModelName, prompt, content); strings.TrimSpace(compatContent) != "" && strings.TrimSpace(content) == "" {
++		if compatContent := apiOkSeedanceMultipartContent(info.OriginModelName, prompt, content); strings.TrimSpace(compatContent) != "" && strings.TrimSpace(content) == "" {
+ 			writer.WriteField("content", compatContent)
+ 		}
+ 		for fieldName, fileHeaders := range formData.File {
+diff --git a/relay/channel/task/sora/adaptor_test.go b/relay/channel/task/sora/adaptor_test.go
+index 76e97ff..3288aea 100644
+--- a/relay/channel/task/sora/adaptor_test.go
++++ b/relay/channel/task/sora/adaptor_test.go
+@@ -42,19 +42,23 @@ func TestIsApiOkSeedanceModel(t *testing.T) {
+ }
+ 
+ func TestApiOkSeedanceContent(t *testing.T) {
+-	require.Equal(
+-		t,
++	content := apiOkSeedanceContent(
++		"doubao-seedance-2.0-cf-1080p",
+ 		"make a four-second live-action video",
+-		apiOkSeedanceContent(
+-			"doubao-seedance-2.0-cf-1080p",
+-			"make a four-second live-action video",
+-			"",
+-		),
++		nil,
+ 	)
+ 	require.Equal(
+ 		t,
+-		"explicit content",
+-		apiOkSeedanceContent("seedance-2.0", "prompt", "explicit content"),
++		[]ContentItem{{Type: "text", Text: "make a four-second live-action video"}},
++		content,
++	)
++
++	existing := []interface{}{map[string]interface{}{"type": "text", "text": "existing"}}
++	require.Equal(t, existing, apiOkSeedanceContent("seedance-2.0", "prompt", existing))
++	require.Nil(t, apiOkSeedanceContent("sora-2", "prompt", nil))
++	require.JSONEq(
++		t,
++		`[{"type":"text","text":"prompt"}]`,
++		apiOkSeedanceMultipartContent("seedance-2.0", "prompt", ""),
+ 	)
+-	require.Empty(t, apiOkSeedanceContent("sora-2", "prompt", ""))
+ }

@@ -565,7 +565,8 @@ class ImageURLCompatTest(unittest.TestCase):
                 with urllib.request.urlopen(video_request) as response:
                     video_payload = json.load(response)
                     self.assertEqual(
-                        response.headers["X-Mad-Compat"], "video-create"
+                        response.headers["X-Mad-Compat"],
+                        "video-create-normalized",
                     )
                 expected_path = "/pg/videos" if alias == "/pg/videos" else "/v1/video/generations"
                 self.assertEqual(MockUpstreamHandler.last_path, expected_path, alias)
@@ -581,9 +582,84 @@ class ImageURLCompatTest(unittest.TestCase):
             )
             with urllib.request.urlopen(status_request) as response:
                 status_payload = json.load(response)
-                self.assertEqual(response.headers["X-Mad-Compat"], "video-status")
+                self.assertEqual(
+                    response.headers["X-Mad-Compat"],
+                    "video-status-normalized",
+                )
             self.assertEqual(MockUpstreamHandler.last_path, "/v1/videos/task_seedance")
             self.assertEqual(status_payload["status"], "completed")
+            expected_video_url = (
+                "https://mad.example/v1/videos/task_seedance/content"
+            )
+            self.assertEqual(status_payload["task_id"], "task_seedance")
+            self.assertEqual(status_payload["url"], expected_video_url)
+            self.assertEqual(status_payload["video_url"], expected_video_url)
+            self.assertEqual(
+                status_payload["metadata"]["url"], expected_video_url
+            )
+            self.assertEqual(
+                status_payload["content"]["video_url"], expected_video_url
+            )
+            self.assertEqual(
+                status_payload["data"]["video_url"], expected_video_url
+            )
+            self.assertEqual(
+                status_payload["result"]["video_url"], expected_video_url
+            )
+
+            historical_body = json.dumps(
+                {
+                    "completed_at": 1784809243,
+                    "created_at": 1784808893,
+                    "id": "task_public",
+                    "metadata": {
+                        "url": "https://supplier.example/v1/videos/task_provider/content"
+                    },
+                    "model": "doubao-seedance-2.0-cf-1080p",
+                    "object": "video",
+                    "progress": 100,
+                    "status": "completed",
+                    "task_id": "task_provider",
+                }
+            ).encode("utf-8")
+            normalized_body, normalized_mode = (
+                service.normalize_video_status_response(
+                    "/v1/contents/generations/tasks/task_public",
+                    "application/json",
+                    historical_body,
+                )
+            )
+            normalized_payload = json.loads(normalized_body)
+            historical_url = (
+                "https://mad.example/v1/videos/task_public/content"
+            )
+            self.assertEqual(normalized_mode, "video-status-normalized")
+            self.assertEqual(normalized_payload["task_id"], "task_public")
+            self.assertEqual(
+                normalized_payload["provider_task_id"], "task_provider"
+            )
+            self.assertEqual(normalized_payload["url"], historical_url)
+            self.assertEqual(
+                normalized_payload["content"]["video_url"], historical_url
+            )
+
+            for prefix in service.VIDEO_STATUS_PREFIXES:
+                alias_body, alias_mode = service.normalize_video_status_response(
+                    prefix + "/task_public",
+                    "application/json",
+                    historical_body,
+                )
+                alias_payload = json.loads(alias_body)
+                self.assertEqual(
+                    alias_mode, "video-status-normalized", prefix
+                )
+                self.assertEqual(alias_payload["id"], "task_public", prefix)
+                self.assertEqual(alias_payload["url"], historical_url, prefix)
+                self.assertEqual(
+                    alias_payload["content"]["video_url"],
+                    historical_url,
+                    prefix,
+                )
 
             stop_fallback_request = urllib.request.Request(
                 f"http://127.0.0.1:{compat.server_port}/videos/generations",

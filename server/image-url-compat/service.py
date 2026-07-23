@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from email import policy
@@ -501,6 +502,118 @@ def video_status_target(path):
     return None
 
 
+def video_task_id_from_path(path):
+    route = path.split("?", 1)[0]
+    for prefix in sorted(VIDEO_STATUS_PREFIXES, key=len, reverse=True):
+        marker = prefix + "/"
+        if not route.startswith(marker):
+            continue
+        task_id = route[len(marker) :]
+        if task_id and "/" not in task_id:
+            return task_id
+    return ""
+
+
+def public_video_content_url(task_id):
+    if not task_id:
+        return ""
+    return (
+        PUBLIC_BASE_URL.rstrip("/")
+        + "/v1/videos/"
+        + urllib.parse.quote(task_id, safe="")
+        + "/content"
+    )
+
+
+def normalize_video_create_response(content_type, response_body):
+    if "application/json" not in content_type.lower():
+        return response_body, "video-create"
+    try:
+        payload = json.loads(response_body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return response_body, "video-create"
+    if not isinstance(payload, dict):
+        return response_body, "video-create"
+    public_task_id = str(payload.get("id") or payload.get("task_id") or "").strip()
+    if not public_task_id:
+        return response_body, "video-create"
+    provider_task_id = str(payload.get("task_id") or "").strip()
+    if provider_task_id and provider_task_id != public_task_id:
+        payload.setdefault("provider_task_id", provider_task_id)
+    payload["id"] = public_task_id
+    payload["task_id"] = public_task_id
+    return json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8"), "video-create-normalized"
+
+
+def normalize_video_status_response(path, content_type, response_body):
+    if "application/json" not in content_type.lower():
+        return response_body, "video-status"
+    try:
+        payload = json.loads(response_body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return response_body, "video-status"
+    if not isinstance(payload, dict):
+        return response_body, "video-status"
+
+    path_task_id = video_task_id_from_path(path)
+    payload_task_id = str(payload.get("id") or "").strip()
+    public_task_id = str(path_task_id or payload_task_id).strip()
+    provider_task_id = str(payload.get("task_id") or "").strip()
+    if not provider_task_id and payload_task_id != public_task_id:
+        provider_task_id = payload_task_id
+    if provider_task_id and provider_task_id != public_task_id:
+        payload.setdefault("provider_task_id", provider_task_id)
+    if public_task_id:
+        payload["id"] = public_task_id
+        payload["task_id"] = public_task_id
+
+    status = str(payload.get("status") or "").strip().lower()
+    if status not in {"completed", "succeeded", "success", "done"}:
+        return json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8"), "video-status-normalized"
+
+    content_url = public_video_content_url(public_task_id)
+    if not content_url:
+        return response_body, "video-status"
+
+    metadata = payload.get("metadata")
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    metadata["url"] = content_url
+    metadata["video_url"] = content_url
+    payload["metadata"] = metadata
+    payload["url"] = content_url
+    payload["video_url"] = content_url
+    payload["content_url"] = content_url
+
+    content = payload.get("content")
+    content = dict(content) if isinstance(content, dict) else {}
+    content["url"] = content_url
+    content["video_url"] = content_url
+    payload["content"] = content
+
+    data = payload.get("data")
+    data = dict(data) if isinstance(data, dict) else {}
+    data["id"] = public_task_id
+    data["task_id"] = public_task_id
+    data["status"] = payload.get("status")
+    data["url"] = content_url
+    data["video_url"] = content_url
+    payload["data"] = data
+
+    result = payload.get("result")
+    result = dict(result) if isinstance(result, dict) else {}
+    result["url"] = content_url
+    result["video_url"] = content_url
+    payload["result"] = result
+
+    return json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8"), "video-status-normalized"
+
+
 def decode_base64_image(value):
     try:
         return base64.b64decode(value, validate=True)
@@ -682,7 +795,7 @@ def transform_image_response(request_json, content_type, response_body):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ImageURLCompat/6.0"
+    server_version = "ImageURLCompat/6.1"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -723,7 +836,7 @@ class Handler(BaseHTTPRequestHandler):
     def forward_response(self, status, response_headers, response_body, mode):
         self.send_response(status)
         for key, value in response_headers.items():
-            if key.lower() not in HOP_HEADERS:
+            if key.lower() not in HOP_HEADERS and key.lower() != "content-length":
                 self.send_header(key, value)
         self.send_header("Content-Length", str(len(response_body)))
         self.send_header("X-Image-URL-Compat", mode)
@@ -763,8 +876,15 @@ class Handler(BaseHTTPRequestHandler):
                     "GET", headers=self.upstream_headers(), path=status_target
                 )
                 client_status = 502 if status in {404, 405} else status
+                mode = "video-status"
+                if 200 <= status < 300:
+                    response_body, mode = normalize_video_status_response(
+                        self.path,
+                        response_headers.get("Content-Type", ""),
+                        response_body,
+                    )
                 self.forward_response(
-                    client_status, response_headers, response_body, "video-status"
+                    client_status, response_headers, response_body, mode
                 )
             except Exception:
                 LOG.exception("upstream video status request failed")
@@ -827,8 +947,13 @@ class Handler(BaseHTTPRequestHandler):
                     ),
                 )
                 client_status = 502 if status in {404, 405} else status
+                mode = "video-create"
+                if 200 <= status < 300:
+                    response_body, mode = normalize_video_create_response(
+                        response_headers.get("Content-Type", ""), response_body
+                    )
                 self.forward_response(
-                    client_status, response_headers, response_body, "video-create"
+                    client_status, response_headers, response_body, mode
                 )
             except Exception:
                 LOG.exception("upstream video create request failed")

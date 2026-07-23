@@ -1,12 +1,12 @@
 diff --git a/constant/task.go b/constant/task.go
-index ecccf4d..f8337b0 100644
+index ecccf4d..6d3d3ad 100644
 --- a/constant/task.go
 +++ b/constant/task.go
 @@ -5,6 +5,7 @@ type TaskPlatform string
  const (
  	TaskPlatformSuno       TaskPlatform = "suno"
  	TaskPlatformMidjourney              = "mj"
-+	TaskPlatformApiOkSeedance           = "apiok-seedance"
++	TaskPlatformApiOkSeedance TaskPlatform = "apiok-seedance"
  )
  
  const (

@@ -831,6 +831,47 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         LOG.info("%s %s", self.address_string(), fmt % args)
 
+    def send_cors_headers(self, preflight=False):
+        origin = self.headers.get("Origin", "").strip()
+        self.send_header("Access-Control-Allow-Origin", origin or "*")
+        if origin:
+            self.send_header("Access-Control-Allow-Credentials", "true")
+
+        requested_headers = self.headers.get(
+            "Access-Control-Request-Headers", ""
+        )
+        allowed_headers = {
+            "authorization": "Authorization",
+            "content-type": "Content-Type",
+            "x-api-key": "X-API-Key",
+            "anthropic-version": "Anthropic-Version",
+            "x-goog-api-key": "X-Goog-Api-Key",
+        }
+        for header in requested_headers.split(","):
+            header = header.strip()
+            if header:
+                allowed_headers.setdefault(header.lower(), header)
+
+        self.send_header(
+            "Access-Control-Allow-Headers", ", ".join(allowed_headers.values())
+        )
+        self.send_header(
+            "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"
+        )
+        self.send_header(
+            "Access-Control-Expose-Headers",
+            "Content-Type, Content-Length, X-Oneapi-Request-Id, "
+            "X-Image-URL-Compat, X-Mad-Compat",
+        )
+        self.send_header(
+            "Vary",
+            "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+            if preflight
+            else "Origin",
+        )
+        if preflight:
+            self.send_header("Access-Control-Max-Age", "600")
+
     def handle_one_request(self):
         try:
             super().handle_one_request()
@@ -845,6 +886,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Connection", "close")
+        self.send_cors_headers()
         self.end_headers()
         self.wfile.write(raw)
 
@@ -866,11 +908,16 @@ class Handler(BaseHTTPRequestHandler):
     def forward_response(self, status, response_headers, response_body, mode):
         self.send_response(status)
         for key, value in response_headers.items():
-            if key.lower() not in HOP_HEADERS and key.lower() != "content-length":
+            if (
+                key.lower() not in HOP_HEADERS
+                and key.lower() not in {"content-length", "vary"}
+                and not key.lower().startswith("access-control-")
+            ):
                 self.send_header(key, value)
         self.send_header("Content-Length", str(len(response_body)))
         self.send_header("X-Image-URL-Compat", mode)
         self.send_header("X-Mad-Compat", mode)
+        self.send_cors_headers()
         self.end_headers()
         try:
             self.wfile.write(response_body)
@@ -925,23 +972,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         route = self.path.split("?", 1)[0]
-        target = self.path
-        if route in VIDEO_CREATE_PATHS:
-            target = "/pg/videos" if route == "/pg/videos" else "/v1/video/generations"
-        elif route in IMAGE_PATHS:
-            target = canonical_image_path(self.path)
-        else:
-            status_target = video_status_target(self.path)
-            if status_target:
-                target = status_target
-        try:
-            status, response_headers, response_body = self.request_upstream(
-                "OPTIONS", headers=self.upstream_headers(), path=target
-            )
-            self.forward_response(status, response_headers, response_body, "passthrough")
-        except Exception:
-            LOG.exception("upstream OPTIONS request failed")
-            self.send_json_error(502, "upstream request failed")
+        if (
+            route not in VIDEO_CREATE_PATHS
+            and route not in IMAGE_PATHS
+            and not video_status_target(self.path)
+        ):
+            self.send_json_error(404, "not found")
+            return
+
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.send_header("X-Image-URL-Compat", "preflight")
+        self.send_header("X-Mad-Compat", "preflight")
+        self.send_cors_headers(preflight=True)
+        self.end_headers()
 
     def do_POST(self):
         route = self.path.split("?", 1)[0]

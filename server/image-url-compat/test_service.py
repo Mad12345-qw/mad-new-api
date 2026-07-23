@@ -720,11 +720,52 @@ class ImageURLCompatTest(unittest.TestCase):
             self.assertIn("url", playground_payload["data"][0])
             self.assertNotIn("b64_json", playground_payload["data"][0])
 
-            options = urllib.request.Request(endpoint, method="OPTIONS")
+            options = urllib.request.Request(
+                endpoint,
+                headers={
+                    "Origin": "https://canvas.best",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "authorization,content-type",
+                },
+                method="OPTIONS",
+            )
             with urllib.request.urlopen(options) as response:
                 self.assertEqual(response.status, 204)
-                self.assertEqual(response.headers["Access-Control-Allow-Origin"], "*")
-            self.assertEqual(MockUpstreamHandler.last_path, "/pg/images/generations")
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Origin"],
+                    "https://canvas.best",
+                )
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Credentials"], "true"
+                )
+                allowed_headers = response.headers["Access-Control-Allow-Headers"]
+                self.assertIn("Authorization", allowed_headers)
+                self.assertIn("Content-Type", allowed_headers)
+                self.assertEqual(response.headers["X-Mad-Compat"], "preflight")
+
+            cors_post = urllib.request.Request(
+                endpoint,
+                data=json.dumps(
+                    {
+                        "model": "gpt-image-2-4k",
+                        "prompt": "cors test",
+                        "response_format": "url",
+                    }
+                ).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": "https://canvas.best",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(cors_post) as response:
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Origin"],
+                    "https://canvas.best",
+                )
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Credentials"], "true"
+                )
 
             video_options = urllib.request.Request(
                 f"http://127.0.0.1:{compat.server_port}/v1/contents/generations/tasks",
@@ -732,7 +773,7 @@ class ImageURLCompatTest(unittest.TestCase):
             )
             with urllib.request.urlopen(video_options) as response:
                 self.assertEqual(response.status, 204)
-            self.assertEqual(MockUpstreamHandler.last_path, "/v1/video/generations")
+                self.assertEqual(response.headers["X-Mad-Compat"], "preflight")
         finally:
             compat.shutdown()
             compat.server_close()

@@ -279,11 +279,13 @@ index 0000000000000000000000000000000000000000..3ccc0262ac0f76b72f816346487762cf
 +        />
 +      )}
 +      <div className='flex justify-end'>
-+        <Button asChild size='sm' className='gap-1.5'>
-+          <a href={downloadUrl} download>
-+            <Download className='size-4' />
-+            {t('Download video')}
-+          </a>
++        <Button
++          size='sm'
++          className='gap-1.5'
++          render={<a href={downloadUrl} download />}
++        >
++          <Download className='size-4' />
++          {t('Download video')}
 +        </Button>
 +      </div>
 +    </Dialog>

@@ -1,0 +1,57 @@
+diff --git a/relay/channel/task/sora/adaptor.go b/relay/channel/task/sora/adaptor.go
+index 54c68cd..7b213d0 100644
+--- a/relay/channel/task/sora/adaptor.go
++++ b/relay/channel/task/sora/adaptor.go
+@@ -375,6 +375,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
+ 		taskResult.Status = model.TaskStatusQueued
+ 	case "processing", "in_progress":
+ 		taskResult.Status = model.TaskStatusInProgress
++	case "unknown":
++		if IsApiOkSeedanceModel(resTask.Model) &&
++			(resTask.ID != "" || resTask.TaskID != "" || resTask.RequestID != "") {
++			taskResult.Status = model.TaskStatusQueued
++		}
+ 	case "completed":
+ 		taskResult.Status = model.TaskStatusSuccess
+ 		taskResult.Url = resTask.VideoURL
+diff --git a/relay/channel/task/sora/adaptor_test.go b/relay/channel/task/sora/adaptor_test.go
+index 3288aea..422c919 100644
+--- a/relay/channel/task/sora/adaptor_test.go
++++ b/relay/channel/task/sora/adaptor_test.go
+@@ -35,6 +35,21 @@ func TestParseTaskResultKeepsCompletedVideoURL(t *testing.T) {
+ 	require.Equal(t, "https://cdn.example.com/output.mp4", result.Url)
+ }
+ 
++func TestParseTaskResultKeepsApiOkUnknownTaskQueued(t *testing.T) {
++	adaptor := &TaskAdaptor{}
++
++	result, err := adaptor.ParseTaskResult([]byte(`{
++		"id":"task_uNh4k93xSiVAGEtAspAPFEzdj8ZjS6jZ",
++		"model":"doubao-seedance-2.0-cf-1080p",
++		"status":"unknown",
++		"progress":0
++	}`))
++
++	require.NoError(t, err)
++	require.NotNil(t, result)
++	require.Equal(t, model.TaskStatusQueued, result.Status)
++}
++
+ func TestIsApiOkSeedanceModel(t *testing.T) {
+ 	require.True(t, IsApiOkSeedanceModel("seedance-2.0"))
+ 	require.True(t, IsApiOkSeedanceModel("DOUBAO-SEEDANCE-2.0-CF-1080P"))
+diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
+index 57b1f26..9ca4b02 100644
+--- a/web/default/src/features/playground/hooks/use-chat-handler.ts
++++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
+@@ -655,9 +655,7 @@ export function useChatHandler({
+               return
+             }
+             if (
+-              ['failed', 'failure', 'cancelled', 'canceled', 'unknown'].includes(
+-                status
+-              ) ||
++              ['failed', 'failure', 'cancelled', 'canceled'].includes(status) ||
+               task.error
+             ) {
+               throw new Error(getVideoTaskErrorMessage(task))

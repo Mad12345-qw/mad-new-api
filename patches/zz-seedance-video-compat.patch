@@ -1,0 +1,470 @@
+diff --git a/constant/task.go b/constant/task.go
+index ecccf4d..f8337b0 100644
+--- a/constant/task.go
++++ b/constant/task.go
+@@ -5,6 +5,7 @@ type TaskPlatform string
+ const (
+ 	TaskPlatformSuno       TaskPlatform = "suno"
+ 	TaskPlatformMidjourney              = "mj"
++	TaskPlatformApiOkSeedance           = "apiok-seedance"
+ )
+ 
+ const (
+diff --git a/controller/video_proxy.go b/controller/video_proxy.go
+index b3ba3c2..ec8b93e 100644
+--- a/controller/video_proxy.go
++++ b/controller/video_proxy.go
+@@ -90,35 +90,41 @@ func VideoProxy(c *gin.Context) {
+ 		return
+ 	}
+ 
+-	switch channel.Type {
+-	case constant.ChannelTypeGemini:
+-		apiKey := task.PrivateData.Key
+-		if apiKey == "" {
+-			logger.LogError(c.Request.Context(), fmt.Sprintf("Missing stored API key for Gemini task %s", taskID))
+-			videoProxyError(c, http.StatusInternalServerError, "server_error", "API key not stored for task")
+-			return
+-		}
+-		videoURL, err = getGeminiVideoURL(channel, task, apiKey)
+-		if err != nil {
+-			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Gemini video URL for task %s: %s", taskID, err.Error()))
+-			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Gemini video URL")
+-			return
+-		}
+-		req.Header.Set("x-goog-api-key", apiKey)
+-	case constant.ChannelTypeVertexAi:
+-		videoURL, err = getVertexVideoURL(channel, task)
+-		if err != nil {
+-			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Vertex video URL for task %s: %s", taskID, err.Error()))
+-			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Vertex video URL")
+-			return
+-		}
+-	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
++	if task.Platform == constant.TaskPlatformApiOkSeedance {
+ 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+ 		req.Header.Set("Authorization", "Bearer "+channel.Key)
+ 		resolveJSONContent = true
+-	default:
+-		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
+-		videoURL = task.GetResultURL()
++	} else {
++		switch channel.Type {
++		case constant.ChannelTypeGemini:
++			apiKey := task.PrivateData.Key
++			if apiKey == "" {
++				logger.LogError(c.Request.Context(), fmt.Sprintf("Missing stored API key for Gemini task %s", taskID))
++				videoProxyError(c, http.StatusInternalServerError, "server_error", "API key not stored for task")
++				return
++			}
++			videoURL, err = getGeminiVideoURL(channel, task, apiKey)
++			if err != nil {
++				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Gemini video URL for task %s: %s", taskID, err.Error()))
++				videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Gemini video URL")
++				return
++			}
++			req.Header.Set("x-goog-api-key", apiKey)
++		case constant.ChannelTypeVertexAi:
++			videoURL, err = getVertexVideoURL(channel, task)
++			if err != nil {
++				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Vertex video URL for task %s: %s", taskID, err.Error()))
++				videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Vertex video URL")
++				return
++			}
++		case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
++			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
++			req.Header.Set("Authorization", "Bearer "+channel.Key)
++			resolveJSONContent = true
++		default:
++			// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
++			videoURL = task.GetResultURL()
++		}
+ 	}
+ 
+ 	videoURL = strings.TrimSpace(videoURL)
+diff --git a/relay/channel/task/sora/adaptor.go b/relay/channel/task/sora/adaptor.go
+index ea11b33..d281ae4 100644
+--- a/relay/channel/task/sora/adaptor.go
++++ b/relay/channel/task/sora/adaptor.go
+@@ -51,6 +51,7 @@ type responseTask struct {
+ 	ExpiresAt          int64  `json:"expires_at,omitempty"`
+ 	Seconds            string `json:"seconds,omitempty"`
+ 	Size               string `json:"size,omitempty"`
++	VideoURL           string `json:"video_url,omitempty"`
+ 	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
+ 	Error              *struct {
+ 		Message string `json:"message"`
+@@ -67,6 +68,7 @@ type TaskAdaptor struct {
+ 	ChannelType int
+ 	apiKey      string
+ 	baseURL     string
++	FixedPrice  bool
+ }
+ 
+ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+@@ -97,6 +99,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
+ 
+ // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
+ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
++	if a.FixedPrice {
++		return nil
++	}
++
+ 	// remix 路径的 OtherRatios 已在 ResolveOriginTask 中设置
+ 	if info.Action == constant.TaskActionRemix {
+ 		return nil
+@@ -130,6 +136,18 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
+ 	return ratios
+ }
+ 
++func IsApiOkSeedanceModel(model string) bool {
++	switch strings.ToLower(strings.TrimSpace(model)) {
++	case "seedance-2.0",
++		"seedance-2.0-fast",
++		"doubao-seedance-2.0-720p",
++		"doubao-seedance-2.0-cf-1080p":
++		return true
++	default:
++		return false
++	}
++}
++
+ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+ 	if info.Action == constant.TaskActionRemix {
+ 		return fmt.Sprintf("%s/v1/videos/%s/remix", a.baseURL, info.OriginTaskID), nil
+@@ -308,7 +326,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
+ 		taskResult.Status = model.TaskStatusInProgress
+ 	case "completed":
+ 		taskResult.Status = model.TaskStatusSuccess
+-		// Url intentionally left empty — the caller constructs the proxy URL using the public task ID
++		taskResult.Url = resTask.VideoURL
+ 	case "failed", "cancelled":
+ 		taskResult.Status = model.TaskStatusFailure
+ 		if resTask.Error != nil {
+diff --git a/relay/channel/task/sora/adaptor_test.go b/relay/channel/task/sora/adaptor_test.go
+index 25df51e..501cbb6 100644
+--- a/relay/channel/task/sora/adaptor_test.go
++++ b/relay/channel/task/sora/adaptor_test.go
+@@ -19,3 +19,24 @@ func TestParseTaskResultTreatsRequestIDAsQueued(t *testing.T) {
+ 	require.NotNil(t, result)
+ 	require.Equal(t, model.TaskStatusQueued, result.Status)
+ }
++
++func TestParseTaskResultKeepsCompletedVideoURL(t *testing.T) {
++	adaptor := &TaskAdaptor{}
++
++	result, err := adaptor.ParseTaskResult([]byte(`{
++		"id":"video_42",
++		"status":"completed",
++		"video_url":"https://cdn.example.com/output.mp4"
++	}`))
++
++	require.NoError(t, err)
++	require.NotNil(t, result)
++	require.Equal(t, model.TaskStatusSuccess, result.Status)
++	require.Equal(t, "https://cdn.example.com/output.mp4", result.Url)
++}
++
++func TestIsApiOkSeedanceModel(t *testing.T) {
++	require.True(t, IsApiOkSeedanceModel("seedance-2.0"))
++	require.True(t, IsApiOkSeedanceModel("DOUBAO-SEEDANCE-2.0-CF-1080P"))
++	require.False(t, IsApiOkSeedanceModel("doubao-seedance-2-0-260128"))
++}
+diff --git a/relay/relay_adaptor.go b/relay/relay_adaptor.go
+index 2922744..90c9fee 100644
+--- a/relay/relay_adaptor.go
++++ b/relay/relay_adaptor.go
+@@ -135,12 +135,21 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
+ 	return constant.TaskPlatform(c.GetString("platform"))
+ }
+ 
++func GetTaskPlatformForModel(platform constant.TaskPlatform, model string) constant.TaskPlatform {
++	if tasksora.IsApiOkSeedanceModel(model) {
++		return constant.TaskPlatformApiOkSeedance
++	}
++	return platform
++}
++
+ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+ 	switch platform {
+ 	//case constant.APITypeAIProxyLibrary:
+ 	//	return &aiproxy.Adaptor{}
+ 	case constant.TaskPlatformSuno:
+ 		return &suno.TaskAdaptor{}
++	case constant.TaskPlatformApiOkSeedance:
++		return &tasksora.TaskAdaptor{FixedPrice: true}
+ 	}
+ 	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
+ 		switch channelType {
+diff --git a/relay/relay_adaptor_test.go b/relay/relay_adaptor_test.go
+new file mode 100644
+index 0000000..90ed004
+--- /dev/null
++++ b/relay/relay_adaptor_test.go
+@@ -0,0 +1,46 @@
++package relay
++
++import (
++	"testing"
++
++	"github.com/QuantumNous/new-api/constant"
++	"github.com/QuantumNous/new-api/relay/channel/task/sora"
++	"github.com/stretchr/testify/require"
++)
++
++func TestGetTaskPlatformForApiOkSeedanceModels(t *testing.T) {
++	models := []string{
++		"seedance-2.0",
++		"seedance-2.0-fast",
++		"doubao-seedance-2.0-720p",
++		"doubao-seedance-2.0-cf-1080p",
++	}
++
++	for _, model := range models {
++		t.Run(model, func(t *testing.T) {
++			platform := GetTaskPlatformForModel(
++				constant.TaskPlatform("54"),
++				model,
++			)
++			require.Equal(t, constant.TaskPlatformApiOkSeedance, platform)
++		})
++	}
++}
++
++func TestGetApiOkSeedanceTaskAdaptor(t *testing.T) {
++	adaptor := GetTaskAdaptor(constant.TaskPlatformApiOkSeedance)
++	require.NotNil(t, adaptor)
++
++	soraAdaptor, ok := adaptor.(*sora.TaskAdaptor)
++	require.True(t, ok)
++	require.True(t, soraAdaptor.FixedPrice)
++}
++
++func TestGetTaskPlatformForOtherModelKeepsChannelPlatform(t *testing.T) {
++	platform := constant.TaskPlatform("54")
++	require.Equal(
++		t,
++		platform,
++		GetTaskPlatformForModel(platform, "doubao-seedance-2-0-260128"),
++	)
++}
+diff --git a/relay/relay_task.go b/relay/relay_task.go
+index 84e6e37..cc99487 100644
+--- a/relay/relay_task.go
++++ b/relay/relay_task.go
+@@ -182,6 +182,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
+ 	if platform == "" {
+ 		platform = GetTaskPlatform(c)
+ 	}
++	platform = GetTaskPlatformForModel(platform, info.OriginModelName)
+ 	adaptor := GetTaskAdaptor(platform)
+ 	if adaptor == nil {
+ 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
+diff --git a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
+index d4e4403..1d7fb85 100644
+--- a/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
++++ b/web/default/src/features/playground/components/input/playground-parameter-panel.tsx
+@@ -197,10 +197,16 @@ function PlaygroundParameterContent({
+                 }
+                 value={config.videoSize}
+               >
+-                <option value="1280x720">1280x720 (16:9)</option>
+-                <option value="720x1280">720x1280 (9:16)</option>
+-                <option value="1920x1080">1920x1080 (16:9)</option>
+-                <option value="1080x1920">1080x1920 (9:16)</option>
++                {(modelProfile.videoSizes ?? [
++                  { value: "1280x720", label: "1280x720 (16:9)" },
++                  { value: "720x1280", label: "720x1280 (9:16)" },
++                  { value: "1920x1080", label: "1920x1080 (16:9)" },
++                  { value: "1080x1920", label: "1080x1920 (9:16)" },
++                ]).map((option) => (
++                  <option key={option.value} value={option.value}>
++                    {t(option.label)}
++                  </option>
++                ))}
+               </select>
+             </label>
+           </>
+diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
+index b0a1112..94ffd90 100644
+--- a/web/default/src/features/playground/hooks/use-chat-handler.ts
++++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
+@@ -43,10 +43,13 @@ import {
+   dataUrlToBlob,
+   getMessageContent,
+   getPlaygroundModelKind,
++  getVideoAspectRatio,
+   isGrokImagineVideo15Model,
+   isGrokImagineVideoModel,
+   isGptImage2Model,
+   isGeminiImageModel,
++  isSeedanceCf1080pModel,
++  isSeedanceVideoModel,
+   updateCurrentVersionContent,
+ } from '../lib'
+ import type {
+@@ -547,7 +550,31 @@ export function useChatHandler({
+ 
+         if (modelKind === 'video') {
+           let payload: FormData | Record<string, unknown>
+-          if (isGrokImagineVideo15Model(config.model)) {
++          if (isSeedanceVideoModel(config.model)) {
++            const duration = Math.max(4, Math.min(15, config.videoSeconds))
++            const imageAttachments = attachments.filter(
++              (attachment) => attachment.kind === 'image'
++            )
++            payload = {
++              model: config.model,
++              group: config.group,
++              prompt,
++              duration,
++              aspect_ratio: getVideoAspectRatio(config.videoSize),
++              audio: true,
++            }
++            if (!isSeedanceCf1080pModel(config.model)) {
++              payload.resolution = '720p'
++            }
++            if (imageAttachments[0]) {
++              payload.image_url = imageAttachments[0].dataUrl
++            }
++            if (imageAttachments.length > 1) {
++              payload.reference_image_urls = imageAttachments
++                .slice(1, 4)
++                .map((attachment) => attachment.dataUrl)
++            }
++          } else if (isGrokImagineVideo15Model(config.model)) {
+             if (!imageAttachment) {
+               throw new Error(
+                 t('Grok Imagine Video 1.5 requires an uploaded image')
+diff --git a/web/default/src/features/playground/index.tsx b/web/default/src/features/playground/index.tsx
+index 91f413c..354eec5 100644
+--- a/web/default/src/features/playground/index.tsx
++++ b/web/default/src/features/playground/index.tsx
+@@ -95,6 +95,12 @@ export function Playground() {
+     if (profile.defaultTtsFormat) {
+       updateConfig("ttsFormat", profile.defaultTtsFormat);
+     }
++    if (profile.defaultVideoSeconds) {
++      updateConfig("videoSeconds", profile.defaultVideoSeconds);
++    }
++    if (profile.defaultVideoSize) {
++      updateConfig("videoSize", profile.defaultVideoSize);
++    }
+   }, [config.model, updateConfig]);
+ 
+   const handleModelChange = (value: string) => {
+diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
+index 46474f0..86057d9 100644
+--- a/web/default/src/features/playground/lib/model/model-profiles.ts
++++ b/web/default/src/features/playground/lib/model/model-profiles.ts
+@@ -24,6 +24,9 @@ export type PlaygroundModelProfile = {
+   ttsVoicePlaceholder?: string;
+   videoDurationMax?: number;
+   videoDurationMin?: number;
++  videoSizes?: PlaygroundSelectOption[];
++  defaultVideoSeconds?: number;
++  defaultVideoSize?: string;
+ };
+ 
+ export const MOSS_TTS_DEFAULT_VOICE_ID = "86a2ab25-a94b-4feb-af3b-c853629f067f";
+@@ -58,6 +61,24 @@ const STANDARD_TTS_FORMATS: PlaygroundSelectOption[] = [
+   { value: "flac", label: "FLAC" },
+ ];
+ 
++const SEEDANCE_720P_SIZES: PlaygroundSelectOption[] = [
++  { value: "1280x720", label: "16:9 | HD 720p" },
++  { value: "720x1280", label: "9:16 | HD 720p" },
++  { value: "720x720", label: "1:1 | HD 720p" },
++  { value: "1680x720", label: "21:9 | HD 720p" },
++  { value: "720x960", label: "3:4 | HD 720p" },
++  { value: "960x720", label: "4:3 | HD 720p" },
++];
++
++const SEEDANCE_CF_1080P_SIZES: PlaygroundSelectOption[] = [
++  { value: "1920x1080", label: "16:9 | CF 1080p" },
++  { value: "1080x1920", label: "9:16 | CF 1080p" },
++  { value: "1080x1080", label: "1:1 | CF 1080p" },
++  { value: "2520x1080", label: "21:9 | CF 1080p" },
++  { value: "1080x1440", label: "3:4 | CF 1080p" },
++  { value: "1440x1080", label: "4:3 | CF 1080p" },
++];
++
+ export function isMossTtsModel(model: string): boolean {
+   return /(?:^|[-_.])(moss[-_.]?tts|speechify[-_.]?tts)(?:$|[-_.])/i.test(
+     model,
+@@ -94,6 +115,42 @@ export function isGrokImagineVideoModel(model: string): boolean {
+   );
+ }
+ 
++export function isSeedanceVideoModel(model: string): boolean {
++  switch (model.trim().toLowerCase()) {
++    case "seedance-2.0":
++    case "seedance-2.0-fast":
++    case "doubao-seedance-2.0-720p":
++    case "doubao-seedance-2.0-cf-1080p":
++      return true;
++    default:
++      return false;
++  }
++}
++
++export function isSeedanceCf1080pModel(model: string): boolean {
++  return model.trim().toLowerCase() === "doubao-seedance-2.0-cf-1080p";
++}
++
++export function getVideoAspectRatio(size: string): string {
++  const [width, height] = size.split("x").map(Number);
++  if (!width || !height) return "16:9";
++
++  const ratio = width / height;
++  const supported = [
++    { value: "21:9", ratio: 21 / 9 },
++    { value: "16:9", ratio: 16 / 9 },
++    { value: "4:3", ratio: 4 / 3 },
++    { value: "1:1", ratio: 1 },
++    { value: "3:4", ratio: 3 / 4 },
++    { value: "9:16", ratio: 9 / 16 },
++  ];
++  return supported.reduce((closest, candidate) =>
++    Math.abs(candidate.ratio - ratio) < Math.abs(closest.ratio - ratio)
++      ? candidate
++      : closest,
++  ).value;
++}
++
+ export function getPlaygroundModelProfile(
+   model: string,
+ ): PlaygroundModelProfile {
+@@ -213,6 +270,32 @@ export function getPlaygroundModelProfile(
+     };
+   }
+ 
++  if (isSeedanceVideoModel(model)) {
++    const cf1080p = isSeedanceCf1080pModel(model);
++    return {
++      badge: "Seedance Video",
++      description: cf1080p
++        ? "Seedance 2.0 CF uses the provider's fixed 1080p output and supports 4-15 second text or image-to-video requests."
++        : "Seedance 2.0 generates HD 720p video from text or up to four reference images, with a supported duration of 4-15 seconds.",
++      endpoint: "/v1/videos",
++      kind,
++      requestHints: [
++        { label: "model", value: model },
++        { label: "duration", value: "4-15 seconds" },
++        { label: "aspect_ratio", value: "Selected ratio" },
++        {
++          label: "resolution",
++          value: cf1080p ? "CF 1080p (fixed)" : "720p",
++        },
++      ],
++      videoDurationMax: 15,
++      videoDurationMin: 4,
++      videoSizes: cf1080p ? SEEDANCE_CF_1080P_SIZES : SEEDANCE_720P_SIZES,
++      defaultVideoSeconds: 4,
++      defaultVideoSize: cf1080p ? "1920x1080" : "1280x720",
++    };
++  }
++
+   if (kind === "video") {
+     return {
+       badge: "Video",

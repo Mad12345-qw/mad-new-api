@@ -20,6 +20,7 @@ PNG_B64 = base64.b64encode(PNG_BYTES).decode("ascii")
 
 class MockUpstreamHandler(BaseHTTPRequestHandler):
     last_request = None
+    last_path = None
 
     def log_message(self, _fmt, *_args):
         return
@@ -46,6 +47,28 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         type(self).last_request = json.loads(self.rfile.read(length))
+        type(self).last_path = self.path
+        if self.path.endswith("/chat/completions"):
+            body = json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    "Image generated\n"
+                                    f"![image](data:image/png;base64,{PNG_B64})"
+                                )
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if type(self).last_request.get("response_format") == "url":
             item = {
                 "url": f"http://127.0.0.1:{self.server.server_port}/generated.png"
@@ -66,6 +89,7 @@ class ImageURLCompatTest(unittest.TestCase):
         service.CACHE_DIR = Path(self.temp_dir.name)
         service.PUBLIC_BASE_URL = "https://mad.example"
         MockUpstreamHandler.last_request = None
+        MockUpstreamHandler.last_path = None
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -133,6 +157,54 @@ class ImageURLCompatTest(unittest.TestCase):
         self.assertEqual(request_json["model"], "other-image")
         self.assertEqual(upstream_body, original)
 
+    def test_gemini_image_request_uses_chat_completions(self):
+        original = json.dumps(
+            {
+                "model": "gemini-3-pro-image-preview",
+                "prompt": "golden city",
+                "size": "2048x1536",
+                "aspect_ratio": "4:3",
+                "response_format": "b64_json",
+                "group": "vip",
+            }
+        ).encode("utf-8")
+        request_json, path, upstream_body = service.prepare_upstream_request(
+            "/v1/images/generations", original
+        )
+        payload = json.loads(upstream_body)
+        self.assertEqual(request_json["model"], "gemini-3-pro-image-preview")
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(payload["messages"][0]["content"], "golden city")
+        self.assertEqual(payload["group"], "vip")
+        self.assertEqual(
+            payload["extra_body"]["google"]["image_config"],
+            {"image_size": "2K", "aspect_ratio": "4:3"},
+        )
+
+    def test_gemini_chat_response_becomes_image_response(self):
+        chat_body = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": f"![image](data:image/png;base64,{PNG_B64})"
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        body, mode = service.transform_image_response(
+            {
+                "model": "gemini-3.1-flash-image-preview",
+                "response_format": "b64_json",
+            },
+            "application/json",
+            chat_body,
+        )
+        payload = json.loads(body)
+        self.assertEqual(mode, "gemini-b64_json")
+        self.assertEqual(payload["data"][0]["b64_json"], PNG_B64)
+
     def test_http_handler_downloads_4k_url_and_supports_both_formats(self):
         upstream = ThreadingHTTPServer(("127.0.0.1", 0), MockUpstreamHandler)
         upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
@@ -188,6 +260,33 @@ class ImageURLCompatTest(unittest.TestCase):
             )
             self.assertEqual(base64_payload["data"][0]["b64_json"], PNG_B64)
             self.assertNotIn("url", base64_payload["data"][0])
+
+            gemini_request = urllib.request.Request(
+                base64_endpoint,
+                data=json.dumps(
+                    {
+                        "model": "gemini-3-pro-image-preview",
+                        "prompt": "test",
+                        "size": "4K",
+                        "response_format": "b64_json",
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(gemini_request) as response:
+                gemini_payload = json.load(response)
+                self.assertEqual(
+                    response.headers["X-Image-URL-Compat"], "gemini-b64_json"
+                )
+            self.assertEqual(MockUpstreamHandler.last_path, "/v1/chat/completions")
+            self.assertEqual(
+                MockUpstreamHandler.last_request["extra_body"]["google"][
+                    "image_config"
+                ]["image_size"],
+                "4K",
+            )
+            self.assertEqual(gemini_payload["data"][0]["b64_json"], PNG_B64)
 
             playground_base64_request = urllib.request.Request(
                 endpoint,

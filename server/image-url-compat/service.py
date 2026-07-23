@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 import signal
+import re
 import threading
 import time
 import urllib.error
@@ -40,6 +41,10 @@ HOP_HEADERS = {
     "content-encoding",
 }
 IMAGE2_MODELS = {"gpt-image-2", "gpt-image-2-4k"}
+GEMINI_IMAGE_MODELS = {
+    "gemini-3.1-flash-image-preview",
+    "gemini-3-pro-image-preview",
+}
 IMAGE_GENERATION_PATHS = {
     "/v1/images/generations",
     "/pg/images/generations",
@@ -52,6 +57,56 @@ def is_image2_model(model):
 
 def is_image2_4k_model(model):
     return isinstance(model, str) and model.strip().lower() == "gpt-image-2-4k"
+
+
+def is_gemini_image_model(model):
+    return isinstance(model, str) and model.strip().lower() in GEMINI_IMAGE_MODELS
+
+
+def gemini_image_size(request_json):
+    explicit = str(request_json.get("image_size") or "").strip().upper()
+    if explicit in {"1K", "2K", "4K"}:
+        return explicit
+    size = str(request_json.get("size") or "").strip().upper()
+    if size in {"1K", "2K", "4K"}:
+        return size
+    match = re.fullmatch(r"(\d{2,5})[Xx](\d{2,5})", size)
+    if not match:
+        return "1K"
+    longest = max(int(match.group(1)), int(match.group(2)))
+    if longest > 2048:
+        return "4K"
+    if longest > 1024:
+        return "2K"
+    return "1K"
+
+
+def gemini_chat_path(path):
+    route, separator, query = path.partition("?")
+    target = "/pg/chat/completions" if route.startswith("/pg/") else "/v1/chat/completions"
+    return target + (separator + query if separator else "")
+
+
+def build_gemini_chat_body(request_json):
+    image_config = {"image_size": gemini_image_size(request_json)}
+    aspect_ratio = str(request_json.get("aspect_ratio") or "").strip()
+    if aspect_ratio:
+        image_config["aspect_ratio"] = aspect_ratio
+    payload = {
+        "model": request_json.get("model"),
+        "messages": [
+            {
+                "role": "user",
+                "content": str(request_json.get("prompt") or "Generate an image"),
+            }
+        ],
+        "stream": False,
+        "extra_body": {"google": {"image_config": image_config}},
+    }
+    group = request_json.get("group")
+    if isinstance(group, str) and group.strip():
+        payload["group"] = group
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def image_extension(raw):
@@ -112,6 +167,15 @@ def prepare_upstream_body(body):
         upstream_json, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
     return request_json, upstream_body
+
+
+def prepare_upstream_request(path, body):
+    request_json, upstream_body = prepare_upstream_body(body)
+    if isinstance(request_json, dict) and is_gemini_image_model(
+        request_json.get("model")
+    ):
+        return request_json, gemini_chat_path(path), build_gemini_chat_body(request_json)
+    return request_json, path, upstream_body
 
 
 def decode_base64_image(value):
@@ -201,7 +265,70 @@ def normalize_images(payload, requested_format):
     return normalized
 
 
+def find_data_images(value):
+    found = []
+    if isinstance(value, str):
+        for match in re.finditer(
+            r"data:(image/[^;\s]+);base64,([A-Za-z0-9+/=]+)", value
+        ):
+            found.append((match.group(1), match.group(2)))
+        return found
+    if isinstance(value, list):
+        for item in value:
+            found.extend(find_data_images(item))
+        return found
+    if not isinstance(value, dict):
+        return found
+    inline = value.get("inline_data") or value.get("inlineData")
+    if isinstance(inline, dict) and isinstance(inline.get("data"), str):
+        found.append(
+            (
+                inline.get("mime_type") or inline.get("mimeType") or "image/png",
+                inline["data"],
+            )
+        )
+    image_url = value.get("image_url") or value.get("imageUrl")
+    if isinstance(image_url, dict):
+        found.extend(find_data_images(image_url.get("url")))
+    elif isinstance(image_url, str):
+        found.extend(find_data_images(image_url))
+    for key, item in value.items():
+        if key not in {"inline_data", "inlineData", "image_url", "imageUrl"}:
+            found.extend(find_data_images(item))
+    return found
+
+
+def transform_gemini_chat_response(request_json, response_body):
+    try:
+        payload = json.loads(response_body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return response_body, "passthrough"
+    images = find_data_images(payload.get("choices", []))
+    if not images:
+        LOG.warning("Gemini chat response did not contain image data")
+        return response_body, "passthrough"
+    data = []
+    for _mime_type, encoded in images:
+        raw = decode_base64_image(encoded)
+        if not image_extension(raw):
+            raise ValueError("unsupported Gemini image format")
+        data.append({"b64_json": base64.b64encode(raw).decode("ascii")})
+    image_payload = {"created": int(time.time()), "data": data}
+    requested_format = str(request_json.get("response_format") or "").lower()
+    normalize_images(image_payload, requested_format)
+    mode = requested_format if requested_format in {"url", "b64_json"} else "dual"
+    return json.dumps(
+        image_payload, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8"), "gemini-" + mode
+
+
 def transform_image_response(request_json, content_type, response_body):
+    if (
+        isinstance(request_json, dict)
+        and is_gemini_image_model(request_json.get("model"))
+        and "application/json" in content_type.lower()
+    ):
+        return transform_gemini_chat_response(request_json, response_body)
     if not (
         isinstance(request_json, dict)
         and is_image2_model(request_json.get("model"))
@@ -232,7 +359,7 @@ def transform_image_response(request_json, content_type, response_body):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ImageURLCompat/3.0"
+    server_version = "ImageURLCompat/4.0"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -271,9 +398,9 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             LOG.info("client disconnected before response completed")
 
-    def request_upstream(self, method, body=None, headers=None):
+    def request_upstream(self, method, body=None, headers=None, path=None):
         request = urllib.request.Request(
-            UPSTREAM + self.path,
+            UPSTREAM + (path or self.path),
             data=body,
             headers=headers or {},
             method=method,
@@ -319,12 +446,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         body = self.rfile.read(length)
-        request_json, upstream_body = prepare_upstream_body(body)
+        request_json, upstream_path, upstream_body = prepare_upstream_request(
+            self.path, body
+        )
         try:
             status, response_headers, response_body = self.request_upstream(
                 "POST",
                 body=upstream_body,
                 headers=self.upstream_headers(len(upstream_body)),
+                path=upstream_path,
             )
         except Exception:
             LOG.exception("upstream request failed")

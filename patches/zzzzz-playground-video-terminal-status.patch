@@ -1,0 +1,61 @@
+diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
+index 94ffd90..57b1f26 100644
+--- a/web/default/src/features/playground/hooks/use-chat-handler.ts
++++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
+@@ -59,6 +59,7 @@ import type {
+   PlaygroundMedia,
+   ContentPart,
+   PlaygroundAttachment,
++  VideoTaskResponse,
+ } from '../types'
+ import { useStreamRequest } from './use-stream-request'
+ 
+@@ -78,6 +79,20 @@ type PendingStreamChunks = {
+   reasoning: string
+ }
+ 
++function getVideoTaskErrorMessage(task: VideoTaskResponse): string {
++  if (task.fail_reason) return task.fail_reason
++  if (typeof task.error === 'string') return task.error
++  if (
++    task.error &&
++    typeof task.error === 'object' &&
++    'message' in task.error &&
++    typeof task.error.message === 'string'
++  ) {
++    return task.error.message
++  }
++  return 'Video generation failed'
++}
++
+ function getLastUserMessage(messages: Message[]): Message | undefined {
+   return [...messages].reverse().find((message) => message.from === 'user')
+ }
+@@ -639,8 +654,13 @@ export function useChatHandler({
+               ])
+               return
+             }
+-            if (status === 'failed' || task.error) {
+-              throw new Error('Video generation failed')
++            if (
++              ['failed', 'failure', 'cancelled', 'canceled', 'unknown'].includes(
++                status
++              ) ||
++              task.error
++            ) {
++              throw new Error(getVideoTaskErrorMessage(task))
+             }
+             await waitForVideoPoll(abortController.signal)
+             task = await fetchVideoTask(taskId, abortController.signal)
+diff --git a/web/default/src/features/playground/types.ts b/web/default/src/features/playground/types.ts
+index 2dff38d..7d2c3f6 100644
+--- a/web/default/src/features/playground/types.ts
++++ b/web/default/src/features/playground/types.ts
+@@ -183,6 +183,7 @@ export interface VideoTaskResponse {
+   id?: string
+   task_id?: string
+   status?: string
++  fail_reason?: string
+   url?: string
+   result_url?: string
+   error?: unknown

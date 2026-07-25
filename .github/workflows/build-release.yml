@@ -43,7 +43,9 @@ jobs:
 
       - name: Verify protected Mad API customizations
         working-directory: source
-        run: sha256sum --check "$GITHUB_WORKSPACE/guards/customizations.sha256"
+        run: |
+          sha256sum relay/relay_task.go
+          sha256sum --check "$GITHUB_WORKSPACE/guards/customizations.sha256"
 
       - name: Set up Go
         uses: actions/setup-go@v5

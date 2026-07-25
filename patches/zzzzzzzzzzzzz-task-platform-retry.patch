@@ -32,7 +32,7 @@ new file mode 100644
 index 0000000..f1d2c58
 --- /dev/null
 +++ b/controller/relay_task_retry_test.go
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,29 @@
 +package controller
 +
 +import (
@@ -41,7 +41,6 @@ index 0000000..f1d2c58
 +	"net/http/httptest"
 +	"testing"
 +
-+	"github.com/QuantumNous/new-api/dto"
 +	"github.com/QuantumNous/new-api/service"
 +	"github.com/gin-gonic/gin"
 +	"github.com/stretchr/testify/require"

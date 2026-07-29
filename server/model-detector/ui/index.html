@@ -24,7 +24,7 @@
   <section id="login" class="login">
     <form id="loginForm" class="login-card">
       <div class="eyebrow">Model Provenance</div><h1>模型真伪检测</h1>
-      <p>请输入部署时单独设置的检测管理员令牌。令牌只用于建立 HttpOnly 会话，不会保存在页面。</p>
+      <p>请先以管理员身份登录 New API。独立部署时也可以输入检测管理员令牌；令牌只用于建立 HttpOnly 会话，不会保存在页面。</p>
       <div class="field"><label>管理员令牌</label><input id="loginToken" type="password" autocomplete="current-password" required minlength="32"></div>
       <div id="loginError" class="error"></div><button class="btn primary" type="submit">进入检测面板</button>
     </form>

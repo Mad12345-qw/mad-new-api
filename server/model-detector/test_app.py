@@ -2,6 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -47,6 +48,22 @@ class AppTests(unittest.TestCase):
         self.assertNotIn("api_key_encrypted", payload)
         stored = service.db.row("SELECT api_key_encrypted FROM upstreams WHERE id=?", (payload["id"],))
         self.assertNotIn("sk-unit-test-secret", stored["api_key_encrypted"])
+
+    def test_existing_new_api_admin_session_is_accepted(self) -> None:
+        previous = os.environ.get("DETECTOR_NEW_API_INTERNAL_URL")
+        os.environ["DETECTOR_NEW_API_INTERNAL_URL"] = "http://new-api:3000"
+        mocked = Mock(status_code=200)
+        mocked.json.return_value = {"success": True, "data": {"role": 10}}
+        try:
+            with patch("app.httpx.get", return_value=mocked) as request:
+                response = self.client.get("/detector/api/state", headers={"cookie": "session=admin-session"})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(request.call_args.kwargs["headers"]["cookie"], "session=admin-session")
+        finally:
+            if previous is None:
+                os.environ.pop("DETECTOR_NEW_API_INTERNAL_URL", None)
+            else:
+                os.environ["DETECTOR_NEW_API_INTERNAL_URL"] = previous
 
     def test_safe_probe_failure_remains_inconclusive(self) -> None:
         self.login()

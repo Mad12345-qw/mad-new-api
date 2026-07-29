@@ -13,7 +13,9 @@ from engine import (
     ProbeResponse,
     body_shape,
     antigravity_alias_evidence,
+    antigravity_alias_matrix_evidence,
     antigravity_alias_probe,
+    antigravity_alias_probe_specs,
     capability_probe,
     classify,
     claude_system_preservation_evidence,
@@ -308,12 +310,20 @@ class EngineTests(unittest.TestCase):
             "gemini_count_tokens",
             "gemini_invalid_zero_output",
             "gemini_invalid_unknown_field",
+            "gemini_invalid_safety_category",
             "gemini_missing_contents",
         ])
         self.assertTrue(probes[0][1].endswith(":countTokens"))
         self.assertEqual(probes[0][2]["contents"][0]["parts"][0]["text"], "X")
         self.assertNotIn("generationConfig", probes[0][2])
         self.assertEqual(probes[1][2]["generationConfig"]["maxOutputTokens"], 0)
+        safety_probe = next(item for item in probes if item[0] == "gemini_invalid_safety_category")
+        self.assertEqual(
+            safety_probe[2]["safetySettings"][0]["category"],
+            "HARM_CATEGORY_MODEL_DETECTOR_SENTINEL",
+        )
+        openai_only = route_for_model("gemini-3.6-flash", "google", ["openai"])
+        self.assertEqual(len(gemini_contract_probe_specs(openai_only)), len(probes))
         self.assertIsNone(route_for_model("gemini-3.1-pro", "google", ["gemini"]))
 
     def test_gemini_official_contract_match_never_proves_direct_channel(self) -> None:
@@ -326,7 +336,7 @@ class EngineTests(unittest.TestCase):
                 body = {"error": {"code": 400, "status": spec["expected_error_status"]}}
             observations.append((spec, ProbeResponse(int(spec["expected_status"]), 1, {}, "{}", body, f"g-{index}")))
         evidence = gemini_contract_evidence(observations)
-        self.assertEqual(len(evidence), 4)
+        self.assertEqual(len(evidence), 5)
         self.assertTrue(all(item.category == "official_contract_match" for item in evidence))
         self.assertTrue(all(item.supports is None for item in evidence))
         self.assertEqual(classify(evidence, "gemini_developer_api")["verdict"], "inconclusive")
@@ -340,7 +350,7 @@ class EngineTests(unittest.TestCase):
             observations.append((spec, ProbeResponse(status, 1, {}, "{}", body, f"b-{index}")))
         evidence = gemini_contract_evidence(observations)
         signature = next(item for item in evidence if item.category == "gemini_request_contract_rewrite")
-        self.assertEqual(signature.detail["bypassed_count"], 3)
+        self.assertEqual(signature.detail["bypassed_count"], 4)
         verdict = classify(evidence, "gemini_developer_api")
         self.assertEqual(verdict["verdict"], "suspected_substitution")
         self.assertEqual(verdict["likely_channel"], "gemini_compatibility_relay")
@@ -385,6 +395,40 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(verdict["verdict"], "suspected_substitution")
         self.assertEqual(verdict["likely_channel"], "antigravity_subscription_relay")
         self.assertEqual(verdict["confidence"], 0.99)
+
+    def test_antigravity_tier_alias_matrix_requires_multiple_successes(self) -> None:
+        route = route_for_model("gemini-3.6-flash", "google", ["openai"])
+        specs = antigravity_alias_probe_specs(route)
+        self.assertEqual(
+            [item[2]["model"] for item in specs],
+            [
+                "gemini-3.6-flash-high",
+                "gemini-3.6-flash-medium",
+                "gemini-3.6-flash-low",
+                "gemini-3.6-flash-tiered",
+            ],
+        )
+        observations = []
+        for index, (_, _, payload, rule) in enumerate(specs):
+            status = 200 if index < 3 else 404
+            response = ProbeResponse(
+                status,
+                1,
+                {},
+                "{}",
+                {"model": "gemini-3.6-flash"} if status == 200 else {"error": {"type": "not_found"}},
+                f"matrix-{index}",
+            )
+            observations.append((rule, response))
+        evidence = antigravity_alias_matrix_evidence(observations)
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0].category, "antigravity_tier_alias_matrix")
+        self.assertEqual(evidence[0].detail["successful_count"], 3)
+        self.assertEqual(evidence[0].detail["suffix_success_count"], 3)
+        self.assertFalse(evidence[0].detail["tiered_alias_succeeded"])
+
+        only_one = antigravity_alias_matrix_evidence(observations[:1])
+        self.assertEqual(only_one, [])
 
     def test_claude_system_nonce_return_excludes_oauth_sanitization_for_that_request(self) -> None:
         route = route_for_model("claude-fable-5", "anthropic", ["anthropic"])
@@ -643,15 +687,103 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result["verdict"], "suspected_substitution")
         self.assertEqual(result["confidence"], 0.96)
 
+    def test_claude_cache_tokens_and_adapter_metadata_detect_heterogeneous_pool(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["anthropic"])
+        adapter_evidence = within_run_route_divergence_evidence(
+            route,
+            [
+                {
+                    "probe": "model_sync",
+                    "total_input_tokens": 8,
+                    "billing_source": None,
+                    "billing_semantic": None,
+                    "response_object": "message",
+                    "hidden_instruction_chars": 0,
+                },
+                {
+                    "probe": "claude_system_preservation",
+                    "total_input_tokens": 187,
+                    "billing_source": "oai_chat",
+                    "billing_semantic": "openai",
+                    "response_object": "message",
+                    "hidden_instruction_chars": 0,
+                },
+            ],
+        )
+        self.assertIsNotNone(adapter_evidence)
+        self.assertTrue(adapter_evidence.detail["adapter_path_divergence"])
+        self.assertFalse(adapter_evidence.detail["token_path_divergence"])
+        self.assertEqual(classify([adapter_evidence], "anthropic_official")["likely_channel"], "heterogeneous_backend_pool")
+
+        cache_evidence = within_run_route_divergence_evidence(
+            route,
+            [
+                {"probe": "model_sync", "total_input_tokens": 8, "response_object": "message"},
+                {
+                    "probe": "claude_system_preservation",
+                    "total_input_tokens": 7448,
+                    "cache_creation_input_tokens": 6370,
+                    "response_object": "message",
+                },
+            ],
+        )
+        self.assertIsNotNone(cache_evidence)
+        self.assertTrue(cache_evidence.detail["token_path_divergence"])
+        self.assertEqual(cache_evidence.detail["input_token_ratio"], 931.0)
+
+    def test_claude_implicit_cache_and_openai_translation_are_explicit_evidence(self) -> None:
+        route = route_for_model("claude-opus-5", "claude", ["anthropic"])
+        _, payload = capability_probe(route)
+        response = ProbeResponse(
+            200,
+            1,
+            {},
+            "{}",
+            {
+                "type": "message",
+                "usage": {
+                    "input_tokens": 16,
+                    "cache_creation_input_tokens": 80,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 1,
+                },
+            },
+            "cache-digest",
+        )
+        evidence = provenance_evidence("model_capability", route, payload, response)
+        injected = next(item for item in evidence if item.category == "request_cache_control_injection")
+        self.assertEqual(injected.detail["cache_creation_input_tokens"], 80)
+
+        translated = ProbeResponse(
+            200,
+            1,
+            {},
+            "{}",
+            {
+                "type": "message",
+                "usage": {
+                    "input_tokens": 58,
+                    "output_tokens": 1,
+                    "billing_usage": {"source": "oai_chat", "semantic": "openai"},
+                },
+            },
+            "translation-digest",
+        )
+        translated_evidence = provenance_evidence("model_sync", route, {"model": route.model}, translated)
+        result = classify(translated_evidence, "anthropic_official")
+        self.assertEqual(result["likely_channel"], "claude_compatibility_relay")
+        self.assertEqual(result["verdict"], "suspected_substitution")
+        self.assertEqual(result["confidence"], 0.96)
+
     def test_gpt_image_2_uses_only_non_generation_validation_payloads(self) -> None:
         route = route_for_model("gpt-image-2", "openai", ["openai"])
         probes = image_validation_probes(route)
-        self.assertEqual(len(probes), 3)
+        self.assertEqual(len(probes), 2)
         self.assertEqual(probes[0][1], "/v1/images/generations")
         self.assertEqual(probes[0][2]["size"], "1x1")
         self.assertNotIn("prompt", probes[0][2])
         self.assertNotIn("prompt", probes[1][2])
-        self.assertEqual(probes[2][1], "/v1/responses")
+        self.assertTrue(all(item[1] == "/v1/images/generations" for item in probes))
 
 
 class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
@@ -659,13 +791,12 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
     def response(status: int, body: dict | None = None, headers: dict[str, str] | None = None, text: str = "") -> ProbeResponse:
         return ProbeResponse(status, 1, headers or {}, text or "{}", body or {}, f"digest-{status}")
 
-    async def test_gpt_image_2_run_uses_three_validation_responses_without_generation(self) -> None:
+    async def test_gpt_image_2_run_uses_two_validation_responses_without_generation(self) -> None:
         route = route_for_model("gpt-image-2", "openai", ["openai"])
         requests = AsyncMock(
             side_effect=[
                 self.response(400, {"error": {"type": "invalid_request_error", "code": "invalid_size"}}),
                 self.response(400, {"error": {"type": "invalid_request_error", "code": "missing_prompt"}}),
-                self.response(400, {"error": {"type": "invalid_request_error", "code": "unsupported_model"}}),
             ]
         )
         upstream = {
@@ -677,8 +808,8 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
             result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
 
         self.assertEqual(result["protocol"], "openai_images")
-        self.assertEqual(result["success_probes"], 3)
-        self.assertEqual(result["planned_probes"], 3)
+        self.assertEqual(result["success_probes"], 2)
+        self.assertEqual(result["planned_probes"], 2)
         self.assertEqual(result["verdict"], "inconclusive")
         payloads = [call.args[4] for call in requests.await_args_list]
         self.assertTrue(all(payload.get("size") == "1x1" or "prompt" not in payload for payload in payloads))

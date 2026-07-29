@@ -56,7 +56,7 @@
             <div class="field"><label>用途</label><select name="role"><option value="candidate">待测站点</option><option value="reference">可信参考</option></select></div>
             <div class="field"><label>成对参考</label><select id="referenceSelect" name="reference_upstream_id"><option value="">不比较</option></select></div>
             <label class="check full"><input name="allow_paid_probes" type="checkbox">允许对所选模型执行真伪探针</label>
-            <div class="muted full">文本输出量很低；若上游注入 Codex/Claude Code 隐藏系统指令，实际输入计费可能被放大到数千 Token。gpt-image-2 不生成图片，只做错误参数与错误协议校验。</div>
+            <div class="muted full">文本输出量很低；若上游注入 Codex/Claude Code 隐藏系统指令，实际输入计费可能被放大到数千 Token。gpt-image-2 不生成图片，只做 Images API 错误参数校验。</div>
             <div id="upstreamError" class="error full"></div><button id="saveUpstream" class="btn full" type="submit" disabled>保存站点与所选模型</button>
           </form>
         </div>
@@ -70,7 +70,7 @@
   <script>
     const $=s=>document.querySelector(s);let state={upstreams:[],runs:[],settings:{}},discoveredModels=[],discoveryMeta={},editingUpstreamId=null;
     const verdictText={confirmed_direct:'官方直连已确认',probable_alternate_channel:'高概率其他渠道',suspected_substitution:'渠道与官方直连不符',inconclusive:'无法判断'};
-    const channelText={codex_subscription_relay:'Codex 订阅/OAuth 反代',claude_subscription_relay:'Claude Code/OAuth 订阅反代',antigravity_subscription_relay:'Google Antigravity OAuth/订阅反代',gemini_compatibility_relay:'Gemini 兼容/改写中转',heterogeneous_backend_pool:'异构后端池或渠道切换',openai_official:'OpenAI 官方 API',anthropic_official:'Anthropic 官方 API',gemini_developer_api:'Gemini Developer API',vertex_ai:'Vertex AI',azure_openai:'Azure OpenAI',aws_bedrock:'AWS Bedrock',unknown:'未知'};
+    const channelText={codex_subscription_relay:'Codex 订阅/OAuth 反代',claude_subscription_relay:'Claude Code/OAuth 订阅反代',claude_compatibility_relay:'OpenAI→Claude 协议转换中转',antigravity_subscription_relay:'Google Antigravity OAuth/订阅反代',gemini_compatibility_relay:'Gemini 兼容/改写中转',heterogeneous_backend_pool:'异构后端池或渠道切换',openai_official:'OpenAI 官方 API',anthropic_official:'Anthropic 官方 API',gemini_developer_api:'Gemini Developer API',vertex_ai:'Vertex AI',azure_openai:'Azure OpenAI',aws_bedrock:'AWS Bedrock',unknown:'未知'};
     const protocolText={openai_chat:'OpenAI Chat',openai_responses:'OpenAI Responses',anthropic_messages:'Anthropic Messages',gemini_generate:'Gemini generateContent',openai_images:'OpenAI Images（非生成探针）'};
     async function api(path,options={}){let uid='';try{uid=localStorage.getItem('uid')||''}catch{}const headers={'Content-Type':'application/json'};if(/^\d+$/.test(uid))headers['New-Api-User']=uid;const response=await fetch(`/detector/api${path}`,{credentials:'same-origin',headers:{...headers,...(options.headers||{})},...options});if(response.status===401)throw Object.assign(new Error('unauthorized'),{unauthorized:true});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||`HTTP ${response.status}`);return data}
     const escapeHtml=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));

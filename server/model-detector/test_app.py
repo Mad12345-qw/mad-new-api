@@ -53,12 +53,36 @@ class AppTests(unittest.TestCase):
         previous = os.environ.get("DETECTOR_NEW_API_INTERNAL_URL")
         os.environ["DETECTOR_NEW_API_INTERNAL_URL"] = "http://new-api:3000"
         mocked = Mock(status_code=200)
-        mocked.json.return_value = {"success": True, "data": {"role": 10}}
+        mocked.json.return_value = {"success": True, "data": {"id": 7, "role": 10}}
         try:
             with patch("app.httpx.get", return_value=mocked) as request:
-                response = self.client.get("/detector/api/state", headers={"cookie": "session=admin-session"})
+                response = self.client.get(
+                    "/detector/api/state",
+                    headers={"cookie": "session=admin-session", "New-Api-User": "7"},
+                )
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(request.call_args.kwargs["headers"]["cookie"], "session=admin-session")
+            self.assertEqual(request.call_args.kwargs["headers"]["New-Api-User"], "7")
+        finally:
+            if previous is None:
+                os.environ.pop("DETECTOR_NEW_API_INTERNAL_URL", None)
+            else:
+                os.environ["DETECTOR_NEW_API_INTERNAL_URL"] = previous
+
+    def test_new_api_session_requires_matching_numeric_user_header(self) -> None:
+        previous = os.environ.get("DETECTOR_NEW_API_INTERNAL_URL")
+        os.environ["DETECTOR_NEW_API_INTERNAL_URL"] = "http://new-api:3000"
+        mocked = Mock(status_code=200)
+        mocked.json.return_value = {"success": True, "data": {"id": 8, "role": 100}}
+        try:
+            with patch("app.httpx.get", return_value=mocked):
+                missing = self.client.get("/detector/api/state", headers={"cookie": "session=x"})
+                mismatch = self.client.get(
+                    "/detector/api/state",
+                    headers={"cookie": "session=x", "New-Api-User": "7"},
+                )
+            self.assertEqual(missing.status_code, 401)
+            self.assertEqual(mismatch.status_code, 401)
         finally:
             if previous is None:
                 os.environ.pop("DETECTOR_NEW_API_INTERNAL_URL", None)

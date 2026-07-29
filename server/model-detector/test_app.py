@@ -2,7 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -31,23 +31,49 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.client.get("/detector/api/state").status_code, 401)
         self.assertEqual(self.client.post("/detector/api/login", json={"token": "wrong-token-value"}).status_code, 401)
         self.login()
-        response = self.client.post(
-            "/detector/api/upstreams",
-            json={
-                "name": "Unit Relay",
-                "base_url": "http://127.0.0.1:9/v1",
-                "api_style": "openai",
-                "api_key": "sk-unit-test-secret-1234",
-                "models": ["gpt-5.6-sol"],
-                "claimed_channel": "openai_official",
-            },
-        )
+        with patch("app.validate_public_api_url", return_value=None):
+            response = self.client.post(
+                "/detector/api/upstreams",
+                json={
+                    "name": "Unit Relay",
+                    "base_url": "http://127.0.0.1:9/v1",
+                    "api_style": "openai",
+                    "api_key": "sk-unit-test-secret-1234",
+                    "models": ["gpt-5.6-sol"],
+                    "claimed_channel": "openai_official",
+                },
+            )
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["api_key_masked"], "****1234")
         self.assertNotIn("api_key_encrypted", payload)
         stored = service.db.row("SELECT api_key_encrypted FROM upstreams WHERE id=?", (payload["id"],))
         self.assertNotIn("sk-unit-test-secret", stored["api_key_encrypted"])
+
+    def test_discovery_returns_routed_models_without_storing_key(self) -> None:
+        self.login()
+        before = service.db.row("SELECT COUNT(*) AS count FROM upstreams")["count"]
+        routed = {
+            "model": "claude-fable-5",
+            "family": "anthropic",
+            "provider": "Anthropic",
+            "protocol": "openai_chat",
+            "endpoint": "/v1/chat/completions",
+            "fallbacks": [],
+            "supported_endpoint_types": ["openai"],
+            "owned_by": "claude",
+            "discovered_via": "openai_models",
+            "route_reason": "translation",
+        }
+        mocked = AsyncMock(return_value={"models": [routed], "attempts": [{"source": "openai_models", "status_code": 200}]})
+        with patch("app.validate_public_api_url", return_value=None), patch("app.discover_models", mocked):
+            response = self.client.post(
+                "/detector/api/discover",
+                json={"base_url": "https://relay.example/v1", "api_key": "temporary-discovery-key"},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["models"][0]["protocol"], "openai_chat")
+        self.assertEqual(service.db.row("SELECT COUNT(*) AS count FROM upstreams")["count"], before)
 
     def test_existing_new_api_admin_session_is_accepted(self) -> None:
         previous = os.environ.get("DETECTOR_NEW_API_INTERNAL_URL")
@@ -91,22 +117,76 @@ class AppTests(unittest.TestCase):
 
     def test_safe_probe_failure_remains_inconclusive(self) -> None:
         self.login()
-        created = self.client.post(
-            "/detector/api/upstreams",
-            json={
-                "name": "Offline Relay",
-                "base_url": "http://127.0.0.1:9/v1",
-                "api_style": "anthropic",
-                "api_key": "unit-secret-5678",
-                "models": ["claude-fable-5", "claude-opus-5"],
-                "claimed_channel": "anthropic_official",
-            },
-        ).json()
+        with patch("app.validate_public_api_url", return_value=None):
+            created = self.client.post(
+                "/detector/api/upstreams",
+                json={
+                    "name": "Offline Relay",
+                    "base_url": "http://127.0.0.1:9/v1",
+                    "api_style": "anthropic",
+                    "api_key": "unit-secret-5678",
+                    "models": ["claude-fable-5", "claude-opus-5"],
+                    "claimed_channel": "anthropic_official",
+                },
+            ).json()
         result = self.client.post("/detector/api/run", json={"upstream_id": created["id"], "mode": "safe"})
         self.assertEqual(result.status_code, 200, result.text)
         detail = self.client.get(f"/detector/api/runs/{result.json()['run_ids'][0]}").json()
         self.assertEqual(detail["run"]["verdict"], "inconclusive")
         self.assertTrue(any(item["category"] == "model_alias" for item in detail["evidence"]))
+
+    def test_active_run_persists_per_model_chain_and_evidence(self) -> None:
+        self.login()
+        route = {
+            "model": "claude-fable-5",
+            "family": "anthropic",
+            "provider": "Anthropic",
+            "protocol": "openai_chat",
+            "endpoint": "/v1/chat/completions",
+            "fallbacks": [],
+            "supported_endpoint_types": ["openai"],
+            "owned_by": "claude",
+            "discovered_via": "openai_models",
+            "route_reason": "translation",
+        }
+        with patch("app.validate_public_api_url", return_value=None):
+            created = self.client.post(
+                "/detector/api/upstreams",
+                json={
+                    "name": "Routed Relay",
+                    "base_url": "https://relay.example/v1",
+                    "api_key": "unit-secret-routed-9999",
+                    "model_routes": [route],
+                    "allow_paid_probes": True,
+                },
+            ).json()
+        model_result = {
+            "model": "claude-fable-5",
+            "family": "anthropic",
+            "protocol": "openai_chat",
+            "endpoint": "/v1/chat/completions",
+            "verdict": "inconclusive",
+            "likely_channel": "unknown",
+            "confidence": 0.0,
+            "summary": "terminal hidden",
+            "success_probes": 2,
+            "planned_probes": 2,
+            "chain": {
+                "layers": [{"kind": "new_api_gateway", "label": "outer"}],
+                "minimum_confirmed_hops": 1,
+                "unknown_intermediate_possible": True,
+            },
+            "evidence": [service.Evidence("model_sync", "payload", "info", None, "shape", {"ok": True})],
+        }
+        with patch.object(service.engine, "run", AsyncMock(return_value=({"verdict": "inconclusive", "likely_channel": "unknown", "confidence": 0.0, "summary": "safe"}, []))), patch.object(
+            service.engine, "run_models", AsyncMock(return_value=[model_result])
+        ):
+            response = self.client.post("/detector/api/run", json={"upstream_id": created["id"], "mode": "active"})
+        self.assertEqual(response.status_code, 200, response.text)
+        detail = self.client.get(f"/detector/api/runs/{response.json()['run_ids'][0]}").json()
+        self.assertEqual(detail["model_results"][0]["model"], "claude-fable-5")
+        self.assertEqual(detail["model_results"][0]["chain"]["minimum_confirmed_hops"], 1)
+        self.assertTrue(any(item["model"] == "claude-fable-5" for item in detail["evidence"]))
 
 
 if __name__ == "__main__":

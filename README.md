@@ -25,3 +25,7 @@ The detector stores upstream keys encrypted at rest, runs a six-request non-bill
 The detector accepts the existing same-origin New API session only after an internal `/api/user/self` check confirms role `10` or `100`. A separate detector token remains available as an emergency fallback; neither path exposes credentials to the browser application state.
 
 Detector rules are data-driven in `server/model-detector/rules/default.json`. Each report preserves the rule version, redacted response shape, model inventory, SSE sequence, error contract, token fields, evidence strength, and raw-response SHA-256 without storing raw API keys.
+
+The operator now supplies only a third-party API base URL and key. The detector safely queries OpenAI, Anthropic, and Gemini model-list contracts, filters the result to mainstream text models from those three families, and assigns a route per selected model from advertised endpoint capabilities. Claude can use Anthropic Messages or an explicitly reported OpenAI translation route; current OpenAI reasoning/coding models prefer Responses with a guarded Chat fallback; Gemini prefers native `generateContent` when advertised.
+
+Active detection is stored and reported per model rather than per model-list endpoint. Reports express a black-box observable chain such as outer New API gateway, protocol translation, probable terminal channel, and unknown intermediate/terminal segments. They only state a provable lower bound for relay hops because a layer that completely removes its fingerprints cannot be enumerated reliably.

@@ -1,8 +1,23 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
-from engine import Evidence, body_shape, classify, endpoint, model_alias_evidence, sanitize_headers, transport_evidence
+from discovery import route_for_model
+from engine import (
+    DetectorEngine,
+    Evidence,
+    ProbeResponse,
+    body_shape,
+    capability_probe,
+    classify,
+    endpoint,
+    model_alias_evidence,
+    observed_chain,
+    payload_evidence,
+    sanitize_headers,
+    transport_evidence,
+)
 from security import decrypt_secret, encrypt_secret, mask_secret
 
 
@@ -50,6 +65,159 @@ class EngineTests(unittest.TestCase):
         shaped = body_shape({"token": "secret", "nested": {"count": 2}})
         self.assertEqual(shaped["token"], "str")
         self.assertEqual(shaped["nested"]["count"], "int")
+
+    def test_multihop_chain_separates_outer_translation_and_unknown_terminal(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["openai"])
+        evidence = [
+            Evidence(
+                "model_sync",
+                "observation",
+                "info",
+                None,
+                "response",
+                {"headers": {"x-oneapi-request-id": "req_1"}},
+            )
+        ]
+        chain = observed_chain(
+            evidence,
+            route,
+            {"verdict": "inconclusive", "likely_channel": "unknown", "confidence": 0.0},
+        )
+        self.assertEqual([layer["kind"] for layer in chain["layers"]], ["new_api_gateway", "protocol_translation", "unknown_terminal"])
+        self.assertTrue(chain["unknown_intermediate_possible"])
+        self.assertEqual(chain["minimum_confirmed_hops"], 1)
+        self.assertEqual(chain["observed_logical_layers"], 3)
+
+    def test_multihop_chain_keeps_preserved_proxy_markers_as_logical_layers_only(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["openai"])
+        evidence = [
+            Evidence(
+                "model_sync",
+                "observation",
+                "info",
+                None,
+                "response",
+                {
+                    "headers": {
+                        "x-oneapi-request-id": "req_1",
+                        "x-litellm-model-id": "model_1",
+                        "via": "1.1 relay",
+                        "x-envoy-upstream-service-time": "12",
+                    }
+                },
+            )
+        ]
+        chain = observed_chain(evidence, route, {"verdict": "inconclusive", "likely_channel": "unknown", "confidence": 0.0})
+        self.assertEqual(
+            [layer["kind"] for layer in chain["layers"]],
+            ["new_api_gateway", "litellm_marker", "proxy_marker", "protocol_translation", "unknown_terminal"],
+        )
+        self.assertEqual(chain["minimum_confirmed_hops"], 1)
+        self.assertEqual(chain["observed_logical_layers"], 5)
+
+    def test_capability_payloads_match_each_protocol(self) -> None:
+        anthropic = route_for_model("claude-opus-5", "claude", ["anthropic"])
+        gemini = route_for_model("gemini-3.1-pro", "google", ["gemini"])
+        responses = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        chat = route_for_model("claude-fable-5", "claude", ["openai"])
+
+        path, payload = capability_probe(anthropic)
+        self.assertEqual(path, "/v1/messages")
+        self.assertEqual(payload["tool_choice"], {"type": "tool", "name": "detector_marker"})
+        self.assertIn("input_schema", payload["tools"][0])
+
+        path, payload = capability_probe(gemini)
+        self.assertIn(":generateContent", path)
+        self.assertEqual(payload["toolConfig"]["functionCallingConfig"]["mode"], "ANY")
+        self.assertIn("functionDeclarations", payload["tools"][0])
+
+        path, payload = capability_probe(responses)
+        self.assertEqual(path, "/v1/responses")
+        self.assertEqual(payload["tool_choice"], {"type": "function", "name": "detector_marker"})
+        self.assertEqual(payload["tools"][0]["type"], "function")
+
+        path, payload = capability_probe(chat)
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(payload["tool_choice"]["function"]["name"], "detector_marker")
+        self.assertIn("function", payload["tools"][0])
+
+    def test_payload_evidence_recognizes_tool_structures_across_protocols(self) -> None:
+        bodies = [
+            {"choices": [{"message": {"tool_calls": [{"function": {"name": "detector_marker"}}]}}]},
+            {"content": [{"type": "tool_use", "name": "detector_marker"}]},
+            {"candidates": [{"content": {"parts": [{"functionCall": {"name": "detector_marker"}}]}}]},
+        ]
+        for body in bodies:
+            response = ProbeResponse(200, 1, {}, "{}", body, "digest")
+            evidence = payload_evidence("model_capability", response)
+            self.assertTrue(any(item.category == "tool_structure" for item in evidence))
+
+
+class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def response(status: int, body: dict | None = None, headers: dict[str, str] | None = None, text: str = "") -> ProbeResponse:
+        return ProbeResponse(status, 1, headers or {}, text or "{}", body or {}, f"digest-{status}")
+
+    async def test_responses_404_falls_back_once_then_uses_chat_for_remaining_probes(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        requests = AsyncMock(
+            side_effect=[
+                self.response(404, {"error": {"type": "not_found"}}),
+                self.response(200, {"id": "chatcmpl-sync"}),
+                self.response(200, text="data: {\"id\":\"chatcmpl-stream\"}\n\n", headers={"content-type": "text/event-stream"}),
+                self.response(200, {"choices": [{"message": {"tool_calls": []}}]}),
+            ]
+        )
+        upstream = {
+            "base_url": "https://relay.example/v1",
+            "api_key_encrypted": "encrypted",
+            "allow_paid_probes": 1,
+        }
+        with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
+            result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
+
+        urls = [call.args[2] for call in requests.await_args_list]
+        self.assertEqual(urls[0], "https://relay.example/v1/responses")
+        self.assertTrue(all(url == "https://relay.example/v1/chat/completions" for url in urls[1:]))
+        self.assertEqual(result["protocol"], "openai_chat")
+        self.assertEqual(result["planned_probes"], 3)
+        self.assertEqual(result["success_probes"], 3)
+
+    async def test_no_successful_model_request_remains_inconclusive(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["openai"])
+        requests = AsyncMock(side_effect=[self.response(401), self.response(401), self.response(401)])
+        upstream = {
+            "base_url": "https://relay.example/v1",
+            "api_key_encrypted": "encrypted",
+            "allow_paid_probes": 1,
+        }
+        with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
+            result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
+        self.assertEqual(result["verdict"], "inconclusive")
+        self.assertEqual(result["confidence"], 0.0)
+        self.assertEqual(result["success_probes"], 0)
+
+    async def test_successful_protocol_translation_does_not_guess_terminal_channel(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["openai"])
+        requests = AsyncMock(
+            side_effect=[
+                self.response(200, {"id": "chatcmpl-sync"}),
+                self.response(200, text="data: {\"id\":\"chatcmpl-stream\"}\n\n", headers={"content-type": "text/event-stream"}),
+                self.response(200, {"choices": [{"message": {"tool_calls": []}}]}),
+            ]
+        )
+        upstream = {
+            "base_url": "https://relay.example/v1",
+            "api_key_encrypted": "encrypted",
+            "allow_paid_probes": 1,
+        }
+        with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
+            result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
+        self.assertEqual(result["verdict"], "inconclusive")
+        self.assertEqual(result["likely_channel"], "unknown")
+        self.assertIn("协议转换", result["summary"])
+        self.assertEqual(result["chain"]["layers"][-1]["kind"], "unknown_terminal")
+        self.assertTrue(any(layer["kind"] == "protocol_translation" for layer in result["chain"]["layers"]))
 
 
 class SecurityTests(unittest.TestCase):

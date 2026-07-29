@@ -1,5 +1,5 @@
 {
-  "version": "2026.07.29.1",
+  "version": "2026.07.29.2",
   "domain_rules": [
     {"pattern": "(^|\\.)api\\.openai\\.com$", "channel": "openai_official", "title": "OpenAI 官方 API 域名"},
     {"pattern": "(^|\\.)api\\.anthropic\\.com$", "channel": "anthropic_official", "title": "Anthropic 官方 API 域名"},

@@ -1,0 +1,158 @@
+name: Build Model Detector Edition
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mad-new-api-detector-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Check out detector build configuration
+        uses: actions/checkout@v4
+
+      - name: Check out pinned New API baseline
+        uses: actions/checkout@v4
+        with:
+          repository: QuantumNous/new-api
+          ref: 5a6c53d4966b2e34690ab49f3dd19be01c88fdbe
+          path: source
+          fetch-depth: 1
+
+      - name: Apply functional patches without old branding
+        shell: bash
+        run: |
+          excluded='^(home-iframe-header-scroll|mad-adforge-nav|mad-black-gold-avatar|mad-custom-model-icons|mad-email-verification|mad-ios-app-icons|mad-recharge-promotion|mad-subscription-layout|mad-telegram-announcement|mad-telegram-system-content)\.patch$'
+          for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
+            name=$(basename "$patch")
+            if [[ "$name" =~ $excluded ]]; then
+              printf 'Skipping old personalized patch: %s\n' "$name"
+              continue
+            fi
+            git -C source apply --check "$patch"
+            git -C source apply "$patch"
+          done
+          for patch in "$GITHUB_WORKSPACE"/detector-patches/*.patch; do
+            git -C source apply --check "$patch"
+            git -C source apply "$patch"
+          done
+
+      - name: Verify old brand assets are absent
+        shell: bash
+        run: |
+          test ! -e source/web/default/public/mad-avatar.png
+          ! grep -R -n -E 'AdForge|mad\.myddns\.me/adforge' source/web/default/src
+          grep -R -n '模型真伪检测' source/web/default/src/hooks/use-top-nav-links.ts
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache-dependency-path: source/go.sum
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install frontend dependencies
+        working-directory: source/web
+        run: bun install --frozen-lockfile
+
+      - name: Verify backend formatting
+        working-directory: source
+        shell: bash
+        run: |
+          files=(
+            controller/playground.go
+            middleware/distributor.go
+            middleware/playground_path.go
+            middleware/playground_path_test.go
+            relay/common/relay_info.go
+            relay/relay_task.go
+            relay/relay_task_billing_test.go
+            router/relay-router.go
+            service/quota.go
+            service/quota_audio_test.go
+          )
+          unformatted=$(gofmt -l "${files[@]}")
+          if [ -n "$unformatted" ]; then
+            printf 'Unformatted Go files:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Test New API functional paths
+        working-directory: source
+        run: go test ./controller ./middleware ./relay/common ./relay ./router ./service
+
+      - name: Verify New API frontend
+        working-directory: source/web/default
+        run: |
+          bun run typecheck
+          ../node_modules/.bin/oxlint -c .oxlintrc.json src/features/playground src/hooks/use-top-nav-links.ts
+          bun run build
+
+      - name: Set up detector dependencies
+        run: python3 -m pip install -r server/model-detector/requirements.txt
+
+      - name: Test detector engine and compile service
+        env:
+          DETECTOR_MASTER_KEY: ci-test-master-key-not-for-production
+          DETECTOR_ADMIN_TOKEN: ci-test-admin-token-not-for-production
+          DETECTOR_DATA_DIR: ${{ runner.temp }}/detector-data
+        run: |
+          python3 -m unittest discover -s server/model-detector -p 'test_*.py'
+          python3 -m compileall -q server/model-detector
+
+      - name: Test existing media compatibility service
+        run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
+
+      - name: Build release images
+        run: |
+          docker build --pull --tag mad-new-api-detector:detector-latest source
+          docker build --pull --tag mad-model-detector:detector-latest server/model-detector
+
+      - name: Export release bundle
+        run: |
+          docker save mad-new-api-detector:detector-latest | gzip -1 > mad-new-api-detector.tar.gz
+          docker save mad-model-detector:detector-latest | gzip -1 > mad-model-detector.tar.gz
+          cp server/model-detector/docker-compose.yml docker-compose.detector.yml
+          cp server/model-detector/nginx.conf nginx.detector.conf
+          cp server/model-detector/env.example detector.env.example
+          sha256sum \
+            mad-new-api-detector.tar.gz \
+            mad-model-detector.tar.gz \
+            docker-compose.detector.yml \
+            nginx.detector.conf \
+            detector.env.example > detector-release.sha256
+          git -C source rev-parse HEAD > upstream-commit.txt
+          git rev-parse HEAD > detector-build-commit.txt
+
+      - name: Publish detector release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete detector-latest --cleanup-tag --yes || true
+          gh release create detector-latest \
+            mad-new-api-detector.tar.gz \
+            mad-model-detector.tar.gz \
+            docker-compose.detector.yml \
+            nginx.detector.conf \
+            detector.env.example \
+            detector-release.sha256 \
+            upstream-commit.txt \
+            detector-build-commit.txt \
+            --title "New API model detector edition" \
+            --notes "Pinned New API functional build with old brand assets excluded and the evidence-first model provenance detector bundled as an isolated service."

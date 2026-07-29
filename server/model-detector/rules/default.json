@@ -1,0 +1,27 @@
+{
+  "version": "2026.07.29.1",
+  "domain_rules": [
+    {"pattern": "(^|\\.)api\\.openai\\.com$", "channel": "openai_official", "title": "OpenAI 官方 API 域名"},
+    {"pattern": "(^|\\.)api\\.anthropic\\.com$", "channel": "anthropic_official", "title": "Anthropic 官方 API 域名"},
+    {"pattern": "(^|\\.)generativelanguage\\.googleapis\\.com$", "channel": "gemini_developer_api", "title": "Gemini Developer API 官方域名"},
+    {"pattern": "(^|\\.)[a-z0-9-]+-aiplatform\\.googleapis\\.com$", "channel": "vertex_ai", "title": "Vertex AI 区域端点"},
+    {"pattern": "(^|\\.)aiplatform\\.googleapis\\.com$", "channel": "vertex_ai", "title": "Vertex AI API 端点"},
+    {"pattern": "(^|\\.)[a-z0-9-]+\\.openai\\.azure\\.com$", "channel": "azure_openai", "title": "Azure OpenAI 资源域名"},
+    {"pattern": "^bedrock-runtime\\.[a-z0-9-]+\\.amazonaws\\.com$", "channel": "aws_bedrock", "title": "AWS Bedrock Runtime 域名"}
+  ],
+  "header_rules": [
+    {"channel": "azure_openai", "all_headers": ["apim-request-id", "x-ms-region"], "strength": "strong", "title": "Azure APIM 响应头组合"},
+    {"channel": "azure_openai", "all_headers": ["azureml-model-session"], "strength": "strong", "title": "Azure ML 会话响应头"},
+    {"channel": "aws_bedrock", "all_headers": ["x-amzn-bedrock-invocation-latency"], "strength": "strong", "title": "Bedrock 调用响应头"},
+    {"channel": "aws_bedrock", "all_headers": ["x-amzn-requestid"], "strength": "medium", "title": "AWS 请求标识响应头"},
+    {"channel": "openai_official", "all_headers": ["openai-processing-ms", "x-request-id"], "strength": "strong", "title": "OpenAI 处理时间与请求标识头"},
+    {"channel": "openai_official", "all_headers": ["x-ratelimit-limit-requests", "x-ratelimit-limit-tokens"], "strength": "medium", "title": "OpenAI 限流头组合"},
+    {"channel": "anthropic_official", "all_headers": ["anthropic-ratelimit-requests-limit"], "strength": "strong", "title": "Anthropic 限流响应头"},
+    {"channel": "vertex_ai", "all_headers": ["x-goog-request-params"], "strength": "medium", "title": "Google 资源路由响应头"}
+  ],
+  "error_rules": [
+    {"channel": "azure_openai", "pattern": "\\b(DeploymentNotFound|DeploymentNotReady)\\b", "strength": "medium", "title": "Azure 部署错误契约"},
+    {"channel": "aws_bedrock", "pattern": "\\b(ValidationException|ThrottlingException|ModelNotReadyException|AccessDeniedException)\\b", "strength": "medium", "title": "AWS Bedrock 异常类型"},
+    {"channel": "vertex_ai", "pattern": "\\b(PublisherModel|projects/[a-z0-9_-]+/locations/[a-z0-9_-]+)\\b", "strength": "medium", "title": "Vertex AI 资源路径错误契约"}
+  ]
+}

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>模型真伪检测</title>
+  <style>
+    :root{color-scheme:dark;--bg:#090b10;--panel:#11151d;--panel2:#171c26;--line:#293141;--text:#eff3f9;--muted:#99a6b8;--accent:#71e4b3;--warn:#f7c96b;--bad:#ff7a84;--blue:#7ab8ff}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 15% 0,#172234 0,transparent 35%),var(--bg);color:var(--text);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+    button,input,select,textarea{font:inherit} button{cursor:pointer}.hidden{display:none!important}
+    .shell{max-width:1480px;margin:auto;padding:26px}.header{display:flex;gap:20px;align-items:flex-end;justify-content:space-between;margin-bottom:22px}.eyebrow{color:var(--accent);font-size:12px;letter-spacing:.16em;text-transform:uppercase}.title{font-size:30px;font-weight:720;margin:4px 0}.sub{color:var(--muted);max-width:760px}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:9px 14px}.btn:hover{border-color:#53627b}.btn.primary{background:var(--accent);border-color:var(--accent);color:#07110d;font-weight:700}.btn.danger{color:var(--bad)}
+    .grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(350px,.65fr);gap:18px}.stack{display:grid;gap:18px}.panel{background:linear-gradient(180deg,rgba(23,28,38,.95),rgba(15,19,27,.96));border:1px solid var(--line);border-radius:14px;overflow:hidden}.panel-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}.panel-title{font-weight:700}.panel-body{padding:16px 18px}
+    .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.metric{padding:15px;background:rgba(17,21,29,.83);border:1px solid var(--line);border-radius:12px}.metric b{display:block;font-size:24px}.metric span{color:var(--muted);font-size:12px}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:12px;font-weight:600}tr:last-child td{border-bottom:0}.clip{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .pill{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:11px;border:1px solid var(--line);white-space:nowrap}.confirmed_direct{color:var(--accent);border-color:#2d7659}.probable_alternate_channel{color:var(--warn);border-color:#765f2d}.suspected_substitution{color:var(--bad);border-color:#7b3540}.inconclusive{color:var(--muted)}
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:grid;gap:5px}.field.full{grid-column:1/-1}label{color:var(--muted);font-size:12px}input,select,textarea{width:100%;background:#0c1017;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 10px;outline:none}input:focus,select:focus,textarea:focus{border-color:var(--blue)}textarea{min-height:72px;resize:vertical}.check{display:flex;align-items:center;gap:8px;color:var(--text)}.check input{width:auto}
+    .evidence{display:grid;gap:10px}.evidence-card{border:1px solid var(--line);border-radius:10px;padding:12px;background:#0d1118}.evidence-top{display:flex;justify-content:space-between;gap:10px}.evidence-card p{margin:6px 0 0;color:var(--muted)}pre{white-space:pre-wrap;word-break:break-word;background:#090c12;border-radius:8px;padding:10px;max-height:280px;overflow:auto;color:#c5d1e2}
+    .login{min-height:100vh;display:grid;place-items:center;padding:20px}.login-card{width:min(430px,100%);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:25px}.login-card h1{margin:0 0 6px}.login-card p{color:var(--muted)}.error{color:var(--bad);min-height:22px}.empty{color:var(--muted);padding:22px;text-align:center}.muted{color:var(--muted)}
+    @media(max-width:980px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.header{align-items:flex-start;flex-direction:column}}@media(max-width:620px){.shell{padding:16px}.form-grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr}.title{font-size:25px}.table-wrap{overflow-x:auto}}
+  </style>
+</head>
+<body>
+  <section id="login" class="login">
+    <form id="loginForm" class="login-card">
+      <div class="eyebrow">Model Provenance</div><h1>模型真伪检测</h1>
+      <p>请输入部署时单独设置的检测管理员令牌。令牌只用于建立 HttpOnly 会话，不会保存在页面。</p>
+      <div class="field"><label>管理员令牌</label><input id="loginToken" type="password" autocomplete="current-password" required minlength="32"></div>
+      <div id="loginError" class="error"></div><button class="btn primary" type="submit">进入检测面板</button>
+    </form>
+  </section>
+
+  <main id="app" class="shell hidden">
+    <header class="header">
+      <div><div class="eyebrow">Evidence-first detector</div><div class="title">模型真伪检测</div><div class="sub">默认执行无计费协议探针。只有多类独立证据一致时才判定渠道异常；证据不足会明确显示“无法判断”。</div></div>
+      <div class="actions"><button id="runSafe" class="btn primary">立即安全检测</button><button id="runActive" class="btn">运行主动探针</button><button id="logout" class="btn">退出</button></div>
+    </header>
+
+    <section class="metrics">
+      <div class="metric"><b id="mUpstreams">0</b><span>已配置上游</span></div>
+      <div class="metric"><b id="mHealthy">0</b><span>官方直连已确认</span></div>
+      <div class="metric"><b id="mAlerts">0</b><span>异常判定</span></div>
+      <div class="metric"><b id="mUnknown">0</b><span>无法判断</span></div>
+    </section>
+
+    <section class="grid">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">上游状态</span><span id="ruleVersion" class="muted"></span></div>
+          <div class="panel-body table-wrap"><table><thead><tr><th>上游</th><th>协议/声明</th><th>模型</th><th>最新判定</th><th>操作</th></tr></thead><tbody id="upstreamRows"></tbody></table></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">检测历史</span><span class="muted">保留规则版本与证据哈希</span></div>
+          <div class="panel-body table-wrap"><table><thead><tr><th>时间</th><th>上游</th><th>模式</th><th>判定</th><th>真实渠道线索</th><th>置信度</th></tr></thead><tbody id="runRows"></tbody></table></div>
+        </div>
+      </div>
+
+      <aside class="stack">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">新增上游</span></div>
+          <form id="upstreamForm" class="panel-body form-grid">
+            <div class="field full"><label>名称</label><input name="name" required placeholder="供应商 A"></div>
+            <div class="field full"><label>API 地址</label><input name="base_url" type="url" required placeholder="https://relay.example.com/v1"></div>
+            <div class="field"><label>协议</label><select name="api_style"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></div>
+            <div class="field"><label>对方宣称</label><select name="claimed_channel"><option value="unknown">未声明</option><option value="openai_official">OpenAI 官方</option><option value="anthropic_official">Anthropic 官方</option><option value="gemini_developer_api">Gemini 官方</option><option value="azure_openai">Azure OpenAI</option><option value="aws_bedrock">AWS Bedrock</option><option value="vertex_ai">Vertex AI</option></select></div>
+            <div class="field full"><label>API Key（加密存储）</label><input name="api_key" type="password" required autocomplete="new-password"></div>
+            <div class="field full"><label>重点模型（每行一个）</label><textarea name="models" placeholder="claude-fable-5&#10;claude-opus-5&#10;gpt-5.6-sol"></textarea></div>
+            <div class="field"><label>用途</label><select name="role"><option value="candidate">待测上游</option><option value="reference">可信参考</option></select></div>
+            <div class="field"><label>成对参考</label><select id="referenceSelect" name="reference_upstream_id"><option value="">不比较</option></select></div>
+            <label class="check"><input name="allow_paid_probes" type="checkbox">允许主动探针</label>
+            <div id="upstreamError" class="error full"></div><button class="btn primary full" type="submit">保存上游</button>
+          </form>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">定时与告警</span></div>
+          <form id="settingsForm" class="panel-body form-grid">
+            <div class="field"><label>检测间隔（分钟）</label><input name="interval_minutes" type="number" min="10" max="1440"></div>
+            <div class="field"><label>定时模式</label><select name="scheduled_mode"><option value="safe">安全探针</option><option value="active">主动探针</option></select></div>
+            <div class="field full"><label>Webhook URL</label><input name="webhook_url" type="url" placeholder="https://..."></div>
+            <div class="muted full">即使选择主动模式，未在单个上游中显式允许的付费探针仍会被阻止。</div>
+            <button class="btn full" type="submit">保存设置</button>
+          </form>
+        </div>
+      </aside>
+    </section>
+
+    <section id="detailPanel" class="panel hidden" style="margin-top:18px">
+      <div class="panel-head"><span id="detailTitle" class="panel-title">检测报告</span><button id="closeDetail" class="btn">关闭</button></div>
+      <div id="detailBody" class="panel-body evidence"></div>
+    </section>
+  </main>
+
+  <script>
+    const $=s=>document.querySelector(s);let state={upstreams:[],runs:[],settings:{}};
+    const verdictText={confirmed_direct:'官方直连已确认',probable_alternate_channel:'疑似其他渠道',suspected_substitution:'疑似替换',inconclusive:'无法判断'};
+    async function api(path,options={}){const r=await fetch(`/detector/api${path}`,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})},...options});if(r.status===401)throw Object.assign(new Error('unauthorized'),{unauthorized:true});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.detail||`HTTP ${r.status}`);return data}
+    const escapeHtml=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+    function pill(v){return `<span class="pill ${escapeHtml(v||'inconclusive')}">${escapeHtml(verdictText[v]||v||'尚未检测')}</span>`}
+    function latestFor(id){return state.runs.find(r=>r.upstream_id===id&&r.status==='completed')}
+    function render(){
+      $('#ruleVersion').textContent=`规则 ${state.rule_version}`;$('#mUpstreams').textContent=state.upstreams.length;
+      const latest=state.upstreams.map(u=>latestFor(u.id)).filter(Boolean);$('#mHealthy').textContent=latest.filter(r=>r.verdict==='confirmed_direct').length;$('#mAlerts').textContent=latest.filter(r=>['probable_alternate_channel','suspected_substitution'].includes(r.verdict)).length;$('#mUnknown').textContent=latest.filter(r=>r.verdict==='inconclusive').length;
+      $('#upstreamRows').innerHTML=state.upstreams.length?state.upstreams.map(u=>{const r=latestFor(u.id);return `<tr><td><b>${escapeHtml(u.name)}</b><br><span class="muted">${escapeHtml(u.api_key_masked)}</span></td><td>${escapeHtml(u.api_style)}<br><span class="muted">${escapeHtml(u.claimed_channel)}</span></td><td class="clip">${escapeHtml(u.models.join(', ')||'—')}</td><td>${r?pill(r.verdict):pill('')}<br><span class="muted">${r?escapeHtml(r.summary):''}</span></td><td><button class="btn" onclick="runOne(${u.id})">检测</button></td></tr>`}).join(''):'<tr><td colspan="5" class="empty">尚未配置上游</td></tr>';
+      $('#runRows').innerHTML=state.runs.length?state.runs.map(r=>`<tr onclick="showRun(${r.id})" style="cursor:pointer"><td>${escapeHtml(new Date(r.started_at).toLocaleString())}</td><td>${escapeHtml(r.upstream_name)}</td><td>${escapeHtml(r.mode)}</td><td>${pill(r.verdict||r.status)}</td><td>${escapeHtml(r.likely_channel||'—')}</td><td>${r.confidence==null?'—':Math.round(r.confidence*100)+'%'}</td></tr>`).join(''):'<tr><td colspan="6" class="empty">尚无检测记录</td></tr>';
+      $('#referenceSelect').innerHTML='<option value="">不比较</option>'+state.upstreams.filter(u=>u.role==='reference').map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+      const f=$('#settingsForm');f.interval_minutes.value=state.settings.interval_minutes||15;f.scheduled_mode.value=state.settings.scheduled_mode||'safe';f.webhook_url.value=state.settings.webhook_url||'';
+    }
+    async function load(){try{state=await api('/state');$('#login').classList.add('hidden');$('#app').classList.remove('hidden');render()}catch(e){if(e.unauthorized){$('#login').classList.remove('hidden');$('#app').classList.add('hidden')}else alert(e.message)}}
+    $('#loginForm').addEventListener('submit',async e=>{e.preventDefault();$('#loginError').textContent='';try{await api('/login',{method:'POST',body:JSON.stringify({token:$('#loginToken').value})});$('#loginToken').value='';await load()}catch(err){$('#loginError').textContent=err.message==='unauthorized'?'令牌无效':err.message}});
+    $('#upstreamForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target),payload=Object.fromEntries(f.entries());payload.models=String(payload.models||'').split(/\r?\n|,/).map(x=>x.trim()).filter(Boolean);payload.allow_paid_probes=f.has('allow_paid_probes');payload.reference_upstream_id=payload.reference_upstream_id?Number(payload.reference_upstream_id):null;payload.enabled=true;try{await api('/upstreams',{method:'POST',body:JSON.stringify(payload)});e.target.reset();await load()}catch(err){$('#upstreamError').textContent=err.message}});
+    $('#settingsForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);await api('/settings',{method:'PUT',body:JSON.stringify({interval_minutes:Number(f.get('interval_minutes')),scheduled_mode:f.get('scheduled_mode'),webhook_url:f.get('webhook_url')||''})});await load()});
+    async function run(upstream_id,mode){document.body.style.cursor='progress';try{await api('/run',{method:'POST',body:JSON.stringify({upstream_id,mode})});await load()}catch(e){alert(e.message)}finally{document.body.style.cursor=''}}
+    window.runOne=id=>run(id,'safe');$('#runSafe').onclick=()=>run(null,'safe');$('#runActive').onclick=()=>{if(confirm('主动探针可能产生少量模型费用，只会调用已显式允许的上游。继续吗？'))run(null,'active')};
+    window.showRun=async id=>{try{const data=await api(`/runs/${id}`);$('#detailTitle').textContent=`检测报告 #${id} · ${data.run.upstream_name}`;$('#detailBody').innerHTML=`<div class="evidence-card"><div class="evidence-top"><b>${escapeHtml(verdictText[data.run.verdict]||data.run.status)}</b><span>${Math.round((data.run.confidence||0)*100)}%</span></div><p>${escapeHtml(data.run.summary||'')}</p><p>可能渠道：${escapeHtml(data.run.likely_channel||'unknown')} · 规则：${escapeHtml(data.run.rule_version)}</p></div>`+data.evidence.map(x=>`<div class="evidence-card"><div class="evidence-top"><b>${escapeHtml(x.title)}</b><span class="pill">${escapeHtml(x.strength)} / ${escapeHtml(x.category)}</span></div><p>探针：${escapeHtml(x.probe)}${x.supports?' · 指向 '+escapeHtml(x.supports):''}</p><pre>${escapeHtml(JSON.stringify(x.detail,null,2))}</pre>${x.raw_sha256?`<p>原始证据 SHA-256：${escapeHtml(x.raw_sha256)}</p>`:''}</div>`).join('');$('#detailPanel').classList.remove('hidden');$('#detailPanel').scrollIntoView({behavior:'smooth'})}catch(e){alert(e.message)}};
+    $('#closeDetail').onclick=()=>$('#detailPanel').classList.add('hidden');$('#logout').onclick=async()=>{await api('/logout',{method:'POST'});location.reload()};load();
+  </script>
+</body>
+</html>

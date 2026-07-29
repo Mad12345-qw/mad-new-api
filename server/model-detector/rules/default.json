@@ -1,5 +1,5 @@
 {
-  "version": "2026.07.29.14",
+  "version": "2026.07.29.16",
   "implementation_rules": {
     "cliproxyapi": {
       "lookback_runs": 12,
@@ -17,6 +17,11 @@
       ],
       "negative_reference_urls": [
         "https://github.com/QuantumNous/new-api/blob/main/relay/channel/codex/adaptor.go"
+      ],
+      "inventory_source_urls": [
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/registry/models/models.json",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/registry/model_definitions.go",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/sdk/api/handlers/openai/openai_images_handlers.go"
       ]
     }
   },
@@ -114,6 +119,13 @@
           "expected_error_status": "INVALID_ARGUMENT"
         },
         {
+          "name": "gemini_invalid_safety_category",
+          "operation": "generateContent",
+          "field": "safetySettings.category",
+          "expected_status": 400,
+          "expected_error_status": "INVALID_ARGUMENT"
+        },
+        {
           "name": "gemini_missing_contents",
           "operation": "generateContent",
           "field": "contents",
@@ -162,7 +174,8 @@
       "source_urls": [
         "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/claude_executor_request.go",
         "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/helps/claude_code_session.go",
-        "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/runtime/executor/claude_executor_cloaking.go",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/claude_executor_cloaking.go",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/claude_executor_execute.go",
         "https://github.com/router-for-me/CLIProxyAPI/issues/4146",
         "https://github.com/router-for-me/CLIProxyAPI/issues/4383"
       ]
@@ -171,6 +184,13 @@
       "channel": "antigravity_subscription_relay",
       "model": "gemini-3.6-flash",
       "hidden_alias": "gemini-3.6-flash-high",
+      "hidden_aliases": [
+        "gemini-3.6-flash-high",
+        "gemini-3.6-flash-medium",
+        "gemini-3.6-flash-low",
+        "gemini-3.6-flash-tiered"
+      ],
+      "minimum_successful_aliases_for_matrix": 2,
       "maximum_requested_output_tokens": 1,
       "minimum_rewritten_output_tokens": 4,
       "source_urls": [
@@ -178,7 +198,9 @@
         "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/runtime/executor/antigravity_executor_request.go",
         "https://github.com/router-for-me/CLIProxyAPI/issues/4504",
         "https://github.com/router-for-me/CLIProxyAPI/issues/4494",
-        "https://github.com/heyhuynhgiabuu/proxypal/blob/main/src-tauri/src/utils.rs"
+        "https://github.com/heyhuynhgiabuu/proxypal/blob/main/src-tauri/src/utils.rs",
+        "https://github.com/diegosouzapw/OmniRoute/blob/release/v3.8.50/open-sse/config/agyModels.ts",
+        "https://github.com/lidge-jun/opencodex/blob/main/devlog/_fin/260722_gemini_36_rollout/001_research_contract.md"
       ]
     }
   },

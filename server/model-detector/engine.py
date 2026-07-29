@@ -400,6 +400,10 @@ def _response_route_profile(
     cache_creation = native_usage.get("cache_creation_input_tokens", usage.get("cache_creation_input_tokens", 0))
     if not isinstance(cache_creation, int) or isinstance(cache_creation, bool):
         cache_creation = 0
+    cache_read = native_usage.get("cache_read_input_tokens", usage.get("cache_read_input_tokens", 0))
+    if not isinstance(cache_read, int) or isinstance(cache_read, bool):
+        cache_read = 0
+    total_input_tokens = input_tokens + cache_creation + cache_read
     billing = usage.get("billing_usage")
     billing = billing if isinstance(billing, dict) else {}
     instructions = value.get("instructions")
@@ -408,6 +412,8 @@ def _response_route_profile(
         "probe": probe,
         "input_tokens": input_tokens,
         "cache_creation_input_tokens": cache_creation,
+        "cache_read_input_tokens": cache_read,
+        "total_input_tokens": total_input_tokens,
         "hidden_instruction_chars": len(instructions) if isinstance(instructions, str) else 0,
         "hidden_instruction_sha256": (
             hashlib.sha256(instructions.encode("utf-8")).hexdigest() if isinstance(instructions, str) and instructions else None
@@ -415,22 +421,45 @@ def _response_route_profile(
         "visible_request_chars": visible_request_chars,
         "usage_source": usage.get("usage_source"),
         "billing_source": billing.get("source"),
+        "billing_semantic": billing.get("semantic"),
         "response_object": value.get("object") or value.get("type"),
     }
 
 
 def within_run_route_divergence_evidence(route: ModelRoute, profiles: list[dict[str, Any]]) -> Evidence | None:
-    lightweight = [item for item in profiles if int(item.get("input_tokens") or 0) <= 200]
+    def profile_total(item: dict[str, Any]) -> int:
+        return int(item.get("total_input_tokens", item.get("input_tokens", 0)) or 0)
+
+    lightweight = [item for item in profiles if profile_total(item) <= 200]
     hidden = [
         item
         for item in profiles
-        if int(item.get("input_tokens") or 0) >= 1000 or int(item.get("hidden_instruction_chars") or 0) >= 4000
+        if profile_total(item) >= 1000 or int(item.get("hidden_instruction_chars") or 0) >= 4000
     ]
-    if not lightweight or not hidden:
+    translated = [
+        item
+        for item in profiles
+        if item.get("billing_source") in {"oai_chat", "openai_responses"}
+        or item.get("billing_semantic") == "openai"
+    ]
+    native_claude = [
+        item
+        for item in profiles
+        if route.family == "anthropic"
+        and item.get("response_object") == "message"
+        and not item.get("billing_source")
+        and item.get("billing_semantic") != "openai"
+    ]
+    token_divergence = bool(lightweight and hidden)
+    adapter_divergence = bool(translated and native_claude)
+    if not token_divergence and not adapter_divergence:
         return None
-    low = min(lightweight, key=lambda item: int(item.get("input_tokens") or 0))
-    high = max(hidden, key=lambda item: int(item.get("input_tokens") or 0))
-    ratio = round(int(high.get("input_tokens") or 0) / max(1, int(low.get("input_tokens") or 0)), 1)
+    low = min(lightweight, key=profile_total) if lightweight else translated[0]
+    high = max(hidden, key=profile_total) if hidden else native_claude[0]
+    low_tokens = profile_total(low)
+    high_tokens = profile_total(high)
+    ratio = round(high_tokens / max(1, low_tokens), 1) if token_divergence else None
+    claude_rule = RULE_PACK.get("subscription_relay_rules", {}).get("claude_code", {})
     return Evidence(
         "within_run_consistency",
         "within_run_route_divergence",
@@ -442,8 +471,16 @@ def within_run_route_divergence_evidence(route: ModelRoute, profiles: list[dict[
             "lightweight_profile": low,
             "hidden_or_amplified_profile": high,
             "input_token_ratio": ratio,
+            "token_path_divergence": token_divergence,
+            "adapter_path_divergence": adapter_divergence,
+            "translated_profiles": translated,
+            "native_claude_profiles": native_claude,
             "observed_profiles": profiles,
-            "conclusion": "同一模型在同一轮检测中至少命中轻量路径与隐藏提示/放大路径，不能视为稳定、单一的官方直连渠道",
+            "source_urls": [
+                *[str(item) for item in claude_rule.get("source_urls", [])],
+                "https://github.com/QuantumNous/new-api/blob/66ee6b8f9889050ffef1f863a4314ce4a0516fb9/relaykit/relayconvert/testdata/golden/response/openai_to_claude.golden.json",
+            ],
+            "conclusion": "同一模型在同一轮检测中至少命中原生 Claude、OpenAI 转换或隐藏提示/缓存放大中的互斥路径，不能视为稳定、单一的官方直连渠道",
         },
     )
 
@@ -647,11 +684,35 @@ def provenance_evidence(
         minimum_cache = int(claude_rule.get("minimum_cache_creation_tokens", 2000))
         minimum_input = int(claude_rule.get("minimum_total_input_tokens", 2500))
         has_no_system = "system" not in request_payload
+        request_has_cache_control = "cache_control" in nested_keys(request_payload)
         native_input = native_usage.get("input_tokens")
         cache_read = native_usage.get("cache_read_input_tokens")
         if isinstance(native_input, int) and isinstance(cache_creation, int):
             native_total = native_input + cache_creation + (cache_read if isinstance(cache_read, int) else 0)
             total_input = max(total_input if isinstance(total_input, int) else 0, native_total)
+        observed_cache_tokens = (
+            (cache_creation if isinstance(cache_creation, int) else 0)
+            + (cache_read if isinstance(cache_read, int) else 0)
+        )
+        if not request_has_cache_control and observed_cache_tokens > 0:
+            result.append(
+                Evidence(
+                    probe,
+                    "request_cache_control_injection",
+                    "medium",
+                    None,
+                    "请求未携带 cache_control，但响应报告了 Claude 缓存 Token",
+                    {
+                        "rule_id": "claude_implicit_cache_control_injection_v1",
+                        "cache_creation_input_tokens": cache_creation,
+                        "cache_read_input_tokens": cache_read,
+                        "request_supplied_cache_control": False,
+                        "source_urls": [str(item) for item in claude_rule.get("source_urls", [])],
+                        "note": "证明链路中的实现改写了 Claude 缓存契约；CLIProxyAPI 源码会为缺少断点的请求自动注入 cache_control，但其他自定义代理理论上也可实现相同行为。",
+                    },
+                    response.raw_sha256,
+                )
+            )
         if (
             has_no_system
             and isinstance(cache_creation, int)
@@ -696,6 +757,31 @@ def provenance_evidence(
                         "usage_source": usage.get("usage_source"),
                         "billing_source": billing.get("source"),
                         "note": "这是协议转换证据，不是 Anthropic 官方渠道签名",
+                    },
+                    response.raw_sha256,
+                )
+            )
+        openai_translation = (
+            isinstance(billing, dict)
+            and billing.get("source") in {"oai_chat", "openai_responses"}
+            and billing.get("semantic") == "openai"
+        )
+        if openai_translation:
+            result.append(
+                Evidence(
+                    probe,
+                    "openai_to_claude_translation",
+                    "strong",
+                    "claude_compatibility_relay",
+                    "Claude 响应泄漏 OpenAI 上游转换计费语义",
+                    {
+                        "rule_id": "new_api_openai_to_claude_billing_v1",
+                        "billing_source": billing.get("source"),
+                        "billing_semantic": billing.get("semantic"),
+                        "source_urls": [
+                            "https://github.com/QuantumNous/new-api/blob/66ee6b8f9889050ffef1f863a4314ce4a0516fb9/relaykit/relayconvert/testdata/golden/response/openai_to_claude.golden.json"
+                        ],
+                        "note": "这是中转层把 OpenAI 语义响应转换为 Anthropic Messages 的实现级元数据，不可能来自透明的 Anthropic API Key 直传。",
                     },
                     response.raw_sha256,
                 )
@@ -982,24 +1068,46 @@ def capability_probe(route: ModelRoute) -> tuple[str, dict[str, Any]]:
     return "/v1/chat/completions", payload
 
 
-def antigravity_alias_probe(route: ModelRoute) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+def antigravity_alias_probe_specs(
+    route: ModelRoute,
+) -> list[tuple[str, str, dict[str, Any], dict[str, Any]]]:
     rule = RULE_PACK.get("subscription_relay_rules", {}).get("antigravity", {})
     if route.family != "google" or route.model.lower() != str(rule.get("model", "")).lower():
+        return []
+    raw_aliases = rule.get("hidden_aliases")
+    aliases = [str(item).strip() for item in raw_aliases] if isinstance(raw_aliases, list) else []
+    if not aliases:
+        fallback = str(rule.get("hidden_alias", "")).strip()
+        aliases = [fallback] if fallback else []
+    result: list[tuple[str, str, dict[str, Any], dict[str, Any]]] = []
+    for alias in dict.fromkeys(item for item in aliases if item):
+        probe_name = "antigravity_alias_" + re.sub(r"[^a-z0-9]+", "_", alias.lower()).strip("_")
+        alias_rule = dict(rule)
+        alias_rule["hidden_alias"] = alias
+        alias_rule["probe_name"] = probe_name
+        result.append(
+            (
+                probe_name,
+                "/v1/chat/completions",
+                {
+                    "model": alias,
+                    "max_tokens": 1,
+                    "stream": False,
+                    "temperature": 0,
+                    "messages": [{"role": "user", "content": "Reply with X only."}],
+                },
+                alias_rule,
+            )
+        )
+    return result
+
+
+def antigravity_alias_probe(route: ModelRoute) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    specs = antigravity_alias_probe_specs(route)
+    if not specs:
         return None
-    alias = str(rule.get("hidden_alias", "")).strip()
-    if not alias:
-        return None
-    return (
-        "/v1/chat/completions",
-        {
-            "model": alias,
-            "max_tokens": 1,
-            "stream": False,
-            "temperature": 0,
-            "messages": [{"role": "user", "content": "Reply with X only."}],
-        },
-        dict(rule),
-    )
+    _, path, payload, rule = specs[0]
+    return path, payload, rule
 
 
 def antigravity_alias_evidence(
@@ -1009,10 +1117,11 @@ def antigravity_alias_evidence(
 ) -> list[Evidence]:
     value = response.body_json if isinstance(response.body_json, dict) else {}
     alias = str(rule.get("hidden_alias", ""))
+    probe_name = str(rule.get("probe_name", "antigravity_hidden_alias"))
     if not 200 <= response.status_code < 300:
         return [
             Evidence(
-                "antigravity_hidden_alias",
+                probe_name,
                 "alias_probe_observation",
                 "info",
                 None,
@@ -1024,7 +1133,7 @@ def antigravity_alias_evidence(
     response_model = value.get("model") or value.get("modelVersion")
     return [
         Evidence(
-            "antigravity_hidden_alias",
+            probe_name,
             "antigravity_hidden_alias",
             "strong",
             str(rule.get("channel", "antigravity_subscription_relay")),
@@ -1039,6 +1148,59 @@ def antigravity_alias_evidence(
                 "source_urls": [str(item) for item in rule.get("source_urls", [])],
             },
             response.raw_sha256,
+        )
+    ]
+
+
+def antigravity_alias_matrix_evidence(
+    observations: list[tuple[dict[str, Any], ProbeResponse]],
+) -> list[Evidence]:
+    if not observations:
+        return []
+    successful: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    source_urls: list[str] = []
+    for rule, response in observations:
+        alias = str(rule.get("hidden_alias", ""))
+        source_urls.extend(str(item) for item in rule.get("source_urls", []))
+        item = {
+            "alias": alias,
+            "status_code": response.status_code,
+            "response_model": (
+                response.body_json.get("model") or response.body_json.get("modelVersion")
+                if isinstance(response.body_json, dict)
+                else None
+            ),
+        }
+        if 200 <= response.status_code < 300:
+            successful.append(item)
+        else:
+            failed.append(item)
+    minimum = int(observations[0][0].get("minimum_successful_aliases_for_matrix", 2))
+    if len(successful) < minimum:
+        return []
+    suffix_successes = [
+        item for item in successful if str(item["alias"]).endswith(("-low", "-medium", "-high"))
+    ]
+    tiered_success = any(str(item["alias"]).endswith("-tiered") for item in successful)
+    return [
+        Evidence(
+            "antigravity_alias_matrix",
+            "antigravity_tier_alias_matrix",
+            "strong",
+            "antigravity_subscription_relay",
+            "多个 Antigravity 专属 Gemini 3.6 线模型可通过同一中转调用",
+            {
+                "rule_id": "antigravity_gemini_36_tier_matrix_v1",
+                "successful_aliases": successful,
+                "failed_aliases": failed,
+                "successful_count": len(successful),
+                "suffix_success_count": len(suffix_successes),
+                "tiered_alias_succeeded": tiered_success,
+                "source_urls": list(dict.fromkeys(source_urls)),
+                "note": "Google Developer API 仅公开基础 ID；Antigravity 的 fetchAvailableModels 返回 low/medium/high 线模型及隐藏 tiered 原始行。多个后缀同时可用显著降低单个自定义映射造成的误报，但最高置信度仍需结合 CPA 头、输出上限删除或安全设置删除。",
+            },
+            observations[0][1].raw_sha256,
         )
     ]
 
@@ -1387,7 +1549,7 @@ def openai_contract_evidence(
 
 def gemini_contract_probe_specs(route: ModelRoute) -> list[tuple[str, str, dict[str, Any], dict[str, Any]]]:
     baseline = RULE_PACK.get("official_baselines", {}).get("gemini_generate", {})
-    if route.family != "google" or route.protocol != "gemini_generate" or route.model.lower() != baseline.get("model"):
+    if route.family != "google" or route.model.lower() != baseline.get("model"):
         return []
     base_path = f"/v1beta/models/{route.model}"
     probes: list[tuple[str, str, dict[str, Any], dict[str, Any]]] = []
@@ -1409,6 +1571,17 @@ def gemini_contract_probe_specs(route: ModelRoute) -> list[tuple[str, str, dict[
                 "contents": [{"role": "user", "parts": [{"text": "X"}]}],
                 "generationConfig": {"maxOutputTokens": 1},
                 "modelDetectorInvalid": True,
+            }
+        elif spec["name"] == "gemini_invalid_safety_category":
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": "Reply X"}]}],
+                "generationConfig": {"maxOutputTokens": 1},
+                "safetySettings": [
+                    {
+                        "category": "HARM_CATEGORY_MODEL_DETECTOR_SENTINEL",
+                        "threshold": "BLOCK_NONE",
+                    }
+                ],
             }
         else:
             payload = {"generationConfig": {"maxOutputTokens": 1}}
@@ -1521,11 +1694,6 @@ def image_validation_probes(route: ModelRoute) -> list[tuple[str, str, dict[str,
             "/v1/images/generations",
             {"model": route.model},
         ),
-        (
-            "image_wrong_protocol",
-            "/v1/responses",
-            {"model": route.model, "input": "X", "max_output_tokens": 1, "store": False},
-        ),
     ]
 
 
@@ -1621,6 +1789,17 @@ def observed_chain(evidence: list[Evidence], route: ModelRoute, terminal: dict[s
                 "note": "同一哨兵模型跨协议成功，排除单层 New API 内置 Codex adaptor；Token 是否对齐用于判断是否落到同一后端路径",
             }
         )
+    if any(item.category == "openai_to_claude_translation" for item in evidence):
+        layers.append(
+            {
+                "position": "translation",
+                "kind": "openai_to_claude_translation",
+                "label": "OpenAI 上游语义转换为 Anthropic Messages",
+                "confidence": 0.96,
+                "status": "confirmed",
+                "note": "billing_usage.source/semantic 泄漏了 New API 的 OpenAI→Claude 转换路径；不单独识别最终承载模型的云厂商。",
+            }
+        )
     if protocol_translation(route):
         layers.append(
             {
@@ -1648,6 +1827,7 @@ def observed_chain(evidence: list[Evidence], route: ModelRoute, terminal: dict[s
         terminal_labels = {
             "codex_subscription_relay": "Codex 订阅/OAuth 反代",
             "claude_subscription_relay": "Claude Code/OAuth 订阅反代",
+            "claude_compatibility_relay": "OpenAI→Claude 协议转换中转",
             "azure_openai": "Azure OpenAI",
             "aws_bedrock": "AWS Bedrock",
             "vertex_ai": "Google Vertex AI",
@@ -1740,6 +1920,24 @@ def classify(evidence: list[Evidence], claimed_channel: str = "unknown") -> dict
                 else "同一模型在同一轮固定小探针中进入轻量路径与隐藏提示/Token 放大路径，确认后端不稳定，不能称为稳定、单一的官方直连"
             ),
         }
+    claude_translation = next(
+        (
+            item
+            for item in evidence
+            if item.category == "openai_to_claude_translation"
+            and item.supports == "claude_compatibility_relay"
+            and item.strength == "strong"
+        ),
+        None,
+    )
+    if claude_translation:
+        verdict = "suspected_substitution" if claimed_channel == "anthropic_official" else "probable_alternate_channel"
+        return {
+            "verdict": verdict,
+            "likely_channel": "claude_compatibility_relay",
+            "confidence": 0.96,
+            "summary": "响应计费元数据确认请求经过 OpenAI→Claude 协议转换，排除透明 Anthropic API Key 直传；最终承载模型仍需结合其他指纹判断",
+        }
     channel_categories: dict[str, set[str]] = {}
     channel_score: dict[str, float] = {}
     weights = {"strong": 0.46, "medium": 0.24, "weak": 0.08, "info": 0.0}
@@ -1767,6 +1965,7 @@ def classify(evidence: list[Evidence], claimed_channel: str = "unknown") -> dict
         "vertex_ai",
         "codex_subscription_relay",
         "claude_subscription_relay",
+        "claude_compatibility_relay",
         "gemini_compatibility_relay",
         "antigravity_subscription_relay",
     }
@@ -2046,6 +2245,27 @@ class DetectorEngine:
                                 response.raw_sha256,
                             )
                         )
+                    if any(item.category == "multi_protocol_codex_translation" for item in shared_gpt_evidence):
+                        inventory_sources = (
+                            RULE_PACK.get("implementation_rules", {})
+                            .get("cliproxyapi", {})
+                            .get("inventory_source_urls", [])
+                        )
+                        model_evidence.append(
+                            Evidence(
+                                "sibling_gpt_route",
+                                "sibling_codex_route_correlation",
+                                "medium",
+                                "codex_subscription_relay",
+                                "同站 GPT 文本路由已确认 Codex 多协议执行链",
+                                {
+                                    "model": route.model,
+                                    "sentinel_model": "gpt-5.6-sol",
+                                    "source_urls": [str(item) for item in inventory_sources],
+                                    "note": "CLIProxyAPI 将 gpt-image-2 定义为 Codex-only built-in，且同站 GPT 文本哨兵命中 Codex 多协议执行链；这是同站关联证据，不能替代本图像模型自身的终端指纹。",
+                                },
+                            )
+                        )
                     terminal = classify(model_evidence, "openai_official")
                     completed_count = len(responses)
                     if completed_count == 0:
@@ -2056,11 +2276,18 @@ class DetectorEngine:
                             "summary": "GPT Image 2 的非生成型协议探针均未收到响应，无法判断",
                         }
                     elif terminal["verdict"] == "inconclusive":
+                        correlated = any(
+                            item.category == "sibling_codex_route_correlation" for item in model_evidence
+                        )
                         terminal = {
                             "verdict": "inconclusive",
                             "likely_channel": terminal.get("likely_channel", "unknown"),
-                            "confidence": 0.0,
-                            "summary": "已完成 GPT Image 2 的 Images API 非生成型参数探针；未生成图片、未获得足够终端渠道指纹",
+                            "confidence": 0.45 if correlated else 0.0,
+                            "summary": (
+                                "同站 GPT 文本路由已确认 CLIProxyAPI/Codex 执行链，且 CLIProxyAPI 将 gpt-image-2 注册为 Codex-only；但本图像模型仅做非生成校验，尚未获得自身终端指纹"
+                                if correlated
+                                else "已完成 GPT Image 2 的 Images API 非生成型参数探针；未生成图片、未获得足够终端渠道指纹"
+                            ),
                         }
                     chain = observed_chain(model_evidence, route, terminal)
                     results.append(
@@ -2239,7 +2466,7 @@ class DetectorEngine:
                             client,
                             "POST",
                             api_endpoint(base_url, gemini_path),
-                            protocol_headers(route.protocol, api_key),
+                            protocol_headers("gemini_generate", api_key),
                             gemini_payload,
                         )
                     except (httpx.HTTPError, asyncio.TimeoutError) as exc:
@@ -2260,10 +2487,10 @@ class DetectorEngine:
                     model_evidence.extend(payload_evidence(gemini_name, gemini_response, [route.model]))
                     model_evidence.extend(provenance_evidence(gemini_name, route, gemini_payload, gemini_response))
                 model_evidence.extend(gemini_contract_evidence(gemini_observations))
-                alias_spec = antigravity_alias_probe(route)
-                alias_planned = 1 if alias_spec else 0
-                if alias_spec:
-                    alias_path, alias_payload, alias_rule = alias_spec
+                alias_specs = antigravity_alias_probe_specs(route)
+                alias_planned = len(alias_specs)
+                alias_observations: list[tuple[dict[str, Any], ProbeResponse]] = []
+                for alias_name, alias_path, alias_payload, alias_rule in alias_specs:
                     try:
                         alias_response = await captured_request(
                             client,
@@ -2273,14 +2500,15 @@ class DetectorEngine:
                             alias_payload,
                         )
                         responses.append(alias_response)
-                        model_evidence.extend(header_evidence("antigravity_hidden_alias", alias_response))
-                        model_evidence.extend(payload_evidence("antigravity_hidden_alias", alias_response, [route.model]))
-                        model_evidence.extend(implementation_evidence("antigravity_hidden_alias", route, alias_response))
+                        alias_observations.append((alias_rule, alias_response))
+                        model_evidence.extend(header_evidence(alias_name, alias_response))
+                        model_evidence.extend(payload_evidence(alias_name, alias_response, [route.model]))
+                        model_evidence.extend(implementation_evidence(alias_name, route, alias_response))
                         model_evidence.extend(antigravity_alias_evidence(route, alias_response, alias_rule))
                     except (httpx.HTTPError, asyncio.TimeoutError) as exc:
                         model_evidence.append(
                             Evidence(
-                                "antigravity_hidden_alias",
+                                alias_name,
                                 "transport_error",
                                 "info",
                                 None,
@@ -2288,6 +2516,7 @@ class DetectorEngine:
                                 {"error_type": type(exc).__name__, "message": str(exc)[:500]},
                             )
                         )
+                model_evidence.extend(antigravity_alias_matrix_evidence(alias_observations))
                 system_spec = claude_system_preservation_probe(route)
                 system_planned = 1 if system_spec else 0
                 if system_spec:
@@ -2301,6 +2530,11 @@ class DetectorEngine:
                             system_payload,
                         )
                         responses.append(system_response)
+                        system_profile = _response_route_profile(
+                            "claude_system_preservation", system_payload, system_response
+                        )
+                        if system_profile:
+                            route_profiles.append(system_profile)
                         model_evidence.extend(header_evidence("claude_system_preservation", system_response))
                         model_evidence.extend(payload_evidence("claude_system_preservation", system_response, [route.model]))
                         model_evidence.extend(implementation_evidence("claude_system_preservation", route, system_response))

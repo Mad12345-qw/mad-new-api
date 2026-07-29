@@ -12,16 +12,30 @@ from engine import (
     Evidence,
     ProbeResponse,
     body_shape,
+    antigravity_alias_evidence,
+    antigravity_alias_probe,
     capability_probe,
     classify,
+    claude_system_preservation_evidence,
+    claude_system_preservation_probe,
+    cliproxyapi_header_fingerprint,
     endpoint,
+    gpt_cross_protocol_evidence,
+    gpt_cross_protocol_probe_specs,
+    gemini_contract_evidence,
+    gemini_contract_probe_specs,
+    image_validation_probes,
+    implementation_evidence,
     model_alias_evidence,
     observed_chain,
+    openai_contract_evidence,
+    openai_contract_probe_specs,
     payload_evidence,
     provenance_evidence,
     route_probe,
     sanitize_headers,
     transport_evidence,
+    within_run_route_divergence_evidence,
 )
 from security import decrypt_secret, encrypt_secret, mask_secret
 
@@ -34,6 +48,79 @@ class EngineTests(unittest.TestCase):
     def test_sensitive_headers_are_removed(self) -> None:
         headers = sanitize_headers({"Authorization": "Bearer secret", "X-Request-Id": "req_1", "Api-Key": "secret"})
         self.assertEqual(headers, {"x-request-id": "req_1"})
+
+    def test_cliproxyapi_headers_are_an_exact_implementation_fingerprint(self) -> None:
+        direct = cliproxyapi_header_fingerprint(
+            {"x-cpa-trace-id": "20260729171232-eb53a98a245608bb-abd329cc"}
+        )
+        self.assertIsNotNone(direct)
+        self.assertTrue(direct["trace_format_valid"])
+        exposed = cliproxyapi_header_fingerprint(
+            {"access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT"}
+        )
+        self.assertIn("x-cpa-version", exposed["cors_expose_markers"])
+
+    def test_cliproxyapi_evidence_does_not_store_trace_value(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        response = ProbeResponse(
+            200,
+            1,
+            {"x-cpa-trace-id": "20260729171232-eb53a98a245608bb-abd329cc"},
+            "{}",
+            {},
+            "digest",
+        )
+        evidence = implementation_evidence("model_sync", route, response)
+        self.assertEqual(evidence[0].category, "cliproxyapi_implementation")
+        self.assertNotIn("eb53a98a245608bb", json.dumps(evidence[0].detail))
+
+    def test_gpt_cross_protocol_matrix_identifies_codex_translation(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        chat = ProbeResponse(
+            200,
+            1,
+            {"x-cpa-trace-id": "20260729171232-eb53a98a245608bb-abd329cc"},
+            "{}",
+            {"object": "chat.completion", "usage": {"prompt_tokens": 4388}},
+            "chat-digest",
+        )
+        anthropic = ProbeResponse(
+            200,
+            1,
+            {},
+            "{}",
+            {
+                "type": "message",
+                "usage": {
+                    "input_tokens": 4388,
+                    "billing_usage": {"source": "oai_chat", "semantic": "openai"},
+                },
+            },
+            "anthropic-digest",
+        )
+        evidence = gpt_cross_protocol_evidence(
+            route,
+            {"gpt_cross_protocol_chat": chat, "gpt_cross_protocol_anthropic": anthropic},
+        )
+        matrix = next(item for item in evidence if item.category == "multi_protocol_codex_translation")
+        self.assertEqual(matrix.strength, "strong")
+        self.assertEqual(matrix.supports, "codex_subscription_relay")
+        self.assertTrue(matrix.detail["token_counts_match"])
+
+    def test_cliproxyapi_layer_increases_confirmed_chain_lower_bound(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        evidence = [
+            Evidence("model", "observation", "info", None, "headers", {"headers": {"x-oneapi-request-id": "outer"}}),
+            Evidence("model", "cliproxyapi_implementation", "strong", "codex_subscription_relay", "CPA", {}),
+            Evidence("model", "multi_protocol_codex_translation", "strong", "codex_subscription_relay", "translation", {}),
+        ]
+        chain = observed_chain(
+            evidence,
+            route,
+            {"verdict": "probable_alternate_channel", "likely_channel": "codex_subscription_relay", "confidence": 0.99},
+        )
+        self.assertIn("cliproxyapi", [item["kind"] for item in chain["layers"]])
+        self.assertEqual(chain["minimum_confirmed_hops"], 3)
 
     def test_one_alternate_signal_is_inconclusive(self) -> None:
         result = classify([Evidence("x", "headers", "strong", "aws_bedrock", "x", {})], "anthropic_official")
@@ -122,7 +209,6 @@ class EngineTests(unittest.TestCase):
 
     def test_capability_payloads_match_each_protocol(self) -> None:
         anthropic = route_for_model("claude-opus-5", "claude", ["anthropic"])
-        gemini = route_for_model("gemini-3.1-pro", "google", ["gemini"])
         responses = route_for_model("gpt-5.6-sol", "openai", ["openai"])
         chat = route_for_model("claude-fable-5", "claude", ["openai"])
 
@@ -130,11 +216,6 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(path, "/v1/messages")
         self.assertEqual(payload["tool_choice"], {"type": "tool", "name": "detector_marker"})
         self.assertIn("input_schema", payload["tools"][0])
-
-        path, payload = capability_probe(gemini)
-        self.assertIn(":generateContent", path)
-        self.assertEqual(payload["toolConfig"]["functionCallingConfig"]["mode"], "ANY")
-        self.assertIn("functionDeclarations", payload["tools"][0])
 
         path, payload = capability_probe(responses)
         self.assertEqual(path, "/v1/responses")
@@ -145,6 +226,215 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(path, "/v1/chat/completions")
         self.assertEqual(payload["tool_choice"]["function"]["name"], "detector_marker")
         self.assertIn("function", payload["tools"][0])
+
+    def test_openai_contract_matrix_is_rule_driven(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        probes = openai_contract_probe_specs(route)
+        self.assertEqual(len(probes), 4)
+        names = [name for name, _, _ in probes]
+        self.assertEqual(
+            names,
+            [
+                "openai_invalid_prompt_cache_retention",
+                "openai_invalid_safety_identifier_type",
+                "openai_invalid_prompt_cache_key_type",
+                "openai_below_minimum_output_tokens",
+            ],
+        )
+        payloads = {name: payload for name, payload, _ in probes}
+        self.assertEqual(payloads["openai_below_minimum_output_tokens"]["max_output_tokens"], 1)
+        self.assertFalse(payloads["openai_invalid_safety_identifier_type"]["store"])
+
+    def test_openai_contract_matrix_detects_bulk_validation_bypass(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        observations = []
+        for index, (_, _, spec) in enumerate(openai_contract_probe_specs(route)):
+            response = ProbeResponse(
+                200,
+                1,
+                {},
+                "{}",
+                {
+                    "model": route.model,
+                    "prompt_cache_key": "generated",
+                    "prompt_cache_retention": "24h",
+                    "safety_identifier": "generated",
+                    "usage": {"input_tokens": 304, "output_tokens": 5},
+                },
+                f"digest-{index}",
+            )
+            observations.append((spec, response))
+        evidence = openai_contract_evidence(observations)
+        signature = next(item for item in evidence if item.category == "request_contract_rewrite")
+        self.assertEqual(signature.strength, "strong")
+        self.assertEqual(signature.supports, "codex_subscription_relay")
+        self.assertEqual(signature.detail["bypassed_count"], 4)
+        sensitive_rows = [
+            item
+            for item in signature.detail["bypassed"]
+            if item["field"] in {"prompt_cache_key", "safety_identifier"}
+        ]
+        self.assertTrue(all(item["returned_field_value"] is None for item in sensitive_rows))
+        self.assertTrue(all(item["returned_field_sha256"] for item in sensitive_rows))
+
+    def test_openai_contract_match_does_not_prove_direct_channel(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        observations = []
+        for index, (_, _, spec) in enumerate(openai_contract_probe_specs(route)):
+            response = ProbeResponse(
+                int(spec["expected_status"]),
+                1,
+                {},
+                "{}",
+                {
+                    "error": {
+                        "code": spec["expected_error_code"],
+                        "type": "invalid_request_error",
+                        "param": spec["expected_error_param"],
+                    }
+                },
+                f"digest-{index}",
+            )
+            observations.append((spec, response))
+        evidence = openai_contract_evidence(observations)
+        self.assertEqual(len(evidence), 4)
+        self.assertTrue(all(item.category == "official_contract_match" for item in evidence))
+        self.assertTrue(all(item.supports is None for item in evidence))
+
+    def test_gemini_36_flash_contract_matrix_is_scoped_and_non_generating(self) -> None:
+        route = route_for_model("gemini-3.6-flash", "google", ["gemini"])
+        probes = gemini_contract_probe_specs(route)
+        self.assertEqual([item[0] for item in probes], [
+            "gemini_count_tokens",
+            "gemini_invalid_zero_output",
+            "gemini_invalid_unknown_field",
+            "gemini_missing_contents",
+        ])
+        self.assertTrue(probes[0][1].endswith(":countTokens"))
+        self.assertEqual(probes[0][2]["contents"][0]["parts"][0]["text"], "X")
+        self.assertNotIn("generationConfig", probes[0][2])
+        self.assertEqual(probes[1][2]["generationConfig"]["maxOutputTokens"], 0)
+        self.assertIsNone(route_for_model("gemini-3.1-pro", "google", ["gemini"]))
+
+    def test_gemini_official_contract_match_never_proves_direct_channel(self) -> None:
+        route = route_for_model("gemini-3.6-flash", "google", ["gemini"])
+        observations = []
+        for index, (_, _, _, spec) in enumerate(gemini_contract_probe_specs(route)):
+            if spec.get("expected_response_key"):
+                body = {spec["expected_response_key"]: 1}
+            else:
+                body = {"error": {"code": 400, "status": spec["expected_error_status"]}}
+            observations.append((spec, ProbeResponse(int(spec["expected_status"]), 1, {}, "{}", body, f"g-{index}")))
+        evidence = gemini_contract_evidence(observations)
+        self.assertEqual(len(evidence), 4)
+        self.assertTrue(all(item.category == "official_contract_match" for item in evidence))
+        self.assertTrue(all(item.supports is None for item in evidence))
+        self.assertEqual(classify(evidence, "gemini_developer_api")["verdict"], "inconclusive")
+
+    def test_gemini_bulk_validation_bypass_confirms_compatibility_relay(self) -> None:
+        route = route_for_model("gemini-3.6-flash", "google", ["gemini"])
+        observations = []
+        for index, (_, _, _, spec) in enumerate(gemini_contract_probe_specs(route)):
+            status = 200
+            body = {"totalTokens": 1} if spec.get("expected_response_key") else {"candidates": [], "usageMetadata": {}}
+            observations.append((spec, ProbeResponse(status, 1, {}, "{}", body, f"b-{index}")))
+        evidence = gemini_contract_evidence(observations)
+        signature = next(item for item in evidence if item.category == "gemini_request_contract_rewrite")
+        self.assertEqual(signature.detail["bypassed_count"], 3)
+        verdict = classify(evidence, "gemini_developer_api")
+        self.assertEqual(verdict["verdict"], "suspected_substitution")
+        self.assertEqual(verdict["likely_channel"], "gemini_compatibility_relay")
+        self.assertEqual(verdict["confidence"], 0.94)
+
+    def test_google_chat_probe_exposes_deleted_output_limit(self) -> None:
+        route = route_for_model("gemini-3.6-flash", "google", ["openai"])
+        path, payload = route_probe(route)
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(payload["max_tokens"], 1)
+        self.assertIn("twelve space-separated tokens", payload["messages"][0]["content"])
+        response = ProbeResponse(
+            200,
+            1,
+            {},
+            "{}",
+            {"choices": [{"message": {"content": "A B C D E F G H I J K L"}}], "usage": {"completion_tokens": 12}},
+            "gemini-limit-digest",
+        )
+        evidence = provenance_evidence("model_sync", route, payload, response)
+        rewrite = next(item for item in evidence if item.category == "gemini_max_token_rewrite")
+        self.assertEqual(rewrite.supports, "gemini_compatibility_relay")
+        self.assertEqual(rewrite.detail["requested_output_tokens"], 1)
+        self.assertEqual(rewrite.detail["reported_output_tokens"], 12)
+
+    def test_antigravity_hidden_alias_plus_cpa_headers_is_implementation_level_proof(self) -> None:
+        route = route_for_model("gemini-3.6-flash", "google", ["openai"])
+        path, payload, rule = antigravity_alias_probe(route)
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(payload["model"], "gemini-3.6-flash-high")
+        response = ProbeResponse(
+            200,
+            1,
+            {"x-cpa-trace-id": "20260729123456-node-trace"},
+            "{}",
+            {"model": "gemini-3.6-flash", "choices": [{"message": {"content": "X"}}]},
+            "antigravity-alias-digest",
+        )
+        evidence = implementation_evidence("antigravity_hidden_alias", route, response)
+        evidence.extend(antigravity_alias_evidence(route, response, rule))
+        verdict = classify(evidence, "gemini_developer_api")
+        self.assertEqual(verdict["verdict"], "suspected_substitution")
+        self.assertEqual(verdict["likely_channel"], "antigravity_subscription_relay")
+        self.assertEqual(verdict["confidence"], 0.99)
+
+    def test_claude_system_nonce_return_excludes_oauth_sanitization_for_that_request(self) -> None:
+        route = route_for_model("claude-fable-5", "anthropic", ["anthropic"])
+        path, payload, nonce = claude_system_preservation_probe(route)
+        self.assertEqual(path, "/v1/messages")
+        self.assertIn(nonce, payload["system"])
+        response = ProbeResponse(
+            200,
+            1,
+            {},
+            "{}",
+            {
+                "content": [{"type": "text", "text": nonce}],
+                "usage": {"input_tokens": 20, "cache_creation_input_tokens": 4000},
+            },
+            "claude-preserved",
+        )
+        evidence = claude_system_preservation_evidence(route, response, nonce)
+        self.assertEqual(evidence[0].category, "system_preservation_observation")
+        self.assertIsNone(evidence[0].supports)
+        self.assertTrue(evidence[0].detail["nonce_returned"])
+        self.assertNotIn(nonce, json.dumps(evidence[0].detail))
+
+    def test_claude_missing_system_nonce_plus_hidden_cache_and_cpa_confirms_oauth_cloak(self) -> None:
+        route = route_for_model("claude-opus-5", "anthropic", ["anthropic"])
+        _, _, nonce = claude_system_preservation_probe(route)
+        response = ProbeResponse(
+            200,
+            1,
+            {"x-cpa-trace-id": "20260729123456-node-trace"},
+            "{}",
+            {
+                "content": [{"type": "text", "text": "I cannot see a verification nonce."}],
+                "usage": {
+                    "input_tokens": 1156,
+                    "cache_creation_input_tokens": 6512,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+            "claude-oauth-cloak",
+        )
+        evidence = implementation_evidence("claude_system_preservation", route, response)
+        evidence.extend(claude_system_preservation_evidence(route, response, nonce))
+        signature = next(item for item in evidence if item.category == "claude_oauth_system_sanitization")
+        self.assertFalse(signature.detail["nonce_returned"])
+        self.assertNotIn(nonce, json.dumps(signature.detail))
+        verdict = classify(evidence, "anthropic_official")
+        self.assertEqual(verdict["verdict"], "suspected_substitution")
+        self.assertEqual(verdict["likely_channel"], "claude_subscription_relay")
+        self.assertEqual(verdict["confidence"], 0.99)
 
     def test_payload_evidence_recognizes_tool_structures_across_protocols(self) -> None:
         bodies = [
@@ -294,11 +584,74 @@ class EngineTests(unittest.TestCase):
         evidence = provenance_evidence("model_capability", route, payload, without_headers)
         self.assertEqual(classify(evidence, "anthropic_official")["verdict"], "inconclusive")
 
+    def test_native_claude_cache_creation_counts_toward_hidden_total_on_sync_probe(self) -> None:
+        route = route_for_model("claude-opus-5", "claude", ["anthropic"])
+        _, payload = route_probe(route, False)
+        response = ProbeResponse(
+            200,
+            1,
+            {"x-client-request-id": "uuid", "x-request-id": "req"},
+            "{}",
+            {
+                "type": "message",
+                "usage": {
+                    "input_tokens": 1156,
+                    "cache_creation_input_tokens": 6512,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 1,
+                },
+            },
+            "digest",
+        )
+        evidence = provenance_evidence("model_sync", route, payload, response)
+        hidden = next(item for item in evidence if item.category == "claude_hidden_prompt_cache")
+        self.assertEqual(hidden.detail["reported_total_input_tokens"], 7668)
+        result = classify(evidence, "anthropic_official")
+        self.assertEqual(result["likely_channel"], "claude_subscription_relay")
+        self.assertEqual(result["verdict"], "suspected_substitution")
+
     def test_latest_native_claude_probe_uses_output_config_effort(self) -> None:
         route = route_for_model("claude-fable-5", "claude", ["anthropic"])
         _, payload = route_probe(route, False)
         self.assertEqual(payload["output_config"], {"effort": "low"})
         self.assertNotIn("effort", payload)
+
+    def test_opus_4_8_uses_adaptive_thinking_controls(self) -> None:
+        route = route_for_model("claude-opus-4-8", "claude", ["anthropic"])
+        _, payload = capability_probe(route)
+        self.assertEqual(payload["thinking"], {"type": "adaptive", "display": "omitted"})
+        self.assertEqual(payload["output_config"], {"effort": "low"})
+
+    def test_within_run_token_bimodality_overrides_single_route_guess(self) -> None:
+        route = route_for_model("gpt-5.5", "openai", ["openai"])
+        evidence = within_run_route_divergence_evidence(
+            route,
+            [
+                {"probe": "model_sync", "input_tokens": 11, "hidden_instruction_chars": 0},
+                {"probe": "model_capability", "input_tokens": 4430, "hidden_instruction_chars": 21334},
+            ],
+        )
+        self.assertIsNotNone(evidence)
+        result = classify(
+            [
+                evidence,
+                Evidence("model_capability", "codex_prompt_fingerprint", "strong", "codex_subscription_relay", "x", {}),
+            ],
+            "openai_official",
+        )
+        self.assertEqual(result["likely_channel"], "heterogeneous_backend_pool")
+        self.assertEqual(result["verdict"], "suspected_substitution")
+        self.assertEqual(result["confidence"], 0.96)
+
+    def test_gpt_image_2_uses_only_non_generation_validation_payloads(self) -> None:
+        route = route_for_model("gpt-image-2", "openai", ["openai"])
+        probes = image_validation_probes(route)
+        self.assertEqual(len(probes), 3)
+        self.assertEqual(probes[0][1], "/v1/images/generations")
+        self.assertEqual(probes[0][2]["size"], "1x1")
+        self.assertNotIn("prompt", probes[0][2])
+        self.assertNotIn("prompt", probes[1][2])
+        self.assertEqual(probes[2][1], "/v1/responses")
 
 
 class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
@@ -306,10 +659,36 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
     def response(status: int, body: dict | None = None, headers: dict[str, str] | None = None, text: str = "") -> ProbeResponse:
         return ProbeResponse(status, 1, headers or {}, text or "{}", body or {}, f"digest-{status}")
 
+    async def test_gpt_image_2_run_uses_three_validation_responses_without_generation(self) -> None:
+        route = route_for_model("gpt-image-2", "openai", ["openai"])
+        requests = AsyncMock(
+            side_effect=[
+                self.response(400, {"error": {"type": "invalid_request_error", "code": "invalid_size"}}),
+                self.response(400, {"error": {"type": "invalid_request_error", "code": "missing_prompt"}}),
+                self.response(400, {"error": {"type": "invalid_request_error", "code": "unsupported_model"}}),
+            ]
+        )
+        upstream = {
+            "base_url": "https://relay.example/v1",
+            "api_key_encrypted": "encrypted",
+            "allow_paid_probes": 1,
+        }
+        with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
+            result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
+
+        self.assertEqual(result["protocol"], "openai_images")
+        self.assertEqual(result["success_probes"], 3)
+        self.assertEqual(result["planned_probes"], 3)
+        self.assertEqual(result["verdict"], "inconclusive")
+        payloads = [call.args[4] for call in requests.await_args_list]
+        self.assertTrue(all(payload.get("size") == "1x1" or "prompt" not in payload for payload in payloads))
+
     async def test_responses_404_falls_back_once_then_uses_chat_for_remaining_probes(self) -> None:
         route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
         requests = AsyncMock(
             side_effect=[
+                self.response(200, {"object": "chat.completion", "usage": {"prompt_tokens": 300}}),
+                self.response(200, {"type": "message", "usage": {"input_tokens": 300}}),
                 self.response(404, {"error": {"type": "not_found"}}),
                 self.response(200, {"id": "chatcmpl-sync"}),
                 self.response(200, text="data: {\"id\":\"chatcmpl-stream\"}\n\n", headers={"content-type": "text/event-stream"}),
@@ -325,15 +704,24 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
             result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
 
         urls = [call.args[2] for call in requests.await_args_list]
-        self.assertEqual(urls[0], "https://relay.example/v1/responses")
-        self.assertTrue(all(url == "https://relay.example/v1/chat/completions" for url in urls[1:]))
+        self.assertEqual(urls[:2], ["https://relay.example/v1/chat/completions", "https://relay.example/v1/messages"])
+        self.assertEqual(urls[2], "https://relay.example/v1/responses")
+        self.assertTrue(all(url == "https://relay.example/v1/chat/completions" for url in urls[3:]))
         self.assertEqual(result["protocol"], "openai_chat")
         self.assertEqual(result["planned_probes"], 3)
         self.assertEqual(result["success_probes"], 3)
 
     async def test_no_successful_model_request_remains_inconclusive(self) -> None:
         route = route_for_model("claude-fable-5", "claude", ["openai"])
-        requests = AsyncMock(side_effect=[self.response(401), self.response(401), self.response(401), self.response(401)])
+        requests = AsyncMock(
+            side_effect=[
+                self.response(401),
+                self.response(401),
+                self.response(401),
+                self.response(401),
+                self.response(401),
+            ]
+        )
         upstream = {
             "base_url": "https://relay.example/v1",
             "api_key_encrypted": "encrypted",
@@ -344,7 +732,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["verdict"], "inconclusive")
         self.assertEqual(result["confidence"], 0.0)
         self.assertEqual(result["success_probes"], 0)
-        self.assertEqual(result["planned_probes"], 4)
+        self.assertEqual(result["planned_probes"], 5)
 
     async def test_successful_protocol_translation_does_not_guess_terminal_channel(self) -> None:
         route = route_for_model("claude-fable-5", "claude", ["openai"])
@@ -353,6 +741,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
                 self.response(200, {"id": "chatcmpl-sync"}),
                 self.response(200, text="data: {\"id\":\"chatcmpl-stream\"}\n\n", headers={"content-type": "text/event-stream"}),
                 self.response(200, {"choices": [{"message": {"tool_calls": []}}]}),
+                self.response(404, {"error": {"type": "not_found"}}),
                 self.response(404, {"error": {"type": "not_found"}}),
             ]
         )
@@ -376,6 +765,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
                 self.response(200, {"id": "chatcmpl-sync"}),
                 self.response(200, text="data: {\"id\":\"chatcmpl-stream\"}\n\n", headers={"content-type": "text/event-stream"}),
                 self.response(200, {"choices": [{"message": {"tool_calls": []}}]}),
+                self.response(404, {"error": {"type": "not_found"}}),
                 self.response(200, {"id": "msg_native", "type": "message", "usage": {"input_tokens": 8, "output_tokens": 2}}),
             ]
         )
@@ -386,7 +776,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
         }
         with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
             result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
-        self.assertEqual(result["planned_probes"], 4)
+        self.assertEqual(result["planned_probes"], 5)
         self.assertEqual(result["success_probes"], 4)
         self.assertTrue(any(item.category == "protocol_declaration_conflict" for item in result["evidence"]))
         self.assertTrue(any(layer["kind"] == "protocol_declaration_conflict" for layer in result["chain"]["layers"]))
@@ -400,6 +790,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
                 httpx.ReadTimeout("slow capability"),
                 self.response(200, {"choices": [{"message": {"tool_calls": []}}]}),
                 self.response(404, {"error": {"type": "not_found"}}),
+                self.response(404, {"error": {"type": "not_found"}}),
             ]
         )
         upstream = {
@@ -409,7 +800,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
         }
         with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
             result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
-        self.assertEqual(requests.await_count, 5)
+        self.assertEqual(requests.await_count, 6)
         self.assertTrue(any(item.category == "probe_retry" for item in result["evidence"]))
         self.assertEqual(result["success_probes"], 3)
 

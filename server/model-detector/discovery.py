@@ -20,6 +20,9 @@ BLOCKED_MODEL_MARKERS = (
     "whisper",
 )
 
+SUPPORTED_IMAGE_MODELS = {"gpt-image-2"}
+SUPPORTED_GOOGLE_MODELS = {"gemini-3.6-flash"}
+
 
 @dataclass
 class ModelRoute:
@@ -46,6 +49,9 @@ def api_endpoint(base_url: str, path: str) -> str:
     parsed = urlparse(base_url)
     base_path = parsed.path.rstrip("/")
     clean_path = path if path.startswith("/") else f"/{path}"
+    if base_path.endswith("/v1") and clean_path.startswith("/api/"):
+        rebuilt = parsed._replace(path=clean_path, params="", query="", fragment="")
+        return rebuilt.geturl()
     if base_path.endswith("/v1") and clean_path.startswith("/v1beta/"):
         parent_path = base_path[: -len("/v1")]
         rebuilt = parsed._replace(path=(parent_path + clean_path), params="", query="", fragment="")
@@ -73,18 +79,27 @@ def model_family(model: str, owned_by: str = "") -> str | None:
     value = f"{model} {owned_by}".lower()
     if "claude" in value:
         return "anthropic"
-    if "gemini" in value:
+    if model.lower().startswith("gemini-") or "google" in value or "gemini" in value:
         return "google"
-    if model.lower().startswith(("gpt-", "o1", "o3", "o4")) or "openai" in owned_by.lower() or "codex" in value:
+    if model.lower().startswith(("gpt-", "o1", "o3", "o4")) or "codex" in model.lower():
         return "openai"
     return None
 
 
 def is_mainstream_text_model(model: str, family: str | None) -> bool:
-    if family not in {"openai", "anthropic", "google"}:
+    if family == "google":
+        return model.strip().lower() in SUPPORTED_GOOGLE_MODELS
+    if family not in {"openai", "anthropic"}:
         return False
     lower = model.lower()
     return not any(marker in lower for marker in BLOCKED_MODEL_MARKERS)
+
+
+def is_supported_model(model: str, family: str | None) -> bool:
+    normalized = model.strip().lower()
+    if normalized in SUPPORTED_IMAGE_MODELS:
+        return family == "openai"
+    return is_mainstream_text_model(model, family)
 
 
 def route_for_model(
@@ -94,7 +109,7 @@ def route_for_model(
     discovered_via: str = "openai_models",
 ) -> ModelRoute | None:
     family = model_family(model, owned_by)
-    if not is_mainstream_text_model(model, family):
+    if not is_supported_model(model, family):
         return None
     supported = sorted({str(item).strip().lower() for item in (supported_endpoint_types or []) if str(item).strip()})
     supported_text = " ".join(supported)
@@ -121,6 +136,19 @@ def route_for_model(
             reason = "按 Gemini 模型家族自动选择 generateContent"
         provider = "Google"
     else:
+        if model.lower() in SUPPORTED_IMAGE_MODELS:
+            return ModelRoute(
+                model=model,
+                family="openai",
+                provider="OpenAI",
+                protocol="openai_images",
+                endpoint="/v1/images/generations",
+                fallbacks=[],
+                supported_endpoint_types=supported,
+                owned_by=owned_by,
+                discovered_via=discovered_via,
+                route_reason="GPT Image 2 按官方能力使用 Images API；定时检测只发非生成型参数探针",
+            )
         if model.lower().startswith(("gpt-5", "o3", "o4")) or "codex" in model.lower():
             protocol, endpoint_path, fallbacks = "openai_responses", "/v1/responses", ["openai_chat"]
             reason = "OpenAI 最新推理/编码模型优先使用 Responses API"
@@ -158,7 +186,7 @@ def parse_model_inventory(payload: Any, discovered_via: str) -> list[ModelRoute]
                 )
     result: list[ModelRoute] = []
     for record in records:
-        model = str(record.get("id") or record.get("name") or "").removeprefix("models/").strip()
+        model = str(record.get("id") or record.get("name") or record.get("model_name") or "").removeprefix("models/").strip()
         if not model:
             continue
         supported = record.get("supported_endpoint_types")
@@ -184,6 +212,7 @@ async def discover_models(base_url: str, api_key: str, timeout_seconds: float = 
         ("openai_models", "/v1/models", {"authorization": f"Bearer {api_key}"}),
         ("anthropic_models", "/v1/models", {"x-api-key": api_key, "anthropic-version": "2023-06-01"}),
         ("gemini_models", "/v1beta/models", {"x-goog-api-key": api_key}),
+        ("new_api_pricing", "/api/pricing", {}),
     ]
     discovered: dict[str, ModelRoute] = {}
     observations: list[dict[str, Any]] = []
@@ -203,8 +232,18 @@ async def discover_models(base_url: str, api_key: str, timeout_seconds: float = 
             observations.append(observation)
             for route in routes:
                 current = discovered.get(route.model)
-                if current is None or len(route.supported_endpoint_types) > len(current.supported_endpoint_types):
+                if current is None:
                     discovered[route.model] = route
+                    continue
+                merged_supported = sorted(set(current.supported_endpoint_types) | set(route.supported_endpoint_types))
+                merged = route_for_model(
+                    route.model,
+                    route.owned_by or current.owned_by,
+                    merged_supported,
+                    "+".join(dict.fromkeys([current.discovered_via, route.discovered_via])),
+                )
+                if merged:
+                    discovered[route.model] = merged
     family_order = {"openai": 0, "anthropic": 1, "google": 2}
     models = sorted(discovered.values(), key=lambda item: (family_order.get(item.family, 9), item.model.lower()))
     return {"models": [item.to_dict() for item in models], "attempts": observations}

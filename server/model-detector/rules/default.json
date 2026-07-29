@@ -1,5 +1,128 @@
 {
-  "version": "2026.07.29.4",
+  "version": "2026.07.29.14",
+  "implementation_rules": {
+    "cliproxyapi": {
+      "lookback_runs": 12,
+      "trace_headers": ["x-cpa-trace-id"],
+      "cors_expose_markers": [
+        "x-cpa-version",
+        "x-cpa-commit",
+        "x-cpa-home-version",
+        "x-cpa-support-plugin"
+      ],
+      "source_urls": [
+        "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/logging/cpa_trace.go",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/api/server_middleware.go",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/runtime/executor/codex_executor_execute.go"
+      ],
+      "negative_reference_urls": [
+        "https://github.com/QuantumNous/new-api/blob/main/relay/channel/codex/adaptor.go"
+      ]
+    }
+  },
+  "official_baselines": {
+    "openai_responses": {
+      "model_pattern": "^gpt-5(?:\\.|-)",
+      "captured_at": "2026-07-29",
+      "source_urls": [
+        "https://developers.openai.com/api/docs/guides/model-guidance?model=gpt-5.6-sol",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+      ],
+      "minimal_input_tokens": {
+        "gpt-5.5": 9,
+        "gpt-5.6-luna": 9,
+        "gpt-5.6-sol": 9,
+        "gpt-5.6-terra": 9
+      },
+      "normal_response": {
+        "minimum_max_output_tokens": 16,
+        "instructions": null,
+        "prompt_cache_key": null,
+        "safety_identifier": null,
+        "prompt_cache_retention": "24h"
+      },
+      "contract_probes": [
+        {
+          "name": "openai_invalid_prompt_cache_retention",
+          "field": "prompt_cache_retention",
+          "value": "definitely-invalid",
+          "expected_status": 400,
+          "expected_error_code": "invalid_value",
+          "expected_error_param": "prompt_cache_retention"
+        },
+        {
+          "name": "openai_invalid_safety_identifier_type",
+          "field": "safety_identifier",
+          "value": {"bad": true},
+          "expected_status": 400,
+          "expected_error_code": "invalid_type",
+          "expected_error_param": "safety_identifier"
+        },
+        {
+          "name": "openai_invalid_prompt_cache_key_type",
+          "field": "prompt_cache_key",
+          "value": {"bad": true},
+          "expected_status": 400,
+          "expected_error_code": "invalid_type",
+          "expected_error_param": "prompt_cache_key"
+        },
+        {
+          "name": "openai_below_minimum_output_tokens",
+          "field": "max_output_tokens",
+          "value": 1,
+          "expected_status": 400,
+          "expected_error_code": "integer_below_min_value",
+          "expected_error_param": "max_output_tokens"
+        }
+      ]
+    },
+    "gemini_generate": {
+      "model": "gemini-3.6-flash",
+      "model_version": "3.6-flash-07-2026",
+      "captured_at": "2026-07-29",
+      "input_token_limit": 1048576,
+      "output_token_limit": 65536,
+      "supported_generation_methods": [
+        "generateContent",
+        "countTokens",
+        "createCachedContent",
+        "batchGenerateContent"
+      ],
+      "source_urls": [
+        "https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash",
+        "https://ai.google.dev/api/models"
+      ],
+      "contract_probes": [
+        {
+          "name": "gemini_count_tokens",
+          "operation": "countTokens",
+          "expected_status": 200,
+          "expected_response_key": "totalTokens"
+        },
+        {
+          "name": "gemini_invalid_zero_output",
+          "operation": "generateContent",
+          "field": "generationConfig.maxOutputTokens",
+          "expected_status": 400,
+          "expected_error_status": "INVALID_ARGUMENT"
+        },
+        {
+          "name": "gemini_invalid_unknown_field",
+          "operation": "generateContent",
+          "field": "modelDetectorInvalid",
+          "expected_status": 400,
+          "expected_error_status": "INVALID_ARGUMENT"
+        },
+        {
+          "name": "gemini_missing_contents",
+          "operation": "generateContent",
+          "field": "contents",
+          "expected_status": 400,
+          "expected_error_status": "INVALID_ARGUMENT"
+        }
+      ]
+    }
+  },
   "history_rules": {
     "claude_route_change": {
       "lookback_runs": 12,
@@ -34,9 +157,28 @@
       "model_pattern": "claude",
       "minimum_cache_creation_tokens": 2000,
       "minimum_total_input_tokens": 2500,
+      "system_probe_minimum_cache_creation_tokens": 1500,
+      "system_probe_minimum_total_input_tokens": 2000,
       "source_urls": [
         "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/claude_executor_request.go",
-        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/helps/claude_code_session.go"
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/helps/claude_code_session.go",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/runtime/executor/claude_executor_cloaking.go",
+        "https://github.com/router-for-me/CLIProxyAPI/issues/4146",
+        "https://github.com/router-for-me/CLIProxyAPI/issues/4383"
+      ]
+    },
+    "antigravity": {
+      "channel": "antigravity_subscription_relay",
+      "model": "gemini-3.6-flash",
+      "hidden_alias": "gemini-3.6-flash-high",
+      "maximum_requested_output_tokens": 1,
+      "minimum_rewritten_output_tokens": 4,
+      "source_urls": [
+        "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/registry/models/models.json",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/runtime/executor/antigravity_executor_request.go",
+        "https://github.com/router-for-me/CLIProxyAPI/issues/4504",
+        "https://github.com/router-for-me/CLIProxyAPI/issues/4494",
+        "https://github.com/heyhuynhgiabuu/proxypal/blob/main/src-tauri/src/utils.rs"
       ]
     }
   },

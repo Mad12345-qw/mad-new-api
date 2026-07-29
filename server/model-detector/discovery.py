@@ -75,7 +75,7 @@ def model_family(model: str, owned_by: str = "") -> str | None:
     value = f"{model} {owned_by}".lower()
     if "claude" in value:
         return "anthropic"
-    if model.lower().startswith(("gpt-", "o1", "o3", "o4")) or "openai" in owned_by.lower() or "codex" in value:
+    if model.lower().startswith(("gpt-", "o1", "o3", "o4")) or "codex" in model.lower():
         return "openai"
     return None
 

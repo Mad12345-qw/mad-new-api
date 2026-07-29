@@ -43,7 +43,7 @@ class DiscoveryTests(unittest.TestCase):
                 {"id": "gpt-image-2", "owned_by": "openai", "supported_endpoint_types": ["openai"]},
                 {"id": "gpt-image-2-4k", "owned_by": "openai", "supported_endpoint_types": ["openai"]},
                 {"id": "gemini-3.1-pro", "owned_by": "google", "supported_endpoint_types": ["gemini"]},
-                {"id": "unrelated-model", "owned_by": "custom", "supported_endpoint_types": ["openai"]},
+                {"id": "unrelated-model", "owned_by": "openai", "supported_endpoint_types": ["openai"]},
             ]
         }
         routes = parse_model_inventory(payload, "openai_models")

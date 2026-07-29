@@ -293,6 +293,132 @@ def aggregate_model_results(model_results: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def _integer(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def capability_usage_profile(detail: dict[str, Any]) -> dict[str, Any] | None:
+    usage = detail.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    billing = usage.get("billing_usage")
+    billing = billing if isinstance(billing, dict) else {}
+    claude_usage = billing.get("claude_usage")
+    claude_usage = claude_usage if isinstance(claude_usage, dict) else {}
+    prompt_details = usage.get("prompt_tokens_details")
+    prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
+    input_tokens = _integer(usage.get("prompt_tokens")) or _integer(usage.get("input_tokens")) or _integer(claude_usage.get("input_tokens"))
+    cache_creation = (
+        _integer(claude_usage.get("cache_creation_input_tokens"))
+        or _integer(usage.get("cache_creation_input_tokens"))
+        or _integer(prompt_details.get("cache_creation_tokens"))
+        or _integer(prompt_details.get("cached_creation_tokens"))
+    )
+    if input_tokens >= 2500 and cache_creation >= 2000:
+        profile_kind = "claude_code_hidden_prompt"
+    elif input_tokens <= 500 and cache_creation <= 500:
+        profile_kind = "lightweight_adapter"
+    else:
+        profile_kind = "intermediate"
+    return {
+        "kind": profile_kind,
+        "input_tokens": input_tokens,
+        "cache_creation_tokens": cache_creation,
+        "usage_source": usage.get("usage_source"),
+        "billing_source": billing.get("source"),
+        "usage_keys": sorted(str(key) for key in usage),
+    }
+
+
+def historical_route_change_evidence(current: dict[str, Any], history: list[dict[str, Any]]) -> Evidence | None:
+    profiles = [item for item in [*history, current] if item]
+    kinds = {str(item.get("kind")) for item in profiles}
+    if not {"claude_code_hidden_prompt", "lightweight_adapter"}.issubset(kinds):
+        return None
+    hidden = next(item for item in profiles if item.get("kind") == "claude_code_hidden_prompt")
+    lightweight = next(item for item in reversed(profiles) if item.get("kind") == "lightweight_adapter")
+    ratio = round(_integer(hidden.get("input_tokens")) / max(1, _integer(lightweight.get("input_tokens"))), 1)
+    return Evidence(
+        "historical_capability_consistency",
+        "historical_route_change",
+        "strong",
+        "heterogeneous_backend_pool",
+        "同一 Claude 模型的固定探针出现互斥后端行为",
+        {
+            "rule_id": "claude_historical_route_change_v1",
+            "comparison_probe": "model_capability",
+            "hidden_prompt_profile": hidden,
+            "lightweight_profile": lightweight,
+            "input_token_ratio": ratio,
+            "observed_profiles": profiles[-8:],
+            "conclusion": "至少发生过后端路由池异构或供应商渠道切换；黑盒无法区分同时轮询与时间上的配置更换",
+        },
+    )
+
+
+def apply_historical_route_changes(upstream_id: int, model_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for result in model_results:
+        if result.get("family") != "anthropic":
+            continue
+        current_profile: dict[str, Any] | None = None
+        for item in result.get("evidence", []):
+            if item.probe == "model_capability" and item.category == "token_accounting":
+                current_profile = capability_usage_profile(item.detail)
+                break
+        if not current_profile:
+            continue
+        rows = db.rows(
+            "SELECT r.id AS run_id,r.started_at,e.detail_json FROM evidence e "
+            "JOIN runs r ON r.id=e.run_id "
+            "WHERE r.upstream_id=? AND r.mode='active' AND r.status='completed' "
+            "AND e.model=? AND e.probe='model_capability' AND e.category='token_accounting' "
+            "ORDER BY r.id DESC LIMIT 12",
+            (upstream_id, result["model"]),
+        )
+        history: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            try:
+                profile = capability_usage_profile(json.loads(row["detail_json"]))
+            except (json.JSONDecodeError, TypeError):
+                profile = None
+            if profile:
+                profile["run_id"] = row["run_id"]
+                profile["started_at"] = row["started_at"]
+                history.append(profile)
+        current_profile["run_id"] = "current"
+        current_profile["started_at"] = utc_now()
+        evidence = historical_route_change_evidence(current_profile, history)
+        if not evidence:
+            continue
+        result["evidence"].append(evidence)
+        layer = {
+            "position": "intermediate",
+            "kind": "heterogeneous_backend_pool",
+            "label": "后端路由池异构或渠道发生切换",
+            "confidence": 0.93,
+            "status": "confirmed_change",
+            "note": "确认行为发生过切换，但无法仅凭黑盒区分并行轮询池和供应商配置更换",
+        }
+        chain = result.get("chain") or {"layers": []}
+        layers = chain.setdefault("layers", [])
+        terminal_index = next((index for index, item in enumerate(layers) if item.get("position") == "terminal"), len(layers))
+        layers.insert(terminal_index, layer)
+        chain["observed_logical_layers"] = len(layers)
+        result["chain"] = chain
+        if result.get("verdict") == "inconclusive":
+            result.update(
+                {
+                    "verdict": "probable_alternate_channel",
+                    "likely_channel": "heterogeneous_backend_pool",
+                    "confidence": 0.93,
+                    "summary": "历史同一工具探针在 Claude Code 隐藏提示路径与轻量适配路径之间切换，确认后端路由不稳定；当前无法归因于单一官方渠道",
+                }
+            )
+        else:
+            result["summary"] += "；历史行为同时显示后端路由池异构或渠道切换"
+    return model_results
+
+
 async def save_model_results(run_id: int, model_results: list[dict[str, Any]]) -> None:
     with db.connect() as connection:
         for item in model_results:
@@ -337,6 +463,7 @@ async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) ->
         model_results: list[dict[str, Any]] = []
         if mode == "active":
             model_results = await engine.run_models(upstream, routes_for_upstream(upstream))
+            model_results = apply_historical_route_changes(upstream["id"], model_results)
             await save_model_results(run_id, model_results)
             result = aggregate_model_results(model_results)
         else:

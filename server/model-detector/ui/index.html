@@ -93,7 +93,7 @@
   <script>
     const $=s=>document.querySelector(s);let state={upstreams:[],runs:[],settings:{}};
     const verdictText={confirmed_direct:'官方直连已确认',probable_alternate_channel:'疑似其他渠道',suspected_substitution:'疑似替换',inconclusive:'无法判断'};
-    async function api(path,options={}){const r=await fetch(`/detector/api${path}`,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})},...options});if(r.status===401)throw Object.assign(new Error('unauthorized'),{unauthorized:true});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.detail||`HTTP ${r.status}`);return data}
+    async function api(path,options={}){let uid='';try{uid=localStorage.getItem('uid')||''}catch{}const commonHeaders={'Content-Type':'application/json'};if(/^\d+$/.test(uid))commonHeaders['New-Api-User']=uid;const r=await fetch(`/detector/api${path}`,{credentials:'same-origin',headers:{...commonHeaders,...(options.headers||{})},...options});if(r.status===401)throw Object.assign(new Error('unauthorized'),{unauthorized:true});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.detail||`HTTP ${r.status}`);return data}
     const escapeHtml=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
     function pill(v){return `<span class="pill ${escapeHtml(v||'inconclusive')}">${escapeHtml(verdictText[v]||v||'尚未检测')}</span>`}
     function latestFor(id){return state.runs.find(r=>r.upstream_id===id&&r.status==='completed')}

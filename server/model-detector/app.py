@@ -89,17 +89,19 @@ def require_admin(request: Request, detector_session: str = Cookie(default="")) 
         return
     internal_url = os.environ.get("DETECTOR_NEW_API_INTERNAL_URL", "").strip()
     cookie = request.headers.get("cookie", "")
-    if internal_url and cookie:
+    new_api_user = request.headers.get("new-api-user", "").strip()
+    if internal_url and cookie and new_api_user.isdigit():
         try:
             response = httpx.get(
                 internal_url.rstrip("/") + "/api/user/self",
-                headers={"cookie": cookie},
+                headers={"cookie": cookie, "New-Api-User": new_api_user},
                 timeout=3,
                 follow_redirects=False,
             )
             payload = response.json() if response.status_code == 200 else {}
             role = int(((payload.get("data") or {}).get("role") or 0)) if isinstance(payload, dict) else 0
-            if payload.get("success") is True and role >= 10:
+            returned_id = str(((payload.get("data") or {}).get("id") or "")) if isinstance(payload, dict) else ""
+            if payload.get("success") is True and role >= 10 and returned_id == new_api_user:
                 return
         except (httpx.HTTPError, ValueError, TypeError):
             pass

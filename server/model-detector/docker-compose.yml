@@ -28,6 +28,15 @@ services:
       retries: 6
       start_period: 25s
 
+  detector-init:
+    image: mad-model-detector:${RELEASE_TAG}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R 10001:10001 /data"]
+    restart: "no"
+    volumes:
+      - ./data/detector:/data
+
   model-detector:
     image: mad-model-detector:${RELEASE_TAG}
     restart: unless-stopped
@@ -40,6 +49,11 @@ services:
       DETECTOR_NEW_API_INTERNAL_URL: http://new-api:3000
     volumes:
       - ./data/detector:/data
+    depends_on:
+      detector-init:
+        condition: service_completed_successfully
+      new-api:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
       interval: 20s

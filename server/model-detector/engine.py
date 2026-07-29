@@ -507,31 +507,63 @@ def cliproxyapi_header_fingerprint(headers: dict[str, str]) -> dict[str, Any] | 
 
 
 def implementation_evidence(probe: str, route: ModelRoute, response: ProbeResponse) -> list[Evidence]:
+    result: list[Evidence] = []
     fingerprint = cliproxyapi_header_fingerprint(response.headers)
-    if not fingerprint:
-        return []
-    supports = None
-    if route.family == "openai":
-        supports = "codex_subscription_relay"
-    elif route.family == "anthropic":
-        supports = "claude_subscription_relay"
-    elif route.family == "google":
-        supports = "gemini_compatibility_relay"
-    return [
-        Evidence(
-            probe,
-            "cliproxyapi_implementation",
-            "strong",
-            supports,
-            "检测到 CLIProxyAPI 专属 CPA 响应头",
-            {
-                "rule_id": "cliproxyapi_cpa_headers_v1",
-                **fingerprint,
-                "note": "X-CPA-TRACE-ID 及 CPA CORS 暴露列表由 CLIProxyAPI 源码直接定义；可证明该实现或其直接分支位于链路中，但不能单独枚举其前后的物理跳数",
-            },
-            response.raw_sha256,
+    if fingerprint:
+        supports = None
+        if route.family == "openai":
+            supports = "codex_subscription_relay"
+        elif route.family == "anthropic":
+            supports = "claude_subscription_relay"
+        elif route.family == "google":
+            supports = "gemini_compatibility_relay"
+        result.append(
+            Evidence(
+                probe,
+                "cliproxyapi_implementation",
+                "strong",
+                supports,
+                "检测到 CLIProxyAPI 专属 CPA 响应头",
+                {
+                    "rule_id": "cliproxyapi_cpa_headers_v1",
+                    **fingerprint,
+                    "note": "X-CPA-TRACE-ID 及 CPA CORS 暴露列表由 CLIProxyAPI 源码直接定义；可证明该实现或其直接分支位于链路中，但不能单独枚举其前后的物理跳数",
+                },
+                response.raw_sha256,
+            )
         )
-    ]
+
+    provider = response.headers.get("x-omniroute-provider", "").strip().lower()
+    routed_model = response.headers.get("x-omniroute-model", "").strip()
+    version = response.headers.get("x-omniroute-version", "").strip()
+    decision = response.headers.get("x-omniroute-decision", "").strip()
+    response_model = ""
+    if isinstance(response.body_json, dict):
+        response_model = str(response.body_json.get("model") or response.body_json.get("modelVersion") or "").strip()
+    antigravity_disclosed = provider == "antigravity" or "provider=antigravity" in decision.lower()
+    if route.family == "google" and antigravity_disclosed:
+        omniroute_rule = RULE_PACK.get("implementation_rules", {}).get("omniroute", {})
+        result.append(
+            Evidence(
+                probe,
+                "omniroute_provider_disclosure",
+                "strong",
+                "antigravity_subscription_relay",
+                "OmniRoute 响应头直接披露 Antigravity 上游",
+                {
+                    "rule_id": "omniroute_provider_disclosure_v1",
+                    "provider": provider or "antigravity",
+                    "routed_model": routed_model,
+                    "response_model": response_model,
+                    "version": version,
+                    "decision": decision,
+                    "source_urls": [str(item) for item in omniroute_rule.get("source_urls", [])],
+                    "note": "OmniRoute 官方接口文档定义 X-OmniRoute-Provider 为实际选中的 provider alias；该头仍可被自定义网关仿造，因此最高置信度还需结合独立的请求改写行为",
+                },
+                response.raw_sha256,
+            )
+        )
+    return result
 
 
 def provenance_evidence(
@@ -1766,6 +1798,26 @@ def observed_chain(evidence: list[Evidence], route: ModelRoute, terminal: dict[s
                     "note": "该标记可能由外层保留或仿造，因此不单独增加已确认跳数",
                 }
             )
+    omniroute_disclosure = next(
+        (item for item in evidence if item.category == "omniroute_provider_disclosure"),
+        None,
+    )
+    has_omniroute = omniroute_disclosure is not None
+    if omniroute_disclosure:
+        layers.append(
+            {
+                "position": "intermediate",
+                "kind": "omniroute",
+                "label": "OmniRoute 路由层",
+                "confidence": 0.99,
+                "status": "confirmed",
+                "note": (
+                    f"响应遥测披露 provider={omniroute_disclosure.detail.get('provider')}、"
+                    f"model={omniroute_disclosure.detail.get('routed_model')}、"
+                    f"version={omniroute_disclosure.detail.get('version')}"
+                ),
+            }
+        )
     has_cliproxy = any(item.category == "cliproxyapi_implementation" for item in evidence)
     if has_cliproxy:
         layers.append(
@@ -1862,7 +1914,12 @@ def observed_chain(evidence: list[Evidence], route: ModelRoute, terminal: dict[s
     # additional physical relay hop.  Keep the network-hop lower bound separate
     # from the number of visible logical layers to avoid overstating a multi-hop
     # chain.
-    confirmed_hops = 1 + (1 if has_cliproxy else 0) + (1 if layers[-1]["kind"] != "unknown_terminal" else 0)
+    confirmed_hops = (
+        1
+        + (1 if has_omniroute else 0)
+        + (1 if has_cliproxy else 0)
+        + (1 if layers[-1]["kind"] != "unknown_terminal" else 0)
+    )
     return {
         "layers": layers,
         "observed_logical_layers": len(layers),
@@ -1954,7 +2011,17 @@ def classify(evidence: list[Evidence], claimed_channel: str = "unknown") -> dict
         and item.strength == "strong"
         for item in evidence
     )
-    likely = "antigravity_subscription_relay" if has_antigravity_alias else max(channel_score, key=channel_score.get)
+    has_antigravity_disclosure = any(
+        item.category == "omniroute_provider_disclosure"
+        and item.supports == "antigravity_subscription_relay"
+        and item.strength == "strong"
+        for item in evidence
+    )
+    likely = (
+        "antigravity_subscription_relay"
+        if has_antigravity_alias or has_antigravity_disclosure
+        else max(channel_score, key=channel_score.get)
+    )
     categories = channel_categories[likely]
     confidence = min(0.99, channel_score[likely])
     endpoint_support = any(item.category == "endpoint" and item.supports == likely and item.strength == "strong" for item in evidence)
@@ -1971,7 +2038,28 @@ def classify(evidence: list[Evidence], claimed_channel: str = "unknown") -> dict
     }
     if likely == "antigravity_subscription_relay":
         has_alias = "antigravity_hidden_alias" in categories
+        has_disclosure = "omniroute_provider_disclosure" in categories
         has_cpa = any(item.category == "cliproxyapi_implementation" for item in evidence)
+        has_independent_rewrite = any(
+            item.category in {"gemini_max_token_rewrite", "gemini_request_contract_rewrite"}
+            for item in evidence
+        )
+        if has_disclosure and has_independent_rewrite:
+            verdict = "suspected_substitution" if claimed_channel in direct_channels else "probable_alternate_channel"
+            return {
+                "verdict": verdict,
+                "likely_channel": likely,
+                "confidence": 0.99,
+                "summary": "OmniRoute 的路由遥测头直接披露 provider=antigravity 与实际 Gemini 档位，且独立的参数改写探针同时命中；确认经 OmniRoute 使用 Google Antigravity/Cloud Code Assist 路径，并非 Gemini Developer API Key 官方直连",
+            }
+        if has_disclosure:
+            verdict = "suspected_substitution" if claimed_channel in direct_channels else "probable_alternate_channel"
+            return {
+                "verdict": verdict,
+                "likely_channel": likely,
+                "confidence": 0.97,
+                "summary": "OmniRoute 的路由遥测头直接披露 provider=antigravity 与实际 Gemini 档位；高度确定使用 Google Antigravity/Cloud Code Assist 路径，但尚缺少同轮独立行为指纹",
+            }
         if has_alias:
             verdict = "suspected_substitution" if claimed_channel in direct_channels else "probable_alternate_channel"
             return {

@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import tempfile
 import unittest
@@ -187,6 +188,99 @@ class AppTests(unittest.TestCase):
         self.assertEqual(detail["model_results"][0]["model"], "claude-fable-5")
         self.assertEqual(detail["model_results"][0]["chain"]["minimum_confirmed_hops"], 1)
         self.assertTrue(any(item["model"] == "claude-fable-5" for item in detail["evidence"]))
+
+    def test_historical_claude_route_change_is_promoted_to_a_model_verdict(self) -> None:
+        self.login()
+        route = {
+            "model": "claude-fable-5",
+            "family": "anthropic",
+            "provider": "Anthropic",
+            "protocol": "openai_chat",
+            "endpoint": "/v1/chat/completions",
+            "fallbacks": [],
+            "supported_endpoint_types": ["openai"],
+            "owned_by": "claude",
+            "discovered_via": "openai_models",
+            "route_reason": "translation",
+        }
+        with patch("app.validate_public_api_url", return_value=None):
+            upstream = self.client.post(
+                "/detector/api/upstreams",
+                json={
+                    "name": "Historical Route Relay",
+                    "base_url": "https://history.example/v1",
+                    "api_key": "unit-secret-history-9999",
+                    "model_routes": [route],
+                    "allow_paid_probes": True,
+                },
+            ).json()
+        historical_run = service.db.execute(
+            "INSERT INTO runs(upstream_id,trigger,mode,status,verdict,likely_channel,confidence,summary,rule_version,started_at,finished_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                upstream["id"],
+                "manual",
+                "active",
+                "completed",
+                "inconclusive",
+                "unknown",
+                0.0,
+                "historical",
+                service.RULE_VERSION,
+                service.utc_now(),
+                service.utc_now(),
+            ),
+        )
+        historical_detail = {
+            "usage": {
+                "prompt_tokens": 6933,
+                "billing_usage": {
+                    "source": "claude_messages",
+                    "claude_usage": {"input_tokens": 1248, "cache_creation_input_tokens": 5685},
+                },
+            }
+        }
+        service.db.execute(
+            "INSERT INTO evidence(run_id,model,probe,category,strength,supports,title,detail_json,raw_sha256,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                historical_run,
+                "claude-fable-5",
+                "model_capability",
+                "token_accounting",
+                "info",
+                None,
+                "usage",
+                json.dumps(historical_detail),
+                None,
+                service.utc_now(),
+            ),
+        )
+        current = {
+            "model": "claude-fable-5",
+            "family": "anthropic",
+            "verdict": "inconclusive",
+            "likely_channel": "unknown",
+            "confidence": 0.0,
+            "summary": "unknown terminal",
+            "chain": {"layers": [{"position": "terminal", "kind": "unknown_terminal"}]},
+            "evidence": [
+                service.Evidence(
+                    "model_capability",
+                    "token_accounting",
+                    "info",
+                    None,
+                    "usage",
+                    {"usage": {"prompt_tokens": 110, "prompt_tokens_details": {"cache_creation_tokens": 31}}},
+                )
+            ],
+        }
+        adjusted = service.apply_historical_route_changes(upstream["id"], [current])[0]
+        self.assertEqual(adjusted["likely_channel"], "heterogeneous_backend_pool")
+        self.assertEqual(adjusted["verdict"], "probable_alternate_channel")
+        self.assertEqual(adjusted["confidence"], 0.93)
+        self.assertTrue(any(item.category == "historical_route_change" for item in adjusted["evidence"]))
+        self.assertTrue(any(layer["kind"] == "heterogeneous_backend_pool" for layer in adjusted["chain"]["layers"]))
 
 
 if __name__ == "__main__":

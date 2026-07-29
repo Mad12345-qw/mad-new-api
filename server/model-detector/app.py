@@ -400,6 +400,43 @@ def historical_cliproxyapi_evidence(upstream_id: int, model: str) -> Evidence | 
     return None
 
 
+def historical_claude_divergence_evidence(upstream_id: int, model: str) -> Evidence | None:
+    lookback_runs = int(CLAUDE_HISTORY_RULE.get("lookback_runs", 12))
+    row = db.row(
+        "SELECT r.id AS run_id,r.started_at,e.detail_json,e.raw_sha256 FROM evidence e "
+        "JOIN runs r ON r.id=e.run_id "
+        "WHERE r.upstream_id=? AND r.mode='active' AND r.status='completed' "
+        "AND e.model=? AND e.category='within_run_route_divergence' "
+        "AND r.id IN (SELECT id FROM runs WHERE upstream_id=? AND mode='active' AND status='completed' "
+        "ORDER BY id DESC LIMIT ?) "
+        "ORDER BY r.id DESC,e.id DESC LIMIT 1",
+        (upstream_id, model, upstream_id, lookback_runs),
+    )
+    if not row:
+        return None
+    try:
+        source_detail = json.loads(row["detail_json"])
+    except (json.JSONDecodeError, TypeError):
+        source_detail = {}
+    return Evidence(
+        "historical_within_run_consistency",
+        "historical_within_run_route_divergence",
+        "strong",
+        "heterogeneous_backend_pool",
+        "近期同一模型曾在单轮中命中互斥后端路径",
+        {
+            "rule_id": "historical_within_run_route_divergence_v1",
+            "source_run_id": row["run_id"],
+            "source_started_at": row["started_at"],
+            "source_rule_id": source_detail.get("rule_id"),
+            "source_conclusion": source_detail.get("conclusion"),
+            "lookback_runs": lookback_runs,
+            "note": "负载均衡可能让当前轮只抽到轻量节点；在有限回看窗口内保留已确认的同轮互斥路径，不能据此声称每个请求都经过相同后端",
+        },
+        row["raw_sha256"],
+    )
+
+
 def apply_historical_route_changes(upstream_id: int, model_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     confidence = float(CLAUDE_HISTORY_RULE.get("confidence", 0.93))
     lookback_runs = int(CLAUDE_HISTORY_RULE.get("lookback_runs", 12))
@@ -443,8 +480,46 @@ def apply_historical_route_changes(upstream_id: int, model_results: list[dict[st
                     result["chain"] = chain
         if result.get("family") != "anthropic":
             continue
+        evidence_items = result.get("evidence", [])
+        has_current_divergence = any(item.category == "within_run_route_divergence" for item in evidence_items)
+        if result.get("likely_channel") != "heterogeneous_backend_pool" and not has_current_divergence:
+            historical_divergence = historical_claude_divergence_evidence(upstream_id, str(result["model"]))
+            if historical_divergence:
+                evidence_items.append(historical_divergence)
+                current_summary = str(result.get("summary") or "")
+                current_was_inconclusive = result.get("verdict") == "inconclusive"
+                result.update(
+                    {
+                        "verdict": "suspected_substitution",
+                        "likely_channel": "heterogeneous_backend_pool",
+                        "confidence": max(0.94, float(result.get("confidence") or 0.0)),
+                        "summary": (
+                            "近期同一模型已在单轮固定探针中确认互斥后端路径；本轮可能只抽到轻量节点，不能据此恢复为稳定、单一的官方直连"
+                            if current_was_inconclusive
+                            else current_summary + "；近期同模型还确认过互斥后端路径，整体应判定为异构池而不是单一渠道"
+                        ),
+                    }
+                )
+                chain = result.get("chain") or {"layers": []}
+                layers = chain.setdefault("layers", [])
+                terminal = next((item for item in layers if item.get("position") == "terminal"), None)
+                historical_terminal = {
+                    "position": "terminal",
+                    "kind": "heterogeneous_backend_pool",
+                    "label": "异构后端池或渠道切换（近期确认）",
+                    "confidence": float(result["confidence"]),
+                    "status": "confirmed_recent",
+                    "note": "来源为有限回看窗口内同一模型的单轮互斥路径证据；当前轮可能落到另一节点",
+                }
+                if terminal:
+                    terminal.update(historical_terminal)
+                else:
+                    layers.append(historical_terminal)
+                chain["minimum_confirmed_hops"] = max(2, int(chain.get("minimum_confirmed_hops") or 0))
+                chain["observed_logical_layers"] = len(layers)
+                result["chain"] = chain
         current_profile: dict[str, Any] | None = None
-        for item in result.get("evidence", []):
+        for item in evidence_items:
             if item.probe == "model_capability" and item.category == "token_accounting":
                 current_profile = capability_usage_profile(item.detail)
                 break

@@ -382,6 +382,118 @@ class AppTests(unittest.TestCase):
         self.assertTrue(any(layer["kind"] == "cliproxyapi" for layer in adjusted["chain"]["layers"]))
         self.assertEqual(adjusted["chain"]["minimum_confirmed_hops"], 3)
 
+    def test_recent_within_run_claude_divergence_survives_a_lightweight_round(self) -> None:
+        self.login()
+        with patch("app.validate_public_api_url", return_value=None):
+            upstream = self.client.post(
+                "/detector/api/upstreams",
+                json={
+                    "name": "Historical Claude Pool",
+                    "base_url": "https://claude-pool.example/v1",
+                    "api_key": "unit-secret-claude-pool-9999",
+                    "models": ["claude-fable-5"],
+                    "allow_paid_probes": True,
+                },
+            ).json()
+        historical_run = service.db.execute(
+            "INSERT INTO runs(upstream_id,trigger,mode,status,verdict,likely_channel,confidence,summary,rule_version,started_at,finished_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                upstream["id"],
+                "manual",
+                "active",
+                "completed",
+                "suspected_substitution",
+                "heterogeneous_backend_pool",
+                0.96,
+                "historical divergence",
+                service.RULE_VERSION,
+                service.utc_now(),
+                service.utc_now(),
+            ),
+        )
+        service.db.execute(
+            "INSERT INTO evidence(run_id,model,probe,category,strength,supports,title,detail_json,raw_sha256,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                historical_run,
+                "claude-fable-5",
+                "within_run_consistency",
+                "within_run_route_divergence",
+                "strong",
+                "heterogeneous_backend_pool",
+                "divergent paths",
+                json.dumps(
+                    {
+                        "rule_id": "within_run_route_divergence_v1",
+                        "conclusion": "same model reached mutually exclusive paths",
+                    }
+                ),
+                "historical-divergence-digest",
+                service.utc_now(),
+            ),
+        )
+        current = {
+            "model": "claude-fable-5",
+            "family": "anthropic",
+            "verdict": "inconclusive",
+            "likely_channel": "unknown",
+            "confidence": 0.0,
+            "summary": "lightweight current node",
+            "chain": {
+                "layers": [
+                    {"position": "outer", "kind": "new_api_gateway"},
+                    {"position": "terminal", "kind": "unknown_terminal"},
+                ],
+                "minimum_confirmed_hops": 1,
+            },
+            "evidence": [
+                service.Evidence(
+                    "model_capability",
+                    "token_accounting",
+                    "info",
+                    None,
+                    "usage",
+                    {"usage": {"input_tokens": 17, "cache_read_input_tokens": 79}},
+                )
+            ],
+        }
+        adjusted = service.apply_historical_route_changes(upstream["id"], [current])[0]
+        self.assertEqual(adjusted["verdict"], "suspected_substitution")
+        self.assertEqual(adjusted["likely_channel"], "heterogeneous_backend_pool")
+        self.assertEqual(adjusted["confidence"], 0.94)
+        self.assertTrue(
+            any(item.category == "historical_within_run_route_divergence" for item in adjusted["evidence"])
+        )
+        terminal = next(item for item in adjusted["chain"]["layers"] if item["position"] == "terminal")
+        self.assertEqual(terminal["kind"], "heterogeneous_backend_pool")
+        self.assertEqual(terminal["status"], "confirmed_recent")
+        self.assertEqual(adjusted["chain"]["minimum_confirmed_hops"], 2)
+
+        translated_current = {
+            "model": "claude-fable-5",
+            "family": "anthropic",
+            "verdict": "suspected_substitution",
+            "likely_channel": "claude_compatibility_relay",
+            "confidence": 0.96,
+            "summary": "current OpenAI to Claude translation",
+            "chain": {
+                "layers": [
+                    {"position": "outer", "kind": "new_api_gateway"},
+                    {"position": "terminal", "kind": "claude_compatibility_relay"},
+                ],
+                "minimum_confirmed_hops": 2,
+            },
+            "evidence": [],
+        }
+        translated_adjusted = service.apply_historical_route_changes(
+            upstream["id"], [translated_current]
+        )[0]
+        self.assertEqual(translated_adjusted["verdict"], "suspected_substitution")
+        self.assertEqual(translated_adjusted["likely_channel"], "heterogeneous_backend_pool")
+        self.assertEqual(translated_adjusted["confidence"], 0.96)
+        self.assertIn("OpenAI to Claude translation", translated_adjusted["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()

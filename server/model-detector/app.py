@@ -289,7 +289,7 @@ def aggregate_model_results(model_results: list[dict[str, Any]]) -> dict[str, An
         "confidence": strongest["confidence"],
         "summary": (
             f"{strongest['model']}：{strongest['summary']}；"
-            f"本轮共检测 {len(model_results)} 个模型，{penetrated} 个至少一次成功到达有效响应"
+            f"本轮共检测 {len(model_results)} 个模型，{penetrated} 个至少一个探针收到响应"
         ),
     }
 

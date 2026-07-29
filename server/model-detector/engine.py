@@ -582,9 +582,13 @@ def provenance_evidence(
         minimum_cache = int(claude_rule.get("minimum_cache_creation_tokens", 2000))
         minimum_input = int(claude_rule.get("minimum_total_input_tokens", 2500))
         has_no_system = "system" not in request_payload
+        native_input = native_usage.get("input_tokens")
+        cache_read = native_usage.get("cache_read_input_tokens")
+        if isinstance(native_input, int) and isinstance(cache_creation, int):
+            native_total = native_input + cache_creation + (cache_read if isinstance(cache_read, int) else 0)
+            total_input = max(total_input if isinstance(total_input, int) else 0, native_total)
         if (
-            probe == "model_capability"
-            and has_no_system
+            has_no_system
             and isinstance(cache_creation, int)
             and cache_creation >= minimum_cache
             and isinstance(total_input, int)
@@ -876,9 +880,9 @@ def image_validation_probes(route: ModelRoute) -> list[tuple[str, str, dict[str,
         return []
     return [
         (
-            "image_invalid_size",
+            "image_invalid_size_without_prompt",
             "/v1/images/generations",
-            {"model": route.model, "prompt": "X", "size": "1x1"},
+            {"model": route.model, "size": "1x1"},
         ),
         (
             "image_missing_prompt",

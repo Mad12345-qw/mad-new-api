@@ -1,5 +1,5 @@
 {
-  "version": "2026.07.29.6",
+  "version": "2026.07.29.7",
   "history_rules": {
     "claude_route_change": {
       "lookback_runs": 12,

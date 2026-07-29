@@ -290,6 +290,32 @@ class EngineTests(unittest.TestCase):
         evidence = provenance_evidence("model_capability", route, payload, without_headers)
         self.assertEqual(classify(evidence, "anthropic_official")["verdict"], "inconclusive")
 
+    def test_native_claude_cache_creation_counts_toward_hidden_total_on_sync_probe(self) -> None:
+        route = route_for_model("claude-opus-5", "claude", ["anthropic"])
+        _, payload = route_probe(route, False)
+        response = ProbeResponse(
+            200,
+            1,
+            {"x-client-request-id": "uuid", "x-request-id": "req"},
+            "{}",
+            {
+                "type": "message",
+                "usage": {
+                    "input_tokens": 1156,
+                    "cache_creation_input_tokens": 6512,
+                    "cache_read_input_tokens": 0,
+                    "output_tokens": 1,
+                },
+            },
+            "digest",
+        )
+        evidence = provenance_evidence("model_sync", route, payload, response)
+        hidden = next(item for item in evidence if item.category == "claude_hidden_prompt_cache")
+        self.assertEqual(hidden.detail["reported_total_input_tokens"], 7668)
+        result = classify(evidence, "anthropic_official")
+        self.assertEqual(result["likely_channel"], "claude_subscription_relay")
+        self.assertEqual(result["verdict"], "suspected_substitution")
+
     def test_latest_native_claude_probe_uses_output_config_effort(self) -> None:
         route = route_for_model("claude-fable-5", "claude", ["anthropic"])
         _, payload = route_probe(route, False)
@@ -329,6 +355,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(probes), 3)
         self.assertEqual(probes[0][1], "/v1/images/generations")
         self.assertEqual(probes[0][2]["size"], "1x1")
+        self.assertNotIn("prompt", probes[0][2])
         self.assertNotIn("prompt", probes[1][2])
         self.assertEqual(probes[2][1], "/v1/responses")
 

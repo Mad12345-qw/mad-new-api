@@ -286,7 +286,10 @@ def aggregate_model_results(model_results: list[dict[str, Any]]) -> dict[str, An
         "verdict": strongest["verdict"],
         "likely_channel": strongest["likely_channel"],
         "confidence": strongest["confidence"],
-        "summary": f"已对 {len(model_results)} 个模型执行低 Token 穿透探针，{penetrated} 个模型至少一次成功到达有效响应；详情按模型查看",
+        "summary": (
+            f"{strongest['model']}：{strongest['summary']}；"
+            f"本轮共检测 {len(model_results)} 个模型，{penetrated} 个至少一次成功到达有效响应"
+        ),
     }
 
 

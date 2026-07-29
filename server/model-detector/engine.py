@@ -343,6 +343,217 @@ def payload_evidence(probe: str, response: ProbeResponse, configured_models: lis
     return result
 
 
+def _usage_from_response(value: dict[str, Any]) -> dict[str, Any]:
+    usage = value.get("usage")
+    return usage if isinstance(usage, dict) else {}
+
+
+def _claude_usage(usage: dict[str, Any]) -> dict[str, Any]:
+    billing = usage.get("billing_usage")
+    if isinstance(billing, dict) and isinstance(billing.get("claude_usage"), dict):
+        return billing["claude_usage"]
+    return usage
+
+
+def provenance_evidence(
+    probe: str,
+    route: ModelRoute,
+    request_payload: dict[str, Any],
+    response: ProbeResponse,
+) -> list[Evidence]:
+    """Extract high-specificity subscription relay fingerprints.
+
+    These rules intentionally require a combination of behavior, payload, and
+    header evidence.  Model names and gateway-added compatibility fields never
+    become terminal-channel proof by themselves.
+    """
+    value = response.body_json
+    if not isinstance(value, dict) or not 200 <= response.status_code < 300:
+        return []
+
+    result: list[Evidence] = []
+    rules = RULE_PACK.get("subscription_relay_rules", {})
+    codex_rule = rules.get("codex", {})
+    model_text = route.model.lower()
+    if route.protocol == "openai_responses" and re.search(str(codex_rule.get("model_pattern", r"gpt|codex")), model_text):
+        instructions = value.get("instructions")
+        markers = [str(item) for item in codex_rule.get("instruction_markers", [])]
+        matched = [marker for marker in markers if isinstance(instructions, str) and marker in instructions]
+        minimum_chars = int(codex_rule.get("minimum_instruction_chars", 4000))
+        minimum_matches = int(codex_rule.get("minimum_marker_matches", 3))
+        if (
+            "instructions" not in request_payload
+            and isinstance(instructions, str)
+            and len(instructions) >= minimum_chars
+            and len(matched) >= minimum_matches
+        ):
+            result.append(
+                Evidence(
+                    probe,
+                    "codex_prompt_fingerprint",
+                    "strong",
+                    str(codex_rule.get("channel", "codex_subscription_relay")),
+                    "检测到未请求的 Codex 固定系统指令",
+                    {
+                        "rule_id": "codex_hidden_instructions_v1",
+                        "instruction_chars": len(instructions),
+                        "instruction_sha256": hashlib.sha256(instructions.encode("utf-8")).hexdigest(),
+                        "matched_markers": matched,
+                        "first_line": instructions.splitlines()[0][:240] if instructions else "",
+                        "request_supplied_instructions": False,
+                        "source_urls": [str(item) for item in codex_rule.get("source_urls", [])],
+                    },
+                    response.raw_sha256,
+                )
+            )
+
+        generated_fields = [
+            field
+            for field in ("prompt_cache_key", "safety_identifier")
+            if field not in request_payload and isinstance(value.get(field), str) and value.get(field)
+        ]
+        max_tokens_rewritten = (
+            isinstance(request_payload.get("max_output_tokens"), int)
+            and value.get("max_output_tokens") is None
+        )
+        if len(generated_fields) >= 2 and max_tokens_rewritten:
+            result.append(
+                Evidence(
+                    probe,
+                    "request_rewrite",
+                    "medium",
+                    str(codex_rule.get("channel", "codex_subscription_relay")),
+                    "请求字段被 Codex 代理层自动补写或改写",
+                    {
+                        "rule_id": "codex_request_rewrite_v1",
+                        "generated_fields": generated_fields,
+                        "requested_max_output_tokens": request_payload.get("max_output_tokens"),
+                        "response_max_output_tokens": value.get("max_output_tokens"),
+                    },
+                    response.raw_sha256,
+                )
+            )
+
+        usage = _usage_from_response(value)
+        input_tokens = usage.get("input_tokens")
+        input_value = request_payload.get("input")
+        visible_chars = len(input_value) if isinstance(input_value, str) else len(json.dumps(input_value, ensure_ascii=False))
+        minimum_tokens = int(codex_rule.get("minimum_amplified_input_tokens", 1000))
+        if "instructions" not in request_payload and visible_chars <= 500 and isinstance(input_tokens, int) and input_tokens >= minimum_tokens:
+            result.append(
+                Evidence(
+                    probe,
+                    "token_amplification",
+                    "medium",
+                    str(codex_rule.get("channel", "codex_subscription_relay")),
+                    "极短输入产生异常大量输入 Token",
+                    {
+                        "rule_id": "codex_token_amplification_v1",
+                        "visible_input_chars": visible_chars,
+                        "reported_input_tokens": input_tokens,
+                        "minimum_rule_tokens": minimum_tokens,
+                    },
+                    response.raw_sha256,
+                )
+            )
+
+        header_matches = {
+            key: response.headers[key]
+            for key in ("via", "x-client-request-id", "x-new-api-version")
+            if key in response.headers
+        }
+        if "x-client-request-id" in header_matches and "via" in header_matches:
+            result.append(
+                Evidence(
+                    probe,
+                    "relay_headers",
+                    "weak",
+                    str(codex_rule.get("channel", "codex_subscription_relay")),
+                    "Codex 代理链响应头组合",
+                    {"rule_id": "codex_relay_headers_v1", "matched_headers": header_matches},
+                    response.raw_sha256,
+                )
+            )
+
+    claude_rule = rules.get("claude_code", {})
+    if route.family == "anthropic" and re.search(str(claude_rule.get("model_pattern", "claude")), model_text):
+        usage = _usage_from_response(value)
+        native_usage = _claude_usage(usage)
+        cache_creation = native_usage.get("cache_creation_input_tokens")
+        total_input = usage.get("prompt_tokens", usage.get("input_tokens", native_usage.get("input_tokens")))
+        minimum_cache = int(claude_rule.get("minimum_cache_creation_tokens", 2000))
+        minimum_input = int(claude_rule.get("minimum_total_input_tokens", 2500))
+        has_no_system = "system" not in request_payload
+        if (
+            probe == "model_capability"
+            and has_no_system
+            and isinstance(cache_creation, int)
+            and cache_creation >= minimum_cache
+            and isinstance(total_input, int)
+            and total_input >= minimum_input
+        ):
+            result.append(
+                Evidence(
+                    probe,
+                    "claude_hidden_prompt_cache",
+                    "strong",
+                    str(claude_rule.get("channel", "claude_subscription_relay")),
+                    "小型工具请求出现巨量 Claude 缓存创建 Token",
+                    {
+                        "rule_id": "claude_code_cache_injection_v1",
+                        "reported_total_input_tokens": total_input,
+                        "cache_creation_input_tokens": cache_creation,
+                        "request_supplied_system": False,
+                        "note": "高度符合 Claude Code/OAuth 系统提示注入；自定义网关仍可仿造，不能单独定案",
+                        "source_urls": [str(item) for item in claude_rule.get("source_urls", [])],
+                    },
+                    response.raw_sha256,
+                )
+            )
+
+        billing = usage.get("billing_usage")
+        metadata_match = (
+            usage.get("usage_source") == "anthropic"
+            and isinstance(billing, dict)
+            and billing.get("source") == "claude_messages"
+        )
+        if metadata_match:
+            result.append(
+                Evidence(
+                    probe,
+                    "gateway_translation_metadata",
+                    "info",
+                    None,
+                    "New API Claude 转换计费字段",
+                    {
+                        "usage_source": usage.get("usage_source"),
+                        "billing_source": billing.get("source"),
+                        "note": "这是协议转换证据，不是 Anthropic 官方渠道签名",
+                    },
+                    response.raw_sha256,
+                )
+            )
+
+        relay_headers = {
+            key: response.headers[key]
+            for key in ("x-client-request-id", "x-request-id", "x-new-api-version")
+            if key in response.headers
+        }
+        if "x-client-request-id" in relay_headers and ("x-request-id" in relay_headers or "x-new-api-version" in relay_headers):
+            result.append(
+                Evidence(
+                    probe,
+                    "relay_headers",
+                    "medium",
+                    str(claude_rule.get("channel", "claude_subscription_relay")),
+                    "Claude Code/OAuth 风格代理响应头组合",
+                    {"rule_id": "claude_code_relay_headers_v1", "matched_headers": relay_headers},
+                    response.raw_sha256,
+                )
+            )
+    return result
+
+
 def model_alias_evidence(models: list[str]) -> list[Evidence]:
     result: list[Evidence] = []
     for model in models:
@@ -394,8 +605,8 @@ def active_probe(style: str, model: str, stream: bool = False) -> tuple[str, dic
             "messages": [{"role": "user", "content": "Reply with X only."}],
         }
         if any(marker in model.lower() for marker in ("fable-5", "opus-5")):
-            payload["effort"] = "low"
             payload["thinking"] = {"type": "adaptive", "display": "omitted"}
+            payload["output_config"] = {"effort": "low"}
         return "/v1/messages", payload
     if style == "gemini":
         suffix = "streamGenerateContent?alt=sse" if stream else "generateContent"
@@ -409,7 +620,8 @@ def active_probe(style: str, model: str, stream: bool = False) -> tuple[str, dic
             "input": "Reply with X only.",
             "max_output_tokens": 16,
             "stream": stream,
-            "reasoning": {"effort": "low"},
+            "reasoning": {"effort": "none", "context": "current_turn"},
+            "store": False,
         }
     return "/v1/chat/completions", {
         "model": model,
@@ -430,8 +642,8 @@ def route_probe(route: ModelRoute, stream: bool = False) -> tuple[str, dict[str,
             "messages": [{"role": "user", "content": "Reply with X only."}],
         }
         if any(marker in model.lower() for marker in ("fable-5", "opus-5")):
-            payload["effort"] = "low"
             payload["thinking"] = {"type": "adaptive", "display": "omitted"}
+            payload["output_config"] = {"effort": "low"}
         return "/v1/messages", payload
     if route.protocol == "gemini_generate":
         suffix = "streamGenerateContent?alt=sse" if stream else "generateContent"
@@ -445,7 +657,8 @@ def route_probe(route: ModelRoute, stream: bool = False) -> tuple[str, dict[str,
             "input": "Reply with X only.",
             "max_output_tokens": 16,
             "stream": stream,
-            "reasoning": {"effort": "low"},
+            "reasoning": {"effort": "none", "context": "current_turn"},
+            "store": False,
         }
     return "/v1/chat/completions", {
         "model": model,
@@ -489,6 +702,8 @@ def capability_probe(route: ModelRoute) -> tuple[str, dict[str, Any]]:
             "model": route.model,
             "input": "Call detector_marker with marker X.",
             "max_output_tokens": 32,
+            "reasoning": {"effort": "none", "context": "current_turn"},
+            "store": False,
             "tools": [{"type": "function", "name": tool_name, "description": "Return the fixed marker", "parameters": parameters, "strict": True}],
             "tool_choice": {"type": "function", "name": tool_name},
         }
@@ -580,13 +795,34 @@ def observed_chain(evidence: list[Evidence], route: ModelRoute, terminal: dict[s
                 "note": "转换可能发生在外层网关本身，不单独证明增加了一跳",
             }
         )
+    if any(item.category == "protocol_declaration_conflict" for item in evidence):
+        layers.append(
+            {
+                "position": "translation",
+                "kind": "protocol_declaration_conflict",
+                "label": "模型列表声明与实际可用协议不一致",
+                "confidence": 0.99,
+                "status": "confirmed",
+                "note": "该冲突证明网关存在能力隐藏或协议适配，但不单独证明终端厂商",
+            }
+        )
     terminal_channel = terminal.get("likely_channel", "unknown")
     if terminal_channel != "unknown" and terminal.get("verdict") != "inconclusive":
+        terminal_labels = {
+            "codex_subscription_relay": "Codex 订阅/OAuth 反代",
+            "claude_subscription_relay": "Claude Code/OAuth 订阅反代",
+            "azure_openai": "Azure OpenAI",
+            "aws_bedrock": "AWS Bedrock",
+            "vertex_ai": "Google Vertex AI",
+            "openai_official": "OpenAI 官方 API",
+            "anthropic_official": "Anthropic 官方 API",
+            "gemini_developer_api": "Gemini Developer API",
+        }
         layers.append(
             {
                 "position": "terminal",
                 "kind": terminal_channel,
-                "label": terminal_channel,
+                "label": terminal_labels.get(terminal_channel, terminal_channel),
                 "confidence": terminal.get("confidence", 0.0),
                 "status": "probable",
             }
@@ -656,7 +892,30 @@ def classify(evidence: list[Evidence], claimed_channel: str = "unknown") -> dict
     confidence = min(0.99, channel_score[likely])
     endpoint_support = any(item.category == "endpoint" and item.supports == likely and item.strength == "strong" for item in evidence)
     direct_channels = {"openai_official", "anthropic_official", "gemini_developer_api"}
-    alternate_channels = {"azure_openai", "aws_bedrock", "vertex_ai"}
+    alternate_channels = {
+        "azure_openai",
+        "aws_bedrock",
+        "vertex_ai",
+        "codex_subscription_relay",
+        "claude_subscription_relay",
+    }
+    if likely == "codex_subscription_relay":
+        has_prompt = "codex_prompt_fingerprint" in categories
+        has_independent_behavior = bool(categories & {"request_rewrite", "token_amplification", "relay_headers"})
+        if has_prompt and has_independent_behavior:
+            confidence = 0.98 if len(categories & {"request_rewrite", "token_amplification", "relay_headers"}) >= 2 else 0.94
+            verdict = "suspected_substitution" if claimed_channel in direct_channels else "probable_alternate_channel"
+            summary = "固定 Codex 指令与代理改写行为共同指向 Codex 订阅/OAuth 反代，并非透明 OpenAI API Key 直连"
+            return {"verdict": verdict, "likely_channel": likely, "confidence": confidence, "summary": summary}
+    if likely == "claude_subscription_relay":
+        has_hidden_cache = "claude_hidden_prompt_cache" in categories
+        has_relay_headers = "relay_headers" in categories
+        has_translation_metadata = any(item.category == "gateway_translation_metadata" for item in evidence)
+        if has_hidden_cache and has_relay_headers:
+            confidence = 0.85 if has_translation_metadata else 0.78
+            verdict = "suspected_substitution" if claimed_channel in direct_channels else "probable_alternate_channel"
+            summary = "巨量隐藏缓存与代理响应头共同指向 Claude Code/OAuth 订阅反代；底层 Claude 模型较可能真实，但无法据此证明 Anthropic API Key 直连"
+            return {"verdict": verdict, "likely_channel": likely, "confidence": confidence, "summary": summary}
     if likely in direct_channels and endpoint_support and len(categories) >= 2:
         verdict = "confirmed_direct"
         summary = "官方域名与独立协议指纹一致"
@@ -804,6 +1063,7 @@ class DetectorEngine:
                     responses.append(response)
                     model_evidence.extend(header_evidence(probe_name, response))
                     model_evidence.extend(payload_evidence(probe_name, response, [route.model]))
+                    model_evidence.extend(provenance_evidence(probe_name, route, payload, response))
                     if not stream and response.status_code in {404, 405} and route.fallbacks:
                         fallback = route.fallbacks[0]
                         model_evidence.append(
@@ -830,6 +1090,7 @@ class DetectorEngine:
                             responses.append(response)
                             model_evidence.extend(header_evidence("model_sync_fallback", response))
                             model_evidence.extend(payload_evidence("model_sync_fallback", response, [route.model]))
+                            model_evidence.extend(provenance_evidence("model_sync_fallback", route, payload, response))
                         except (httpx.HTTPError, asyncio.TimeoutError) as exc:
                             model_evidence.append(
                                 Evidence(
@@ -855,6 +1116,7 @@ class DetectorEngine:
                     responses.append(capability_response)
                     model_evidence.extend(header_evidence("model_capability", capability_response))
                     model_evidence.extend(payload_evidence("model_capability", capability_response, [route.model]))
+                    model_evidence.extend(provenance_evidence("model_capability", route, capability_payload, capability_response))
                 except (httpx.HTTPError, asyncio.TimeoutError) as exc:
                     model_evidence.append(
                         Evidence(
@@ -866,6 +1128,57 @@ class DetectorEngine:
                             {"error_type": type(exc).__name__, "message": str(exc)[:500]},
                         )
                     )
+                planned_probes = 3
+                if route.family == "anthropic" and route.protocol != "anthropic_messages":
+                    planned_probes += 1
+                    native_route = route_with_protocol(route, "anthropic_messages")
+                    native_path, native_payload = route_probe(native_route, False)
+                    try:
+                        native_response = await captured_request(
+                            client,
+                            "POST",
+                            api_endpoint(base_url, native_path),
+                            protocol_headers(native_route.protocol, api_key),
+                            native_payload,
+                        )
+                        responses.append(native_response)
+                        model_evidence.extend(header_evidence("native_protocol_crosscheck", native_response))
+                        model_evidence.extend(payload_evidence("native_protocol_crosscheck", native_response, [route.model]))
+                        model_evidence.extend(
+                            provenance_evidence("native_protocol_crosscheck", native_route, native_payload, native_response)
+                        )
+                        declared_native = any(
+                            marker in " ".join(route.supported_endpoint_types).lower()
+                            for marker in ("anthropic", "message")
+                        )
+                        if 200 <= native_response.status_code < 300 and not declared_native:
+                            model_evidence.append(
+                                Evidence(
+                                    "native_protocol_crosscheck",
+                                    "protocol_declaration_conflict",
+                                    "strong",
+                                    None,
+                                    "模型列表未声明 Anthropic Messages，但原生端点实际可用",
+                                    {
+                                        "declared_endpoint_types": route.supported_endpoint_types,
+                                        "tested_protocol": "anthropic_messages",
+                                        "status_code": native_response.status_code,
+                                        "note": "证明网关声明与实际路由不一致；不能单独确定最终云渠道",
+                                    },
+                                    native_response.raw_sha256,
+                                )
+                            )
+                    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+                        model_evidence.append(
+                            Evidence(
+                                "native_protocol_crosscheck",
+                                "transport_error",
+                                "info",
+                                None,
+                                "Anthropic 原生协议交叉探针失败",
+                                {"error_type": type(exc).__name__, "message": str(exc)[:500]},
+                            )
+                        )
                 expected = {
                     "openai": "openai_official",
                     "anthropic": "anthropic_official",
@@ -899,7 +1212,7 @@ class DetectorEngine:
                         "confidence": terminal["confidence"],
                         "summary": terminal["summary"],
                         "success_probes": success_count,
-                        "planned_probes": 3,
+                        "planned_probes": planned_probes,
                         "chain": chain,
                         "evidence": model_evidence,
                     }

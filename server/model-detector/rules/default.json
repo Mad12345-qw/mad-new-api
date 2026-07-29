@@ -1,5 +1,35 @@
 {
-  "version": "2026.07.29.2",
+  "version": "2026.07.29.3",
+  "subscription_relay_rules": {
+    "codex": {
+      "channel": "codex_subscription_relay",
+      "model_pattern": "(^|[-_])gpt[-_].*|codex",
+      "minimum_instruction_chars": 4000,
+      "minimum_marker_matches": 3,
+      "minimum_amplified_input_tokens": 1000,
+      "source_urls": [
+        "https://github.com/openai/codex/blob/fe01054a28fa4bd04716d9ceadb410f2443a50ce/codex-rs/models-manager/src/model_info.rs",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/codex_executor_request.go"
+      ],
+      "instruction_markers": [
+        "You are Codex, a coding agent based on GPT-5",
+        "# Personality",
+        "# Working with the user",
+        "## Editing constraints",
+        "## Autonomy and persistence"
+      ]
+    },
+    "claude_code": {
+      "channel": "claude_subscription_relay",
+      "model_pattern": "claude",
+      "minimum_cache_creation_tokens": 2000,
+      "minimum_total_input_tokens": 2500,
+      "source_urls": [
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/claude_executor_request.go",
+        "https://github.com/router-for-me/CLIProxyAPI/blob/c9417c8ae9b16fabc0386ca35d36f13bf8b1d678/internal/runtime/executor/helps/claude_code_session.go"
+      ]
+    }
+  },
   "domain_rules": [
     {"pattern": "(^|\\.)api\\.openai\\.com$", "channel": "openai_official", "title": "OpenAI 官方 API 域名"},
     {"pattern": "(^|\\.)api\\.anthropic\\.com$", "channel": "anthropic_official", "title": "Anthropic 官方 API 域名"},

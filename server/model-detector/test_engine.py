@@ -15,6 +15,8 @@ from engine import (
     model_alias_evidence,
     observed_chain,
     payload_evidence,
+    provenance_evidence,
+    route_probe,
     sanitize_headers,
     transport_evidence,
 )
@@ -152,6 +154,105 @@ class EngineTests(unittest.TestCase):
             evidence = payload_evidence("model_capability", response)
             self.assertTrue(any(item.category == "tool_structure" for item in evidence))
 
+    def test_codex_subscription_relay_requires_exact_prompt_and_independent_behavior(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        payload = {
+            "model": route.model,
+            "input": "Reply X.",
+            "max_output_tokens": 16,
+            "store": False,
+        }
+        instructions = "\n".join(
+            [
+                "You are Codex, a coding agent based on GPT-5. You and the user share one workspace.",
+                "# Personality",
+                "# Working with the user",
+                "## Editing constraints",
+                "## Autonomy and persistence",
+                "X" * 5000,
+            ]
+        )
+        response = ProbeResponse(
+            200,
+            1,
+            {"via": "1.1 Caddy", "x-client-request-id": "uuid", "x-new-api-version": "v1"},
+            "{}",
+            {
+                "instructions": instructions,
+                "prompt_cache_key": "generated-cache-key",
+                "safety_identifier": "generated-safety-id",
+                "max_output_tokens": None,
+                "usage": {"input_tokens": 4389},
+            },
+            "digest",
+        )
+        evidence = provenance_evidence("model_sync", route, payload, response)
+        result = classify(evidence, "openai_official")
+        self.assertEqual(result["likely_channel"], "codex_subscription_relay")
+        self.assertEqual(result["verdict"], "suspected_substitution")
+        self.assertEqual(result["confidence"], 0.98)
+        prompt_detail = next(item.detail for item in evidence if item.category == "codex_prompt_fingerprint")
+        self.assertNotIn(instructions, str(prompt_detail))
+        self.assertEqual(prompt_detail["instruction_chars"], len(instructions))
+
+    def test_generic_responses_payload_does_not_become_codex_relay(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        payload = {"model": route.model, "input": "Reply X.", "max_output_tokens": 16}
+        response = ProbeResponse(
+            200,
+            1,
+            {"x-request-id": "req_official"},
+            "{}",
+            {
+                "instructions": None,
+                "max_output_tokens": 16,
+                "usage": {"input_tokens": 8},
+            },
+            "digest",
+        )
+        evidence = provenance_evidence("model_sync", route, payload, response)
+        self.assertFalse(any(item.supports == "codex_subscription_relay" for item in evidence))
+        self.assertEqual(classify(evidence, "openai_official")["verdict"], "inconclusive")
+
+    def test_claude_subscription_relay_requires_cache_and_proxy_headers(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["openai"])
+        _, payload = capability_probe(route)
+        body = {
+            "usage": {
+                "prompt_tokens": 6933,
+                "usage_source": "anthropic",
+                "billing_usage": {
+                    "source": "claude_messages",
+                    "claude_usage": {"input_tokens": 1248, "cache_creation_input_tokens": 5685},
+                },
+            }
+        }
+        with_headers = ProbeResponse(
+            200,
+            1,
+            {"x-client-request-id": "uuid", "x-request-id": "req", "x-new-api-version": "v1"},
+            "{}",
+            body,
+            "digest",
+        )
+        evidence = provenance_evidence("model_capability", route, payload, with_headers)
+        result = classify(evidence, "anthropic_official")
+        self.assertEqual(result["likely_channel"], "claude_subscription_relay")
+        self.assertEqual(result["verdict"], "suspected_substitution")
+        self.assertEqual(result["confidence"], 0.85)
+        metadata = next(item for item in evidence if item.category == "gateway_translation_metadata")
+        self.assertIsNone(metadata.supports)
+
+        without_headers = ProbeResponse(200, 1, {}, "{}", body, "digest")
+        evidence = provenance_evidence("model_capability", route, payload, without_headers)
+        self.assertEqual(classify(evidence, "anthropic_official")["verdict"], "inconclusive")
+
+    def test_latest_native_claude_probe_uses_output_config_effort(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["anthropic"])
+        _, payload = route_probe(route, False)
+        self.assertEqual(payload["output_config"], {"effort": "low"})
+        self.assertNotIn("effort", payload)
+
 
 class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
@@ -185,7 +286,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_successful_model_request_remains_inconclusive(self) -> None:
         route = route_for_model("claude-fable-5", "claude", ["openai"])
-        requests = AsyncMock(side_effect=[self.response(401), self.response(401), self.response(401)])
+        requests = AsyncMock(side_effect=[self.response(401), self.response(401), self.response(401), self.response(401)])
         upstream = {
             "base_url": "https://relay.example/v1",
             "api_key_encrypted": "encrypted",
@@ -196,6 +297,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["verdict"], "inconclusive")
         self.assertEqual(result["confidence"], 0.0)
         self.assertEqual(result["success_probes"], 0)
+        self.assertEqual(result["planned_probes"], 4)
 
     async def test_successful_protocol_translation_does_not_guess_terminal_channel(self) -> None:
         route = route_for_model("claude-fable-5", "claude", ["openai"])
@@ -204,6 +306,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
                 self.response(200, {"id": "chatcmpl-sync"}),
                 self.response(200, text="data: {\"id\":\"chatcmpl-stream\"}\n\n", headers={"content-type": "text/event-stream"}),
                 self.response(200, {"choices": [{"message": {"tool_calls": []}}]}),
+                self.response(404, {"error": {"type": "not_found"}}),
             ]
         )
         upstream = {
@@ -218,6 +321,28 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("协议转换", result["summary"])
         self.assertEqual(result["chain"]["layers"][-1]["kind"], "unknown_terminal")
         self.assertTrue(any(layer["kind"] == "protocol_translation" for layer in result["chain"]["layers"]))
+
+    async def test_native_claude_crosscheck_records_declared_protocol_conflict(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["openai"])
+        requests = AsyncMock(
+            side_effect=[
+                self.response(200, {"id": "chatcmpl-sync"}),
+                self.response(200, text="data: {\"id\":\"chatcmpl-stream\"}\n\n", headers={"content-type": "text/event-stream"}),
+                self.response(200, {"choices": [{"message": {"tool_calls": []}}]}),
+                self.response(200, {"id": "msg_native", "type": "message", "usage": {"input_tokens": 8, "output_tokens": 2}}),
+            ]
+        )
+        upstream = {
+            "base_url": "https://relay.example/v1",
+            "api_key_encrypted": "encrypted",
+            "allow_paid_probes": 1,
+        }
+        with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
+            result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
+        self.assertEqual(result["planned_probes"], 4)
+        self.assertEqual(result["success_probes"], 4)
+        self.assertTrue(any(item.category == "protocol_declaration_conflict" for item in result["evidence"]))
+        self.assertTrue(any(layer["kind"] == "protocol_declaration_conflict" for layer in result["chain"]["layers"]))
 
 
 class SecurityTests(unittest.TestCase):

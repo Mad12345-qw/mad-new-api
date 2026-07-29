@@ -36,6 +36,7 @@ services:
       DETECTOR_MASTER_KEY: ${DETECTOR_MASTER_KEY}
       DETECTOR_ADMIN_TOKEN: ${DETECTOR_ADMIN_TOKEN}
       DETECTOR_TIMEOUT_SECONDS: ${DETECTOR_TIMEOUT_SECONDS:-30}
+      DETECTOR_NEW_API_INTERNAL_URL: http://new-api:3000
     volumes:
       - ./data/detector:/data
     healthcheck:
@@ -44,4 +45,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
-

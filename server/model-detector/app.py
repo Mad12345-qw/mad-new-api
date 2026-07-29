@@ -84,9 +84,26 @@ class SettingsInput(BaseModel):
         return value
 
 
-def require_admin(detector_session: str = Cookie(default="")) -> None:
-    if not verify_session(detector_session):
-        raise HTTPException(status_code=401, detail="detector admin login required")
+def require_admin(request: Request, detector_session: str = Cookie(default="")) -> None:
+    if verify_session(detector_session):
+        return
+    internal_url = os.environ.get("DETECTOR_NEW_API_INTERNAL_URL", "").strip()
+    cookie = request.headers.get("cookie", "")
+    if internal_url and cookie:
+        try:
+            response = httpx.get(
+                internal_url.rstrip("/") + "/api/user/self",
+                headers={"cookie": cookie},
+                timeout=3,
+                follow_redirects=False,
+            )
+            payload = response.json() if response.status_code == 200 else {}
+            role = int(((payload.get("data") or {}).get("role") or 0)) if isinstance(payload, dict) else 0
+            if payload.get("success") is True and role >= 10:
+                return
+        except (httpx.HTTPError, ValueError, TypeError):
+            pass
+    raise HTTPException(status_code=401, detail="New API administrator login or detector token required")
 
 
 def public_upstream(row: dict[str, Any]) -> dict[str, Any]:

@@ -22,4 +22,6 @@ GitHub Actions applies and verifies every patch, runs backend, frontend, and ima
 
 The detector stores upstream keys encrypted at rest, runs a six-request non-billing protocol suite by default, requires at least 80% probe coverage, and only reports an alternate channel when two independent evidence categories reach the confidence threshold. Active model-output probes are disabled per upstream until an administrator explicitly enables them. Fable 5, Opus 5, and GPT-5.6-sol names are treated as unverified aliases unless a trusted paired reference and stronger evidence are present.
 
+The detector accepts the existing same-origin New API session only after an internal `/api/user/self` check confirms role `10` or `100`. A separate detector token remains available as an emergency fallback; neither path exposes credentials to the browser application state.
+
 Detector rules are data-driven in `server/model-detector/rules/default.json`. Each report preserves the rule version, redacted response shape, model inventory, SSE sequence, error contract, token fields, evidence strength, and raw-response SHA-256 without storing raw API keys.

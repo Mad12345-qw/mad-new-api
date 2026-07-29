@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from discovery import ModelRoute, api_endpoint, route_for_model
 from security import decrypt_secret
 
 
@@ -98,6 +99,14 @@ def auth_headers(style: str, api_key: str) -> dict[str, str]:
     if style == "gemini":
         return {"x-goog-api-key": api_key, "content-type": "application/json"}
     return {"authorization": f"Bearer {api_key}", "content-type": "application/json"}
+
+
+def protocol_headers(protocol: str, api_key: str) -> dict[str, str]:
+    if protocol == "anthropic_messages":
+        return auth_headers("anthropic", api_key)
+    if protocol == "gemini_generate":
+        return auth_headers("gemini", api_key)
+    return auth_headers("openai", api_key)
 
 
 async def captured_request(
@@ -199,6 +208,22 @@ def body_shape(value: Any, depth: int = 0) -> Any:
     return type(value).__name__
 
 
+def nested_keys(value: Any, depth: int = 0) -> set[str]:
+    if depth > 6:
+        return set()
+    if isinstance(value, dict):
+        keys = {str(key) for key in value}
+        for item in value.values():
+            keys.update(nested_keys(item, depth + 1))
+        return keys
+    if isinstance(value, list):
+        keys: set[str] = set()
+        for item in value[:20]:
+            keys.update(nested_keys(item, depth + 1))
+        return keys
+    return set()
+
+
 def payload_evidence(probe: str, response: ProbeResponse, configured_models: list[str] | None = None) -> list[Evidence]:
     value = response.body_json
     if not isinstance(value, dict):
@@ -267,7 +292,27 @@ def payload_evidence(probe: str, response: ProbeResponse, configured_models: lis
                 response.raw_sha256,
             )
         )
+    keys = nested_keys(value)
+    matched_tool_keys = sorted(keys & {"tool_calls", "tool_use", "functionCall", "function_call", "functionCalls"})
     content = value.get("content")
+    content_block_types = (
+        {str(block.get("type")) for block in content if isinstance(block, dict) and block.get("type")}
+        if isinstance(content, list)
+        else set()
+    )
+    matched_tool_types = sorted(content_block_types & {"tool_use"})
+    if matched_tool_keys or matched_tool_types:
+        result.append(
+            Evidence(
+                probe,
+                "tool_structure",
+                "medium",
+                None,
+                "工具调用结构",
+                {"matched_keys": matched_tool_keys, "matched_block_types": matched_tool_types, "shape": body_shape(value)},
+                response.raw_sha256,
+            )
+        )
     if isinstance(content, list):
         block_types = [str(block.get("type")) for block in content if isinstance(block, dict) and block.get("type")]
         if block_types:
@@ -372,6 +417,202 @@ def active_probe(style: str, model: str, stream: bool = False) -> tuple[str, dic
         "stream": stream,
         "temperature": 0,
         "messages": [{"role": "user", "content": "Reply with X only."}],
+    }
+
+
+def route_probe(route: ModelRoute, stream: bool = False) -> tuple[str, dict[str, Any]]:
+    model = route.model
+    if route.protocol == "anthropic_messages":
+        payload: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 1,
+            "stream": stream,
+            "messages": [{"role": "user", "content": "Reply with X only."}],
+        }
+        if any(marker in model.lower() for marker in ("fable-5", "opus-5")):
+            payload["effort"] = "low"
+            payload["thinking"] = {"type": "adaptive", "display": "omitted"}
+        return "/v1/messages", payload
+    if route.protocol == "gemini_generate":
+        suffix = "streamGenerateContent?alt=sse" if stream else "generateContent"
+        return f"/v1beta/models/{model}:{suffix}", {
+            "contents": [{"role": "user", "parts": [{"text": "Reply with X only."}]}],
+            "generationConfig": {"maxOutputTokens": 1, "temperature": 0},
+        }
+    if route.protocol == "openai_responses":
+        return "/v1/responses", {
+            "model": model,
+            "input": "Reply with X only.",
+            "max_output_tokens": 16,
+            "stream": stream,
+            "reasoning": {"effort": "low"},
+        }
+    return "/v1/chat/completions", {
+        "model": model,
+        "max_tokens": 1,
+        "stream": stream,
+        "temperature": 0,
+        "messages": [{"role": "user", "content": "Reply with X only."}],
+        **(
+            {"effort": "low", "thinking": {"type": "adaptive", "display": "omitted"}}
+            if route.family == "anthropic" and any(marker in model.lower() for marker in ("fable-5", "opus-5"))
+            else {}
+        ),
+    }
+
+
+def capability_probe(route: ModelRoute) -> tuple[str, dict[str, Any]]:
+    tool_name = "detector_marker"
+    parameters = {
+        "type": "object",
+        "properties": {"marker": {"type": "string", "enum": ["X"]}},
+        "required": ["marker"],
+        "additionalProperties": False,
+    }
+    if route.protocol == "anthropic_messages":
+        return "/v1/messages", {
+            "model": route.model,
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "Call detector_marker with marker X."}],
+            "tools": [{"name": tool_name, "description": "Return the fixed marker", "input_schema": parameters}],
+            "tool_choice": {"type": "tool", "name": tool_name},
+        }
+    if route.protocol == "gemini_generate":
+        return f"/v1beta/models/{route.model}:generateContent", {
+            "contents": [{"role": "user", "parts": [{"text": "Call detector_marker with marker X."}]}],
+            "tools": [{"functionDeclarations": [{"name": tool_name, "description": "Return the fixed marker", "parameters": parameters}]}],
+            "toolConfig": {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [tool_name]}},
+            "generationConfig": {"maxOutputTokens": 32, "temperature": 0},
+        }
+    if route.protocol == "openai_responses":
+        return "/v1/responses", {
+            "model": route.model,
+            "input": "Call detector_marker with marker X.",
+            "max_output_tokens": 32,
+            "tools": [{"type": "function", "name": tool_name, "description": "Return the fixed marker", "parameters": parameters, "strict": True}],
+            "tool_choice": {"type": "function", "name": tool_name},
+        }
+    return "/v1/chat/completions", {
+        "model": route.model,
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "Call detector_marker with marker X."}],
+        "tools": [{"type": "function", "function": {"name": tool_name, "description": "Return the fixed marker", "parameters": parameters, "strict": True}}],
+        "tool_choice": {"type": "function", "function": {"name": tool_name}},
+    }
+
+
+def protocol_translation(route: ModelRoute) -> bool:
+    return (route.family == "anthropic" and route.protocol.startswith("openai")) or (
+        route.family == "google" and route.protocol.startswith("openai")
+    )
+
+
+def route_with_protocol(route: ModelRoute, protocol: str) -> ModelRoute:
+    endpoint_path = {
+        "anthropic_messages": "/v1/messages",
+        "gemini_generate": f"/v1beta/models/{route.model}:generateContent",
+        "openai_responses": "/v1/responses",
+        "openai_chat": "/v1/chat/completions",
+    }[protocol]
+    data = route.to_dict()
+    data["protocol"] = protocol
+    data["endpoint"] = endpoint_path
+    data["fallbacks"] = [item for item in route.fallbacks if item != protocol]
+    data["route_reason"] = f"首选端点明确返回未找到/不支持，自动回退到 {protocol}"
+    return ModelRoute(**data)
+
+
+def observed_chain(evidence: list[Evidence], route: ModelRoute, terminal: dict[str, Any]) -> dict[str, Any]:
+    layers: list[dict[str, Any]] = []
+    header_names: set[str] = set()
+    error_types: set[str] = set()
+    for item in evidence:
+        if item.category == "observation":
+            headers = item.detail.get("headers")
+            if isinstance(headers, dict):
+                header_names.update(str(key).lower() for key in headers)
+        if item.category == "errors" and item.detail.get("type"):
+            error_types.add(str(item.detail["type"]))
+    if "x-oneapi-request-id" in header_names or "new_api_error" in error_types:
+        layers.append(
+            {
+                "position": "outer",
+                "kind": "new_api_gateway",
+                "label": "New API / One API 外层网关",
+                "confidence": 0.98,
+                "status": "confirmed",
+            }
+        )
+    elif any(name in header_names for name in ("apim-request-id", "x-ms-region")):
+        layers.append(
+            {"position": "outer", "kind": "azure_apim", "label": "Azure APIM 外层", "confidence": 0.9, "status": "confirmed"}
+        )
+    else:
+        layers.append(
+            {"position": "outer", "kind": "custom_relay", "label": "自定义中转入口", "confidence": 0.6, "status": "observed"}
+        )
+    intermediary_markers = [
+        (any(name.startswith("x-litellm") for name in header_names), "litellm_marker", "LiteLLM 风格中间层标记"),
+        (any(name.startswith("x-openrouter") for name in header_names), "openrouter_marker", "OpenRouter 风格中间层标记"),
+        ("via" in header_names or "x-envoy-upstream-service-time" in header_names, "proxy_marker", "额外 HTTP/Envoy 代理标记"),
+        ("cf-ray" in header_names, "edge_proxy", "Cloudflare 边缘代理"),
+    ]
+    for matched, kind, label in intermediary_markers:
+        if matched:
+            layers.append(
+                {
+                    "position": "intermediate",
+                    "kind": kind,
+                    "label": label,
+                    "confidence": 0.7,
+                    "status": "observed",
+                    "note": "该标记可能由外层保留或仿造，因此不单独增加已确认跳数",
+                }
+            )
+    if protocol_translation(route):
+        layers.append(
+            {
+                "position": "translation",
+                "kind": "protocol_translation",
+                "label": f"{route.provider} 模型经 {route.protocol} 协议转换",
+                "confidence": 0.95,
+                "status": "confirmed",
+                "note": "转换可能发生在外层网关本身，不单独证明增加了一跳",
+            }
+        )
+    terminal_channel = terminal.get("likely_channel", "unknown")
+    if terminal_channel != "unknown" and terminal.get("verdict") != "inconclusive":
+        layers.append(
+            {
+                "position": "terminal",
+                "kind": terminal_channel,
+                "label": terminal_channel,
+                "confidence": terminal.get("confidence", 0.0),
+                "status": "probable",
+            }
+        )
+    else:
+        layers.append(
+            {
+                "position": "terminal",
+                "kind": "unknown_terminal",
+                "label": "终端上游被中转层清洗，当前不可见",
+                "confidence": 0.0,
+                "status": "unknown",
+            }
+        )
+    # A protocol conversion or a preserved proxy header can be implemented by the
+    # outer gateway itself.  They are observable layers, but are not proof of an
+    # additional physical relay hop.  Keep the network-hop lower bound separate
+    # from the number of visible logical layers to avoid overstating a multi-hop
+    # chain.
+    confirmed_hops = 1 + (1 if layers[-1]["kind"] != "unknown_terminal" else 0)
+    return {
+        "layers": layers,
+        "observed_logical_layers": len(layers),
+        "minimum_confirmed_hops": confirmed_hops,
+        "unknown_intermediate_possible": True,
+        "note": "逻辑层不等于物理跳数；完全清洗指纹的中间层无法从黑盒响应中枚举，跳数仅是可证明的下限",
     }
 
 
@@ -493,6 +734,177 @@ class DetectorEngine:
                 "summary": "成功探针不足 80%，按失败关闭原则无法判断",
             }
         return result, evidence
+
+    async def run_models(self, upstream: dict[str, Any], routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not upstream.get("allow_paid_probes"):
+            return [
+                {
+                    "model": str(route.get("model", "")),
+                    "family": str(route.get("family", "unknown")),
+                    "protocol": str(route.get("protocol", "unknown")),
+                    "verdict": "inconclusive",
+                    "likely_channel": "unknown",
+                    "confidence": 0.0,
+                    "summary": "该上游未显式允许低 Token 主动探针",
+                    "chain": {"layers": [], "minimum_confirmed_hops": 0, "unknown_intermediate_possible": True},
+                    "evidence": [],
+                }
+                for route in routes
+            ]
+        api_key = decrypt_secret(upstream["api_key_encrypted"])
+        base_url = upstream["base_url"]
+        results: list[dict[str, Any]] = []
+        timeout = httpx.Timeout(self.timeout_seconds, connect=min(10.0, self.timeout_seconds))
+        limits = httpx.Limits(max_connections=4, max_keepalive_connections=2)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=False, verify=True) as client:
+            for route_data in routes[:30]:
+                route = ModelRoute(**route_data)
+                model_evidence: list[Evidence] = [
+                    Evidence(
+                        "route",
+                        "route_selection",
+                        "info",
+                        None,
+                        "自动协议匹配",
+                        {
+                            "model": route.model,
+                            "family": route.family,
+                            "protocol": route.protocol,
+                            "endpoint": route.endpoint,
+                            "supported_endpoint_types": route.supported_endpoint_types,
+                            "reason": route.route_reason,
+                        },
+                    )
+                ]
+                model_evidence.extend(transport_evidence(base_url))
+                responses: list[ProbeResponse] = []
+                for stream in (False, True):
+                    path, payload = route_probe(route, stream)
+                    probe_name = "model_stream" if stream else "model_sync"
+                    try:
+                        response = await captured_request(
+                            client,
+                            "POST",
+                            api_endpoint(base_url, path),
+                            protocol_headers(route.protocol, api_key),
+                            payload,
+                        )
+                    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+                        model_evidence.append(
+                            Evidence(
+                                probe_name,
+                                "transport_error",
+                                "info",
+                                None,
+                                "模型穿透探针失败",
+                                {"error_type": type(exc).__name__, "message": str(exc)[:500]},
+                            )
+                        )
+                        continue
+                    responses.append(response)
+                    model_evidence.extend(header_evidence(probe_name, response))
+                    model_evidence.extend(payload_evidence(probe_name, response, [route.model]))
+                    if not stream and response.status_code in {404, 405} and route.fallbacks:
+                        fallback = route.fallbacks[0]
+                        model_evidence.append(
+                            Evidence(
+                                "route_fallback",
+                                "route_selection",
+                                "info",
+                                None,
+                                "自动协议回退",
+                                {"from": route.protocol, "to": fallback, "reason_status": response.status_code},
+                                response.raw_sha256,
+                            )
+                        )
+                        route = route_with_protocol(route, fallback)
+                        path, payload = route_probe(route, False)
+                        try:
+                            response = await captured_request(
+                                client,
+                                "POST",
+                                api_endpoint(base_url, path),
+                                protocol_headers(route.protocol, api_key),
+                                payload,
+                            )
+                            responses.append(response)
+                            model_evidence.extend(header_evidence("model_sync_fallback", response))
+                            model_evidence.extend(payload_evidence("model_sync_fallback", response, [route.model]))
+                        except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+                            model_evidence.append(
+                                Evidence(
+                                    "model_sync_fallback",
+                                    "transport_error",
+                                    "info",
+                                    None,
+                                    "回退协议探针失败",
+                                    {"error_type": type(exc).__name__, "message": str(exc)[:500]},
+                                )
+                            )
+                    if stream:
+                        model_evidence.extend(sse_evidence(response))
+                capability_path, capability_payload = capability_probe(route)
+                try:
+                    capability_response = await captured_request(
+                        client,
+                        "POST",
+                        api_endpoint(base_url, capability_path),
+                        protocol_headers(route.protocol, api_key),
+                        capability_payload,
+                    )
+                    responses.append(capability_response)
+                    model_evidence.extend(header_evidence("model_capability", capability_response))
+                    model_evidence.extend(payload_evidence("model_capability", capability_response, [route.model]))
+                except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+                    model_evidence.append(
+                        Evidence(
+                            "model_capability",
+                            "transport_error",
+                            "info",
+                            None,
+                            "工具能力探针失败",
+                            {"error_type": type(exc).__name__, "message": str(exc)[:500]},
+                        )
+                    )
+                expected = {
+                    "openai": "openai_official",
+                    "anthropic": "anthropic_official",
+                    "google": "gemini_developer_api",
+                }.get(route.family, "unknown")
+                terminal = classify(model_evidence, expected)
+                success_count = sum(1 for response in responses if 200 <= response.status_code < 300)
+                if success_count == 0:
+                    terminal = {
+                        "verdict": "inconclusive",
+                        "likely_channel": terminal.get("likely_channel", "unknown"),
+                        "confidence": 0.0,
+                        "summary": "有效模型请求未成功穿透，无法判断终端上游",
+                    }
+                elif terminal["verdict"] == "inconclusive" and protocol_translation(route):
+                    terminal = {
+                        "verdict": "inconclusive",
+                        "likely_channel": "unknown",
+                        "confidence": 0.0,
+                        "summary": f"已确认 {route.provider} 模型通过 {route.protocol} 非原生协议转换；该事实不等于终端渠道证据，终端上游仍未知",
+                    }
+                chain = observed_chain(model_evidence, route, terminal)
+                results.append(
+                    {
+                        "model": route.model,
+                        "family": route.family,
+                        "protocol": route.protocol,
+                        "endpoint": route.endpoint,
+                        "verdict": terminal["verdict"],
+                        "likely_channel": terminal["likely_channel"],
+                        "confidence": terminal["confidence"],
+                        "summary": terminal["summary"],
+                        "success_probes": success_count,
+                        "planned_probes": 3,
+                        "chain": chain,
+                        "evidence": model_evidence,
+                    }
+                )
+        return results
 
     async def _probe(
         self,

@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from database import Database, utc_now
+from discovery import discover_models, route_for_model, validate_public_api_url
 from engine import DetectorEngine, Evidence, RULE_VERSION
 from security import encrypt_secret, make_session, mask_secret, validate_runtime_secrets, verify_admin_token, verify_session
 
@@ -27,12 +28,32 @@ class LoginInput(BaseModel):
     token: str = Field(min_length=12, max_length=500)
 
 
+class ModelRouteInput(BaseModel):
+    model: str = Field(min_length=1, max_length=200)
+    family: str
+    provider: str
+    protocol: str
+    endpoint: str
+    fallbacks: list[str] = Field(default_factory=list)
+    supported_endpoint_types: list[str] = Field(default_factory=list)
+    owned_by: str = ""
+    discovered_via: str = ""
+    route_reason: str = ""
+
+
+class DiscoveryInput(BaseModel):
+    base_url: HttpUrl
+    api_key: str = Field(min_length=1, max_length=1000)
+
+
 class UpstreamInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     base_url: HttpUrl
-    api_style: str
+    api_style: str = "auto"
     api_key: str = Field(default="", max_length=1000)
     models: list[str] = Field(default_factory=list, max_length=50)
+    model_routes: list[ModelRouteInput] = Field(default_factory=list, max_length=50)
+    discovery: dict[str, Any] = Field(default_factory=dict)
     role: str = "candidate"
     claimed_channel: str = "unknown"
     reference_upstream_id: int | None = None
@@ -42,8 +63,8 @@ class UpstreamInput(BaseModel):
     @field_validator("api_style")
     @classmethod
     def validate_style(cls, value: str) -> str:
-        if value not in {"openai", "anthropic", "gemini"}:
-            raise ValueError("api_style must be openai, anthropic, or gemini")
+        if value not in {"auto", "openai", "anthropic", "gemini"}:
+            raise ValueError("api_style must be auto, openai, anthropic, or gemini")
         return value
 
     @field_validator("role")
@@ -112,6 +133,8 @@ def public_upstream(row: dict[str, Any]) -> dict[str, Any]:
     result = dict(row)
     result.pop("api_key_encrypted", None)
     result["models"] = json.loads(result.pop("models_json", "[]"))
+    result["model_routes"] = json.loads(result.pop("model_routes_json", "[]"))
+    result["discovery"] = json.loads(result.pop("discovery_json", "{}"))
     for field in ("allow_paid_probes", "enabled"):
         result[field] = bool(result[field])
     return result
@@ -124,14 +147,44 @@ def load_upstream(upstream_id: int) -> dict[str, Any]:
     return row
 
 
-async def save_evidence(run_id: int, evidence: list[Evidence]) -> None:
+def routes_for_upstream(upstream: dict[str, Any]) -> list[dict[str, Any]]:
+    routes = json.loads(upstream.get("model_routes_json") or "[]")
+    if routes:
+        return routes
+    models = json.loads(upstream.get("models_json") or "[]")
+    legacy_style = str(upstream.get("api_style") or "auto")
+    supported = [] if legacy_style == "auto" else [legacy_style]
+    inferred: list[dict[str, Any]] = []
+    for model in models:
+        route = route_for_model(str(model), "", supported, "legacy_migration")
+        if route:
+            inferred.append(route.to_dict())
+    return inferred
+
+
+def normalized_submitted_routes(items: list[ModelRouteInput]) -> list[dict[str, Any]]:
+    routes: list[dict[str, Any]] = []
+    for item in items:
+        route = route_for_model(
+            item.model,
+            item.owned_by,
+            item.supported_endpoint_types,
+            item.discovered_via or "submitted_discovery",
+        )
+        if route:
+            routes.append(route.to_dict())
+    return routes
+
+
+async def save_evidence(run_id: int, evidence: list[Evidence], model: str | None = None) -> None:
     with db.connect() as connection:
         for item in evidence:
             connection.execute(
-                "INSERT INTO evidence(run_id,probe,category,strength,supports,title,detail_json,raw_sha256,created_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO evidence(run_id,model,probe,category,strength,supports,title,detail_json,raw_sha256,created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
                     run_id,
+                    model,
                     item.probe,
                     item.category,
                     item.strength,
@@ -218,6 +271,52 @@ async def notify_if_needed(upstream: dict[str, Any], result: dict[str, Any], run
         pass
 
 
+def aggregate_model_results(model_results: list[dict[str, Any]]) -> dict[str, Any]:
+    if not model_results:
+        return {
+            "verdict": "inconclusive",
+            "likely_channel": "unknown",
+            "confidence": 0.0,
+            "summary": "未选择可检测的 OpenAI、Anthropic 或 Google 文本模型",
+        }
+    order = {"suspected_substitution": 4, "probable_alternate_channel": 3, "confirmed_direct": 2, "inconclusive": 1}
+    strongest = max(model_results, key=lambda item: (order.get(item["verdict"], 0), item.get("confidence", 0.0)))
+    penetrated = sum(1 for item in model_results if item.get("success_probes", 0) > 0)
+    return {
+        "verdict": strongest["verdict"],
+        "likely_channel": strongest["likely_channel"],
+        "confidence": strongest["confidence"],
+        "summary": f"已对 {len(model_results)} 个模型执行低 Token 穿透探针，{penetrated} 个模型至少一次成功到达有效响应；详情按模型查看",
+    }
+
+
+async def save_model_results(run_id: int, model_results: list[dict[str, Any]]) -> None:
+    with db.connect() as connection:
+        for item in model_results:
+            connection.execute(
+                "INSERT INTO model_results(run_id,model,family,protocol,endpoint,status,verdict,likely_channel,confidence,summary,"
+                "success_probes,planned_probes,chain_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    run_id,
+                    item["model"],
+                    item["family"],
+                    item["protocol"],
+                    item.get("endpoint"),
+                    "completed",
+                    item["verdict"],
+                    item["likely_channel"],
+                    item["confidence"],
+                    item["summary"],
+                    item.get("success_probes", 0),
+                    item.get("planned_probes", 0),
+                    json.dumps(item["chain"], ensure_ascii=False, separators=(",", ":")),
+                    utc_now(),
+                ),
+            )
+    for item in model_results:
+        await save_evidence(run_id, item.get("evidence", []), item["model"])
+
+
 async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) -> int:
     started = utc_now()
     run_id = db.execute(
@@ -225,11 +324,25 @@ async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) ->
         (upstream["id"], trigger, mode, "running", RULE_VERSION, started),
     )
     try:
-        result, evidence = await engine.run(upstream, mode)
+        baseline = dict(upstream)
+        baseline["api_style"] = "openai"
+        result, evidence = await engine.run(baseline, "safe")
         comparison = compare_with_reference(upstream, evidence)
         if comparison:
             evidence.append(comparison)
         await save_evidence(run_id, evidence)
+        model_results: list[dict[str, Any]] = []
+        if mode == "active":
+            model_results = await engine.run_models(upstream, routes_for_upstream(upstream))
+            await save_model_results(run_id, model_results)
+            result = aggregate_model_results(model_results)
+        else:
+            result = {
+                "verdict": "inconclusive",
+                "likely_channel": result.get("likely_channel", "unknown"),
+                "confidence": 0.0,
+                "summary": "仅完成模型列表与入口协议巡检；未调用有效模型，不能据此判断终端上游真伪",
+            }
         db.execute(
             "UPDATE runs SET status='completed',verdict=?,likely_channel=?,confidence=?,summary=?,finished_at=? WHERE id=?",
             (result["verdict"], result["likely_channel"], result["confidence"], result["summary"], utc_now(), run_id),
@@ -327,26 +440,49 @@ def state() -> dict[str, Any]:
     return {"upstreams": upstreams, "runs": runs, "settings": db.settings(), "rule_version": RULE_VERSION}
 
 
+@app.post("/detector/api/discover", dependencies=[Depends(require_admin)])
+async def discover_upstream_models(value: DiscoveryInput) -> dict[str, Any]:
+    base_url = str(value.base_url).rstrip("/")
+    try:
+        validate_public_api_url(base_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = await discover_models(base_url, value.api_key)
+    result["base_url"] = base_url
+    result["supported_families"] = ["openai", "anthropic", "google"]
+    return result
+
+
 @app.post("/detector/api/upstreams", dependencies=[Depends(require_admin)])
 def create_upstream(value: UpstreamInput) -> dict[str, Any]:
     if not value.api_key:
         raise HTTPException(status_code=400, detail="api_key is required for a new upstream")
+    try:
+        validate_public_api_url(str(value.base_url))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    routes = normalized_submitted_routes(value.model_routes)
+    models = [item["model"] for item in routes] or value.models
+    if not models:
+        raise HTTPException(status_code=400, detail="select at least one discovered model")
     if value.reference_upstream_id is not None:
         reference = load_upstream(value.reference_upstream_id)
         if reference["role"] != "reference":
             raise HTTPException(status_code=400, detail="reference_upstream_id must point to a reference upstream")
     now = utc_now()
     upstream_id = db.execute(
-        "INSERT INTO upstreams(name,base_url,api_style,claimed_channel,api_key_encrypted,api_key_masked,models_json,role,"
-        "reference_upstream_id,allow_paid_probes,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO upstreams(name,base_url,api_style,claimed_channel,api_key_encrypted,api_key_masked,models_json,model_routes_json,"
+        "discovery_json,role,reference_upstream_id,allow_paid_probes,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             value.name,
             str(value.base_url).rstrip("/"),
-            value.api_style,
-            value.claimed_channel,
+            "auto",
+            "unknown",
             encrypt_secret(value.api_key),
             mask_secret(value.api_key),
-            json.dumps(value.models, ensure_ascii=False),
+            json.dumps(models, ensure_ascii=False),
+            json.dumps(routes, ensure_ascii=False),
+            json.dumps(value.discovery, ensure_ascii=False),
             value.role,
             value.reference_upstream_id,
             int(value.allow_paid_probes),
@@ -365,22 +501,28 @@ def update_upstream(upstream_id: int, value: UpstreamInput) -> dict[str, Any]:
         reference = load_upstream(value.reference_upstream_id)
         if reference["role"] != "reference" or reference["id"] == upstream_id:
             raise HTTPException(status_code=400, detail="invalid reference upstream")
+    try:
+        validate_public_api_url(str(value.base_url))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    routes = normalized_submitted_routes(value.model_routes)
+    models = [item["model"] for item in routes] or value.models
     encrypted = current["api_key_encrypted"]
     masked = current["api_key_masked"]
     if value.api_key:
         encrypted = encrypt_secret(value.api_key)
         masked = mask_secret(value.api_key)
     db.execute(
-        "UPDATE upstreams SET name=?,base_url=?,api_style=?,claimed_channel=?,api_key_encrypted=?,api_key_masked=?,"
-        "models_json=?,role=?,reference_upstream_id=?,allow_paid_probes=?,enabled=?,updated_at=? WHERE id=?",
+        "UPDATE upstreams SET name=?,base_url=?,api_style='auto',claimed_channel='unknown',api_key_encrypted=?,api_key_masked=?,"
+        "models_json=?,model_routes_json=?,discovery_json=?,role=?,reference_upstream_id=?,allow_paid_probes=?,enabled=?,updated_at=? WHERE id=?",
         (
             value.name,
             str(value.base_url).rstrip("/"),
-            value.api_style,
-            value.claimed_channel,
             encrypted,
             masked,
-            json.dumps(value.models, ensure_ascii=False),
+            json.dumps(models, ensure_ascii=False),
+            json.dumps(routes, ensure_ascii=False),
+            json.dumps(value.discovery, ensure_ascii=False),
             value.role,
             value.reference_upstream_id,
             int(value.allow_paid_probes),
@@ -414,10 +556,13 @@ def run_detail(run_id: int) -> dict[str, Any]:
     )
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
-    evidence = db.rows("SELECT * FROM evidence WHERE run_id=? ORDER BY id", (run_id,))
+    evidence = db.rows("SELECT * FROM evidence WHERE run_id=? ORDER BY model IS NOT NULL,model,id", (run_id,))
     for item in evidence:
         item["detail"] = json.loads(item.pop("detail_json"))
-    return {"run": run, "evidence": evidence}
+    model_results = db.rows("SELECT * FROM model_results WHERE run_id=? ORDER BY id", (run_id,))
+    for item in model_results:
+        item["chain"] = json.loads(item.pop("chain_json"))
+    return {"run": run, "model_results": model_results, "evidence": evidence}
 
 
 @app.put("/detector/api/settings", dependencies=[Depends(require_admin)])

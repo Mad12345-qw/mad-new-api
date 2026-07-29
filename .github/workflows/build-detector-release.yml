@@ -115,6 +115,16 @@ jobs:
           python3 -m unittest discover -s server/model-detector -p 'test_*.py'
           python3 -m compileall -q server/model-detector
 
+      - name: Validate detector inline JavaScript
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          html = Path('server/model-detector/ui/index.html').read_text(encoding='utf-8')
+          script = html.rsplit('<script>', 1)[1].split('</script>', 1)[0]
+          Path('/tmp/model-detector-ui.js').write_text(script, encoding='utf-8')
+          PY
+          node --check /tmp/model-detector-ui.js
+
       - name: Test existing media compatibility service
         run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
 

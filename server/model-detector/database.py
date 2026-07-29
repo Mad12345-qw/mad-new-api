@@ -51,6 +51,8 @@ class Database:
                     api_key_encrypted TEXT NOT NULL,
                     api_key_masked TEXT NOT NULL,
                     models_json TEXT NOT NULL DEFAULT '[]',
+                    model_routes_json TEXT NOT NULL DEFAULT '[]',
+                    discovery_json TEXT NOT NULL DEFAULT '{}',
                     role TEXT NOT NULL DEFAULT 'candidate',
                     reference_upstream_id INTEGER,
                     allow_paid_probes INTEGER NOT NULL DEFAULT 0,
@@ -77,6 +79,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS evidence (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id INTEGER NOT NULL,
+                    model TEXT,
                     probe TEXT NOT NULL,
                     category TEXT NOT NULL,
                     strength TEXT NOT NULL,
@@ -84,6 +87,24 @@ class Database:
                     title TEXT NOT NULL,
                     detail_json TEXT NOT NULL,
                     raw_sha256 TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS model_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    model TEXT NOT NULL,
+                    family TEXT NOT NULL,
+                    protocol TEXT NOT NULL,
+                    endpoint TEXT,
+                    status TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    likely_channel TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    summary TEXT NOT NULL,
+                    success_probes INTEGER NOT NULL DEFAULT 0,
+                    planned_probes INTEGER NOT NULL DEFAULT 0,
+                    chain_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
                 );
@@ -96,6 +117,13 @@ class Database:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(upstreams)")}
             if "claimed_channel" not in columns:
                 db.execute("ALTER TABLE upstreams ADD COLUMN claimed_channel TEXT NOT NULL DEFAULT 'unknown'")
+            if "model_routes_json" not in columns:
+                db.execute("ALTER TABLE upstreams ADD COLUMN model_routes_json TEXT NOT NULL DEFAULT '[]'")
+            if "discovery_json" not in columns:
+                db.execute("ALTER TABLE upstreams ADD COLUMN discovery_json TEXT NOT NULL DEFAULT '{}'")
+            evidence_columns = {row["name"] for row in db.execute("PRAGMA table_info(evidence)")}
+            if "model" not in evidence_columns:
+                db.execute("ALTER TABLE evidence ADD COLUMN model TEXT")
             self.set_setting("interval_minutes", 15, db)
             self.set_setting("scheduled_mode", "safe", db)
             self.set_setting("webhook_url", "", db)

@@ -17,7 +17,8 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
-      SQL_DSN: /data/new-api.db
+      SQLITE_PATH: /data/new-api.db?_busy_timeout=30000
+      SESSION_SECRET: ${NEW_API_SESSION_SECRET}
     volumes:
       - ./data/new-api:/data
     healthcheck:

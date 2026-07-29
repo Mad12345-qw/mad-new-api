@@ -1,6 +1,9 @@
 import os
 import tempfile
 import unittest
+import json
+
+import httpx
 from unittest.mock import AsyncMock, patch
 
 from discovery import route_for_model
@@ -214,6 +217,50 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(any(item.supports == "codex_subscription_relay" for item in evidence))
         self.assertEqual(classify(evidence, "openai_official")["verdict"], "inconclusive")
 
+    def test_codex_fingerprint_is_extracted_from_completed_sse_event(self) -> None:
+        route = route_for_model("gpt-5.6-sol", "openai", ["openai"])
+        payload = {
+            "model": route.model,
+            "input": "Reply X.",
+            "max_output_tokens": 16,
+            "stream": True,
+            "store": False,
+        }
+        instructions = "\n".join(
+            [
+                "You are Codex, a coding agent based on GPT-5. You and the user share one workspace.",
+                "# Personality",
+                "# Working with the user",
+                "## Editing constraints",
+                "## Autonomy and persistence",
+                "X" * 5000,
+            ]
+        )
+        event = {
+            "type": "response.completed",
+            "response": {
+                "instructions": instructions,
+                "prompt_cache_key": "generated-cache-key",
+                "safety_identifier": "generated-safety-id",
+                "max_output_tokens": None,
+                "usage": {"input_tokens": 4390},
+            },
+        }
+        response = ProbeResponse(
+            200,
+            1,
+            {"content-type": "text/event-stream"},
+            "data: " + json.dumps(event) + "\n\n",
+            None,
+            "digest",
+        )
+        evidence = provenance_evidence("model_stream", route, payload, response)
+        result = classify(evidence, "openai_official")
+        self.assertEqual(result["likely_channel"], "codex_subscription_relay")
+        self.assertEqual(result["confidence"], 0.98)
+        detail = next(item.detail for item in evidence if item.category == "codex_prompt_fingerprint")
+        self.assertTrue(detail["extracted_from_sse"])
+
     def test_claude_subscription_relay_requires_cache_and_proxy_headers(self) -> None:
         route = route_for_model("claude-fable-5", "claude", ["openai"])
         _, payload = capability_probe(route)
@@ -343,6 +390,28 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["success_probes"], 4)
         self.assertTrue(any(item.category == "protocol_declaration_conflict" for item in result["evidence"]))
         self.assertTrue(any(layer["kind"] == "protocol_declaration_conflict" for layer in result["chain"]["layers"]))
+
+    async def test_claude_capability_read_timeout_retries_once(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["openai"])
+        requests = AsyncMock(
+            side_effect=[
+                self.response(200, {"id": "chatcmpl-sync"}),
+                self.response(200, text="data: {\"id\":\"chatcmpl-stream\"}\n\n", headers={"content-type": "text/event-stream"}),
+                httpx.ReadTimeout("slow capability"),
+                self.response(200, {"choices": [{"message": {"tool_calls": []}}]}),
+                self.response(404, {"error": {"type": "not_found"}}),
+            ]
+        )
+        upstream = {
+            "base_url": "https://relay.example/v1",
+            "api_key_encrypted": "encrypted",
+            "allow_paid_probes": 1,
+        }
+        with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
+            result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
+        self.assertEqual(requests.await_count, 5)
+        self.assertTrue(any(item.category == "probe_retry" for item in result["evidence"]))
+        self.assertEqual(result["success_probes"], 3)
 
 
 class SecurityTests(unittest.TestCase):

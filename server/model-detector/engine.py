@@ -115,9 +115,13 @@ async def captured_request(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any] | None = None,
+    timeout_seconds: float | None = None,
 ) -> ProbeResponse:
     started = time.perf_counter()
-    response = await client.request(method, url, headers=headers, json=payload)
+    request_options: dict[str, Any] = {}
+    if timeout_seconds is not None:
+        request_options["timeout"] = timeout_seconds
+    response = await client.request(method, url, headers=headers, json=payload, **request_options)
     raw = response.content[:MAX_CAPTURE_BYTES]
     elapsed = int((time.perf_counter() - started) * 1000)
     text = raw.decode("utf-8", errors="replace")
@@ -355,6 +359,24 @@ def _claude_usage(usage: dict[str, Any]) -> dict[str, Any]:
     return usage
 
 
+def _completed_sse_response(response: ProbeResponse) -> dict[str, Any] | None:
+    """Return the final provider response embedded in a Responses API SSE stream."""
+    completed: dict[str, Any] | None = None
+    for line in response.body_text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        payload = line.partition(":")[2].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        event = safe_json(payload)
+        if not isinstance(event, dict) or not isinstance(event.get("response"), dict):
+            continue
+        if event.get("type") == "response.completed":
+            return event["response"]
+        completed = event["response"]
+    return completed
+
+
 def provenance_evidence(
     probe: str,
     route: ModelRoute,
@@ -368,6 +390,10 @@ def provenance_evidence(
     become terminal-channel proof by themselves.
     """
     value = response.body_json
+    extracted_from_sse = False
+    if not isinstance(value, dict):
+        value = _completed_sse_response(response)
+        extracted_from_sse = isinstance(value, dict)
     if not isinstance(value, dict) or not 200 <= response.status_code < 300:
         return []
 
@@ -401,6 +427,7 @@ def provenance_evidence(
                         "matched_markers": matched,
                         "first_line": instructions.splitlines()[0][:240] if instructions else "",
                         "request_supplied_instructions": False,
+                        "extracted_from_sse": extracted_from_sse,
                         "source_urls": [str(item) for item in codex_rule.get("source_urls", [])],
                     },
                     response.raw_sha256,
@@ -429,6 +456,7 @@ def provenance_evidence(
                         "generated_fields": generated_fields,
                         "requested_max_output_tokens": request_payload.get("max_output_tokens"),
                         "response_max_output_tokens": value.get("max_output_tokens"),
+                        "extracted_from_sse": extracted_from_sse,
                     },
                     response.raw_sha256,
                 )
@@ -1105,29 +1133,46 @@ class DetectorEngine:
                     if stream:
                         model_evidence.extend(sse_evidence(response))
                 capability_path, capability_payload = capability_probe(route)
-                try:
-                    capability_response = await captured_request(
-                        client,
-                        "POST",
-                        api_endpoint(base_url, capability_path),
-                        protocol_headers(route.protocol, api_key),
-                        capability_payload,
-                    )
+                capability_response: ProbeResponse | None = None
+                for attempt in range(2):
+                    try:
+                        capability_response = await captured_request(
+                            client,
+                            "POST",
+                            api_endpoint(base_url, capability_path),
+                            protocol_headers(route.protocol, api_key),
+                            capability_payload,
+                        )
+                        break
+                    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+                        retryable = isinstance(exc, (httpx.ReadTimeout, asyncio.TimeoutError)) and attempt == 0
+                        if retryable:
+                            model_evidence.append(
+                                Evidence(
+                                    "model_capability_retry",
+                                    "probe_retry",
+                                    "info",
+                                    None,
+                                    "工具能力探针读取超时，执行一次限量重试",
+                                    {"error_type": type(exc).__name__, "attempt": 1, "maximum_attempts": 2},
+                                )
+                            )
+                            continue
+                        model_evidence.append(
+                            Evidence(
+                                "model_capability",
+                                "transport_error",
+                                "info",
+                                None,
+                                "工具能力探针失败",
+                                {"error_type": type(exc).__name__, "message": str(exc)[:500], "attempts": attempt + 1},
+                            )
+                        )
+                if capability_response is not None:
                     responses.append(capability_response)
                     model_evidence.extend(header_evidence("model_capability", capability_response))
                     model_evidence.extend(payload_evidence("model_capability", capability_response, [route.model]))
                     model_evidence.extend(provenance_evidence("model_capability", route, capability_payload, capability_response))
-                except (httpx.HTTPError, asyncio.TimeoutError) as exc:
-                    model_evidence.append(
-                        Evidence(
-                            "model_capability",
-                            "transport_error",
-                            "info",
-                            None,
-                            "工具能力探针失败",
-                            {"error_type": type(exc).__name__, "message": str(exc)[:500]},
-                        )
-                    )
                 planned_probes = 3
                 if route.family == "anthropic" and route.protocol != "anthropic_messages":
                     planned_probes += 1
@@ -1140,6 +1185,7 @@ class DetectorEngine:
                             api_endpoint(base_url, native_path),
                             protocol_headers(native_route.protocol, api_key),
                             native_payload,
+                            min(12.0, self.timeout_seconds),
                         )
                         responses.append(native_response)
                         model_evidence.extend(header_evidence("native_protocol_crosscheck", native_response))

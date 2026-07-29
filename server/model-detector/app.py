@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from database import Database, utc_now
 from discovery import discover_models, route_for_model, validate_public_api_url
-from engine import DetectorEngine, Evidence, RULE_VERSION
+from engine import DetectorEngine, Evidence, RULE_PACK, RULE_VERSION
 from security import encrypt_secret, make_session, mask_secret, validate_runtime_secrets, verify_admin_token, verify_session
 
 
@@ -22,6 +22,7 @@ db = Database()
 engine = DetectorEngine(float(os.environ.get("DETECTOR_TIMEOUT_SECONDS", "30")))
 run_lock = asyncio.Lock()
 scheduler_stop = asyncio.Event()
+CLAUDE_HISTORY_RULE = RULE_PACK.get("history_rules", {}).get("claude_route_change", {})
 
 
 class LoginInput(BaseModel):
@@ -314,9 +315,13 @@ def capability_usage_profile(detail: dict[str, Any]) -> dict[str, Any] | None:
         or _integer(prompt_details.get("cache_creation_tokens"))
         or _integer(prompt_details.get("cached_creation_tokens"))
     )
-    if input_tokens >= 2500 and cache_creation >= 2000:
+    hidden_minimum_input = int(CLAUDE_HISTORY_RULE.get("hidden_minimum_input_tokens", 2500))
+    hidden_minimum_cache = int(CLAUDE_HISTORY_RULE.get("hidden_minimum_cache_creation_tokens", 2000))
+    lightweight_maximum_input = int(CLAUDE_HISTORY_RULE.get("lightweight_maximum_input_tokens", 500))
+    lightweight_maximum_cache = int(CLAUDE_HISTORY_RULE.get("lightweight_maximum_cache_creation_tokens", 500))
+    if input_tokens >= hidden_minimum_input and cache_creation >= hidden_minimum_cache:
         profile_kind = "claude_code_hidden_prompt"
-    elif input_tokens <= 500 and cache_creation <= 500:
+    elif input_tokens <= lightweight_maximum_input and cache_creation <= lightweight_maximum_cache:
         profile_kind = "lightweight_adapter"
     else:
         profile_kind = "intermediate"
@@ -357,6 +362,8 @@ def historical_route_change_evidence(current: dict[str, Any], history: list[dict
 
 
 def apply_historical_route_changes(upstream_id: int, model_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    confidence = float(CLAUDE_HISTORY_RULE.get("confidence", 0.93))
+    lookback_runs = int(CLAUDE_HISTORY_RULE.get("lookback_runs", 12))
     for result in model_results:
         if result.get("family") != "anthropic":
             continue
@@ -372,8 +379,8 @@ def apply_historical_route_changes(upstream_id: int, model_results: list[dict[st
             "JOIN runs r ON r.id=e.run_id "
             "WHERE r.upstream_id=? AND r.mode='active' AND r.status='completed' "
             "AND e.model=? AND e.probe='model_capability' AND e.category='token_accounting' "
-            "ORDER BY r.id DESC LIMIT 12",
-            (upstream_id, result["model"]),
+            "ORDER BY r.id DESC LIMIT ?",
+            (upstream_id, result["model"], lookback_runs),
         )
         history: list[dict[str, Any]] = []
         for row in reversed(rows):
@@ -395,7 +402,7 @@ def apply_historical_route_changes(upstream_id: int, model_results: list[dict[st
             "position": "intermediate",
             "kind": "heterogeneous_backend_pool",
             "label": "后端路由池异构或渠道发生切换",
-            "confidence": 0.93,
+            "confidence": confidence,
             "status": "confirmed_change",
             "note": "确认行为发生过切换，但无法仅凭黑盒区分并行轮询池和供应商配置更换",
         }
@@ -410,7 +417,7 @@ def apply_historical_route_changes(upstream_id: int, model_results: list[dict[st
                 {
                     "verdict": "probable_alternate_channel",
                     "likely_channel": "heterogeneous_backend_pool",
-                    "confidence": 0.93,
+                    "confidence": confidence,
                     "summary": "历史同一工具探针在 Claude Code 隐藏提示路径与轻量适配路径之间切换，确认后端路由不稳定；当前无法归因于单一官方渠道",
                 }
             )

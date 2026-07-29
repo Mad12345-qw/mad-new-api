@@ -1,5 +1,15 @@
 {
-  "version": "2026.07.29.3",
+  "version": "2026.07.29.4",
+  "history_rules": {
+    "claude_route_change": {
+      "lookback_runs": 12,
+      "hidden_minimum_input_tokens": 2500,
+      "hidden_minimum_cache_creation_tokens": 2000,
+      "lightweight_maximum_input_tokens": 500,
+      "lightweight_maximum_cache_creation_tokens": 500,
+      "confidence": 0.93
+    }
+  },
   "subscription_relay_rules": {
     "codex": {
       "channel": "codex_subscription_relay",

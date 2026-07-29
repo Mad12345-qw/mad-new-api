@@ -396,6 +396,55 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(verdict["likely_channel"], "antigravity_subscription_relay")
         self.assertEqual(verdict["confidence"], 0.99)
 
+    def test_omniroute_antigravity_disclosure_plus_rewrite_is_terminal_proof(self) -> None:
+        route = route_for_model("gemini-3.6-flash", "google", ["openai"])
+        path, payload = route_probe(route)
+        self.assertEqual(path, "/v1/chat/completions")
+        response = ProbeResponse(
+            200,
+            1,
+            {
+                "x-omniroute-provider": "antigravity",
+                "x-omniroute-model": "gemini-3.6-flash-medium",
+                "x-omniroute-version": "3.8.49",
+                "x-omniroute-decision": "strategy=single; provider=antigravity; latency_ms=1034",
+            },
+            "{}",
+            {
+                "model": "antigravity/gemini-3.6-flash-medium",
+                "choices": [{"message": {"content": "A B C D E F G H I J K L"}}],
+                "usage": {"completion_tokens": 12},
+            },
+            "omniroute-antigravity-digest",
+        )
+        evidence = provenance_evidence("model_sync", route, payload, response)
+        disclosure = next(item for item in evidence if item.category == "omniroute_provider_disclosure")
+        self.assertEqual(disclosure.supports, "antigravity_subscription_relay")
+        self.assertEqual(disclosure.detail["routed_model"], "gemini-3.6-flash-medium")
+        self.assertEqual(disclosure.detail["response_model"], "antigravity/gemini-3.6-flash-medium")
+        verdict = classify(evidence, "gemini_developer_api")
+        self.assertEqual(verdict["verdict"], "suspected_substitution")
+        self.assertEqual(verdict["likely_channel"], "antigravity_subscription_relay")
+        self.assertEqual(verdict["confidence"], 0.99)
+        chain = observed_chain(evidence, route, verdict)
+        self.assertIn("omniroute", [layer["kind"] for layer in chain["layers"]])
+        self.assertEqual(chain["minimum_confirmed_hops"], 3)
+
+    def test_omniroute_antigravity_disclosure_alone_is_not_absolute_proof(self) -> None:
+        route = route_for_model("gemini-3.6-flash", "google", ["openai"])
+        response = ProbeResponse(
+            200,
+            1,
+            {"x-omniroute-provider": "antigravity", "x-omniroute-model": "gemini-3.6-flash-medium"},
+            "{}",
+            {"model": "antigravity/gemini-3.6-flash-medium", "choices": []},
+            "omniroute-disclosure-only",
+        )
+        evidence = implementation_evidence("model_sync", route, response)
+        verdict = classify(evidence, "gemini_developer_api")
+        self.assertEqual(verdict["likely_channel"], "antigravity_subscription_relay")
+        self.assertEqual(verdict["confidence"], 0.97)
+
     def test_antigravity_tier_alias_matrix_requires_multiple_successes(self) -> None:
         route = route_for_model("gemini-3.6-flash", "google", ["openai"])
         specs = antigravity_alias_probe_specs(route)

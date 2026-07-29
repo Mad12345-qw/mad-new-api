@@ -1,6 +1,13 @@
 {
-  "version": "2026.07.29.16",
+  "version": "2026.07.29.17",
   "implementation_rules": {
+    "omniroute": {
+      "source_urls": [
+        "https://github.com/diegosouzapw/OmniRoute/blob/9c904ddf1cae799d1729779de53c02693c5da9a9/src/shared/constants/headers.ts",
+        "https://github.com/diegosouzapw/OmniRoute/blob/9c904ddf1cae799d1729779de53c02693c5da9a9/docs/reference/API_REFERENCE.md",
+        "https://github.com/diegosouzapw/OmniRoute/blob/9c904ddf1cae799d1729779de53c02693c5da9a9/docs/openapi.yaml"
+      ]
+    },
     "cliproxyapi": {
       "lookback_runs": 12,
       "trace_headers": ["x-cpa-trace-id"],

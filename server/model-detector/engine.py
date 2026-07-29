@@ -377,6 +377,76 @@ def _completed_sse_response(response: ProbeResponse) -> dict[str, Any] | None:
     return completed
 
 
+def _provider_response_value(response: ProbeResponse) -> dict[str, Any] | None:
+    if isinstance(response.body_json, dict):
+        return response.body_json
+    return _completed_sse_response(response)
+
+
+def _response_route_profile(
+    probe: str,
+    request_payload: dict[str, Any],
+    response: ProbeResponse,
+) -> dict[str, Any] | None:
+    value = _provider_response_value(response)
+    if not isinstance(value, dict) or not 200 <= response.status_code < 300:
+        return None
+    usage = _usage_from_response(value)
+    native_usage = _claude_usage(usage)
+    input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", native_usage.get("input_tokens")))
+    if not isinstance(input_tokens, int) or isinstance(input_tokens, bool):
+        input_tokens = 0
+    cache_creation = native_usage.get("cache_creation_input_tokens", usage.get("cache_creation_input_tokens", 0))
+    if not isinstance(cache_creation, int) or isinstance(cache_creation, bool):
+        cache_creation = 0
+    billing = usage.get("billing_usage")
+    billing = billing if isinstance(billing, dict) else {}
+    instructions = value.get("instructions")
+    visible_request_chars = len(json.dumps(request_payload, ensure_ascii=False, separators=(",", ":")))
+    return {
+        "probe": probe,
+        "input_tokens": input_tokens,
+        "cache_creation_input_tokens": cache_creation,
+        "hidden_instruction_chars": len(instructions) if isinstance(instructions, str) else 0,
+        "hidden_instruction_sha256": (
+            hashlib.sha256(instructions.encode("utf-8")).hexdigest() if isinstance(instructions, str) and instructions else None
+        ),
+        "visible_request_chars": visible_request_chars,
+        "usage_source": usage.get("usage_source"),
+        "billing_source": billing.get("source"),
+        "response_object": value.get("object") or value.get("type"),
+    }
+
+
+def within_run_route_divergence_evidence(route: ModelRoute, profiles: list[dict[str, Any]]) -> Evidence | None:
+    lightweight = [item for item in profiles if int(item.get("input_tokens") or 0) <= 200]
+    hidden = [
+        item
+        for item in profiles
+        if int(item.get("input_tokens") or 0) >= 1000 or int(item.get("hidden_instruction_chars") or 0) >= 4000
+    ]
+    if not lightweight or not hidden:
+        return None
+    low = min(lightweight, key=lambda item: int(item.get("input_tokens") or 0))
+    high = max(hidden, key=lambda item: int(item.get("input_tokens") or 0))
+    ratio = round(int(high.get("input_tokens") or 0) / max(1, int(low.get("input_tokens") or 0)), 1)
+    return Evidence(
+        "within_run_consistency",
+        "within_run_route_divergence",
+        "strong",
+        "heterogeneous_backend_pool",
+        f"同一轮 {route.model} 固定小探针进入互斥后端路径",
+        {
+            "rule_id": "within_run_route_divergence_v1",
+            "lightweight_profile": low,
+            "hidden_or_amplified_profile": high,
+            "input_token_ratio": ratio,
+            "observed_profiles": profiles,
+            "conclusion": "同一模型在同一轮检测中至少命中轻量路径与隐藏提示/放大路径，不能视为稳定、单一的官方直连渠道",
+        },
+    )
+
+
 def provenance_evidence(
     probe: str,
     route: ModelRoute,
@@ -579,24 +649,71 @@ def provenance_evidence(
                     response.raw_sha256,
                 )
             )
+        thinking_request = request_payload.get("thinking")
+        content = value.get("content")
+        if (
+            isinstance(thinking_request, dict)
+            and thinking_request.get("display") == "omitted"
+            and isinstance(content, list)
+        ):
+            visible_thinking = [
+                block
+                for block in content
+                if isinstance(block, dict)
+                and block.get("type") == "thinking"
+                and isinstance(block.get("thinking"), str)
+                and block.get("thinking")
+            ]
+            if visible_thinking:
+                result.append(
+                    Evidence(
+                        probe,
+                        "request_contract_rewrite",
+                        "strong",
+                        None,
+                        "请求 display=omitted 但返回了可读 thinking 内容",
+                        {
+                            "rule_id": "claude_omitted_thinking_rewrite_v1",
+                            "visible_thinking_blocks": len(visible_thinking),
+                            "visible_thinking_chars": sum(len(str(block.get("thinking"))) for block in visible_thinking),
+                            "note": "证明中转层没有透明保留所提交的 Claude 请求/响应契约；不能单独识别最终云渠道",
+                        },
+                        response.raw_sha256,
+                    )
+                )
     return result
 
 
 def model_alias_evidence(models: list[str]) -> list[Evidence]:
     result: list[Evidence] = []
+    official_openai = {
+        "gpt-5.5",
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-image-2",
+    }
+    official_anthropic = {"claude-fable-5", "claude-opus-4-8", "claude-opus-5"}
     for model in models:
         normalized = model.lower()
-        if any(marker in normalized for marker in ("fable-5", "opus-5", "gpt-5.6-sol")):
+        if normalized in official_openai or normalized in official_anthropic:
+            source_url = (
+                f"https://developers.openai.com/api/docs/models/{normalized}"
+                if normalized in official_openai
+                else "https://platform.claude.com/docs/en/about-claude/models/overview"
+            )
             result.append(
                 Evidence(
                     probe="configured_models",
                     category="model_alias",
                     strength="weak",
                     supports=None,
-                    title=f"最新模型别名需要可信参考：{model}",
+                    title=f"模型名称与官方目录一致：{model}",
                     detail={
                         "model": model,
-                        "note": "模型名可被任意网关改写；必须结合可信参考上游和至少两类独立强证据",
+                        "official_model_id": True,
+                        "source_urls": [source_url],
+                        "note": "只证明名称是真实存在的官方模型 ID；模型名可被网关改写，不能据此证明本次请求到达该模型或官方渠道",
                     },
                 )
             )
@@ -632,7 +749,7 @@ def active_probe(style: str, model: str, stream: bool = False) -> tuple[str, dic
             "stream": stream,
             "messages": [{"role": "user", "content": "Reply with X only."}],
         }
-        if any(marker in model.lower() for marker in ("fable-5", "opus-5")):
+        if any(marker in model.lower() for marker in ("fable-5", "opus-5", "opus-4-8")):
             payload["thinking"] = {"type": "adaptive", "display": "omitted"}
             payload["output_config"] = {"effort": "low"}
         return "/v1/messages", payload
@@ -669,7 +786,7 @@ def route_probe(route: ModelRoute, stream: bool = False) -> tuple[str, dict[str,
             "stream": stream,
             "messages": [{"role": "user", "content": "Reply with X only."}],
         }
-        if any(marker in model.lower() for marker in ("fable-5", "opus-5")):
+        if any(marker in model.lower() for marker in ("fable-5", "opus-5", "opus-4-8")):
             payload["thinking"] = {"type": "adaptive", "display": "omitted"}
             payload["output_config"] = {"effort": "low"}
         return "/v1/messages", payload
@@ -696,7 +813,7 @@ def route_probe(route: ModelRoute, stream: bool = False) -> tuple[str, dict[str,
         "messages": [{"role": "user", "content": "Reply with X only."}],
         **(
             {"effort": "low", "thinking": {"type": "adaptive", "display": "omitted"}}
-            if route.family == "anthropic" and any(marker in model.lower() for marker in ("fable-5", "opus-5"))
+            if route.family == "anthropic" and any(marker in model.lower() for marker in ("fable-5", "opus-5", "opus-4-8"))
             else {}
         ),
     }
@@ -711,13 +828,17 @@ def capability_probe(route: ModelRoute) -> tuple[str, dict[str, Any]]:
         "additionalProperties": False,
     }
     if route.protocol == "anthropic_messages":
-        return "/v1/messages", {
+        payload: dict[str, Any] = {
             "model": route.model,
             "max_tokens": 32,
             "messages": [{"role": "user", "content": "Call detector_marker with marker X."}],
             "tools": [{"name": tool_name, "description": "Return the fixed marker", "input_schema": parameters}],
             "tool_choice": {"type": "tool", "name": tool_name},
         }
+        if any(marker in route.model.lower() for marker in ("fable-5", "opus-5", "opus-4-8")):
+            payload["thinking"] = {"type": "adaptive", "display": "omitted"}
+            payload["output_config"] = {"effort": "low"}
+        return "/v1/messages", payload
     if route.protocol == "gemini_generate":
         return f"/v1beta/models/{route.model}:generateContent", {
             "contents": [{"role": "user", "parts": [{"text": "Call detector_marker with marker X."}]}],
@@ -735,13 +856,41 @@ def capability_probe(route: ModelRoute) -> tuple[str, dict[str, Any]]:
             "tools": [{"type": "function", "name": tool_name, "description": "Return the fixed marker", "parameters": parameters, "strict": True}],
             "tool_choice": {"type": "function", "name": tool_name},
         }
-    return "/v1/chat/completions", {
+    payload = {
         "model": route.model,
         "max_tokens": 32,
         "messages": [{"role": "user", "content": "Call detector_marker with marker X."}],
         "tools": [{"type": "function", "function": {"name": tool_name, "description": "Return the fixed marker", "parameters": parameters, "strict": True}}],
         "tool_choice": {"type": "function", "function": {"name": tool_name}},
     }
+    if route.family == "anthropic" and any(
+        marker in route.model.lower() for marker in ("fable-5", "opus-5", "opus-4-8")
+    ):
+        payload["thinking"] = {"type": "adaptive", "display": "omitted"}
+        payload["effort"] = "low"
+    return "/v1/chat/completions", payload
+
+
+def image_validation_probes(route: ModelRoute) -> list[tuple[str, str, dict[str, Any]]]:
+    if route.protocol != "openai_images" or route.model.lower() != "gpt-image-2":
+        return []
+    return [
+        (
+            "image_invalid_size",
+            "/v1/images/generations",
+            {"model": route.model, "prompt": "X", "size": "1x1"},
+        ),
+        (
+            "image_missing_prompt",
+            "/v1/images/generations",
+            {"model": route.model},
+        ),
+        (
+            "image_wrong_protocol",
+            "/v1/responses",
+            {"model": route.model, "input": "X", "max_output_tokens": 1, "store": False},
+        ),
+    ]
 
 
 def protocol_translation(route: ModelRoute) -> bool:
@@ -756,6 +905,7 @@ def route_with_protocol(route: ModelRoute, protocol: str) -> ModelRoute:
         "gemini_generate": f"/v1beta/models/{route.model}:generateContent",
         "openai_responses": "/v1/responses",
         "openai_chat": "/v1/chat/completions",
+        "openai_images": "/v1/images/generations",
     }[protocol]
     data = route.to_dict()
     data["protocol"] = protocol
@@ -845,6 +995,7 @@ def observed_chain(evidence: list[Evidence], route: ModelRoute, terminal: dict[s
             "openai_official": "OpenAI 官方 API",
             "anthropic_official": "Anthropic 官方 API",
             "gemini_developer_api": "Gemini Developer API",
+            "heterogeneous_backend_pool": "异构后端池或渠道切换",
         }
         layers.append(
             {
@@ -905,6 +1056,24 @@ def sse_evidence(response: ProbeResponse) -> list[Evidence]:
 
 
 def classify(evidence: list[Evidence], claimed_channel: str = "unknown") -> dict[str, Any]:
+    route_divergence = next(
+        (
+            item
+            for item in evidence
+            if item.supports == "heterogeneous_backend_pool"
+            and item.category == "within_run_route_divergence"
+            and item.strength == "strong"
+        ),
+        None,
+    )
+    if route_divergence:
+        verdict = "suspected_substitution" if claimed_channel in {"openai_official", "anthropic_official"} else "probable_alternate_channel"
+        return {
+            "verdict": verdict,
+            "likely_channel": "heterogeneous_backend_pool",
+            "confidence": 0.96,
+            "summary": "同一模型在同一轮固定小探针中进入轻量路径与隐藏提示/Token 放大路径，确认后端不稳定，不能称为稳定、单一的官方直连",
+        }
     channel_categories: dict[str, set[str]] = {}
     channel_score: dict[str, float] = {}
     weights = {"strong": 0.46, "medium": 0.24, "weak": 0.08, "info": 0.0}
@@ -1065,6 +1234,85 @@ class DetectorEngine:
                 ]
                 model_evidence.extend(transport_evidence(base_url))
                 responses: list[ProbeResponse] = []
+                route_profiles: list[dict[str, Any]] = []
+                if route.protocol == "openai_images":
+                    image_specs = image_validation_probes(route)
+                    for probe_name, path, payload in image_specs:
+                        try:
+                            response = await captured_request(
+                                client,
+                                "POST",
+                                api_endpoint(base_url, path),
+                                protocol_headers(route.protocol, api_key),
+                                payload,
+                            )
+                        except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+                            model_evidence.append(
+                                Evidence(
+                                    probe_name,
+                                    "transport_error",
+                                    "info",
+                                    None,
+                                    "GPT Image 2 非生成型探针失败",
+                                    {"error_type": type(exc).__name__, "message": str(exc)[:500]},
+                                )
+                            )
+                            continue
+                        responses.append(response)
+                        model_evidence.extend(header_evidence(probe_name, response))
+                        model_evidence.extend(payload_evidence(probe_name, response, [route.model]))
+                        expected_validation = response.status_code in {400, 404, 405, 422}
+                        model_evidence.append(
+                            Evidence(
+                                probe_name,
+                                "image_endpoint_contract",
+                                "info",
+                                None,
+                                "GPT Image 2 非生成型端点校验结果",
+                                {
+                                    "status_code": response.status_code,
+                                    "expected_validation_response": expected_validation,
+                                    "generated_image": False,
+                                    "billed_generation_expected": False,
+                                    "note": "参数校验可证明网关暴露的协议行为，但不能单独证明隐藏模型或最终云渠道",
+                                },
+                                response.raw_sha256,
+                            )
+                        )
+                    terminal = classify(model_evidence, "openai_official")
+                    completed_count = len(responses)
+                    if completed_count == 0:
+                        terminal = {
+                            "verdict": "inconclusive",
+                            "likely_channel": terminal.get("likely_channel", "unknown"),
+                            "confidence": 0.0,
+                            "summary": "GPT Image 2 的非生成型协议探针均未收到响应，无法判断",
+                        }
+                    elif terminal["verdict"] == "inconclusive":
+                        terminal = {
+                            "verdict": "inconclusive",
+                            "likely_channel": terminal.get("likely_channel", "unknown"),
+                            "confidence": 0.0,
+                            "summary": "已完成 GPT Image 2 的 Images API 非生成型参数探针；未生成图片、未获得足够终端渠道指纹",
+                        }
+                    chain = observed_chain(model_evidence, route, terminal)
+                    results.append(
+                        {
+                            "model": route.model,
+                            "family": route.family,
+                            "protocol": route.protocol,
+                            "endpoint": route.endpoint,
+                            "verdict": terminal["verdict"],
+                            "likely_channel": terminal["likely_channel"],
+                            "confidence": terminal["confidence"],
+                            "summary": terminal["summary"],
+                            "success_probes": completed_count,
+                            "planned_probes": len(image_specs),
+                            "chain": chain,
+                            "evidence": model_evidence,
+                        }
+                    )
+                    continue
                 for stream in (False, True):
                     path, payload = route_probe(route, stream)
                     probe_name = "model_stream" if stream else "model_sync"
@@ -1089,6 +1337,9 @@ class DetectorEngine:
                         )
                         continue
                     responses.append(response)
+                    profile = _response_route_profile(probe_name, payload, response)
+                    if profile:
+                        route_profiles.append(profile)
                     model_evidence.extend(header_evidence(probe_name, response))
                     model_evidence.extend(payload_evidence(probe_name, response, [route.model]))
                     model_evidence.extend(provenance_evidence(probe_name, route, payload, response))
@@ -1116,6 +1367,9 @@ class DetectorEngine:
                                 payload,
                             )
                             responses.append(response)
+                            profile = _response_route_profile("model_sync_fallback", payload, response)
+                            if profile:
+                                route_profiles.append(profile)
                             model_evidence.extend(header_evidence("model_sync_fallback", response))
                             model_evidence.extend(payload_evidence("model_sync_fallback", response, [route.model]))
                             model_evidence.extend(provenance_evidence("model_sync_fallback", route, payload, response))
@@ -1170,9 +1424,15 @@ class DetectorEngine:
                         )
                 if capability_response is not None:
                     responses.append(capability_response)
+                    profile = _response_route_profile("model_capability", capability_payload, capability_response)
+                    if profile:
+                        route_profiles.append(profile)
                     model_evidence.extend(header_evidence("model_capability", capability_response))
                     model_evidence.extend(payload_evidence("model_capability", capability_response, [route.model]))
                     model_evidence.extend(provenance_evidence("model_capability", route, capability_payload, capability_response))
+                route_divergence = within_run_route_divergence_evidence(route, route_profiles)
+                if route_divergence:
+                    model_evidence.append(route_divergence)
                 planned_probes = 3
                 if route.family == "anthropic" and route.protocol != "anthropic_messages":
                     planned_probes += 1

@@ -278,7 +278,7 @@ def aggregate_model_results(model_results: list[dict[str, Any]]) -> dict[str, An
             "verdict": "inconclusive",
             "likely_channel": "unknown",
             "confidence": 0.0,
-            "summary": "未选择可检测的 OpenAI、Anthropic 或 Google 文本模型",
+            "summary": "未选择可检测的 GPT、Claude 或 gpt-image-2 模型",
         }
     order = {"suspected_substitution": 4, "probable_alternate_channel": 3, "confirmed_direct": 2, "inconclusive": 1}
     strongest = max(model_results, key=lambda item: (order.get(item["verdict"], 0), item.get("confidence", 0.0)))
@@ -586,7 +586,7 @@ async def discover_upstream_models(value: DiscoveryInput) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = await discover_models(base_url, value.api_key)
     result["base_url"] = base_url
-    result["supported_families"] = ["openai", "anthropic", "google"]
+    result["supported_families"] = ["openai", "anthropic"]
     return result
 
 

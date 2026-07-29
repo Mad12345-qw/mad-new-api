@@ -15,6 +15,7 @@ from engine import (
     capability_probe,
     classify,
     endpoint,
+    image_validation_probes,
     model_alias_evidence,
     observed_chain,
     payload_evidence,
@@ -22,6 +23,7 @@ from engine import (
     route_probe,
     sanitize_headers,
     transport_evidence,
+    within_run_route_divergence_evidence,
 )
 from security import decrypt_secret, encrypt_secret, mask_secret
 
@@ -122,7 +124,6 @@ class EngineTests(unittest.TestCase):
 
     def test_capability_payloads_match_each_protocol(self) -> None:
         anthropic = route_for_model("claude-opus-5", "claude", ["anthropic"])
-        gemini = route_for_model("gemini-3.1-pro", "google", ["gemini"])
         responses = route_for_model("gpt-5.6-sol", "openai", ["openai"])
         chat = route_for_model("claude-fable-5", "claude", ["openai"])
 
@@ -130,11 +131,6 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(path, "/v1/messages")
         self.assertEqual(payload["tool_choice"], {"type": "tool", "name": "detector_marker"})
         self.assertIn("input_schema", payload["tools"][0])
-
-        path, payload = capability_probe(gemini)
-        self.assertIn(":generateContent", path)
-        self.assertEqual(payload["toolConfig"]["functionCallingConfig"]["mode"], "ANY")
-        self.assertIn("functionDeclarations", payload["tools"][0])
 
         path, payload = capability_probe(responses)
         self.assertEqual(path, "/v1/responses")
@@ -300,11 +296,71 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(payload["output_config"], {"effort": "low"})
         self.assertNotIn("effort", payload)
 
+    def test_opus_4_8_uses_adaptive_thinking_controls(self) -> None:
+        route = route_for_model("claude-opus-4-8", "claude", ["anthropic"])
+        _, payload = capability_probe(route)
+        self.assertEqual(payload["thinking"], {"type": "adaptive", "display": "omitted"})
+        self.assertEqual(payload["output_config"], {"effort": "low"})
+
+    def test_within_run_token_bimodality_overrides_single_route_guess(self) -> None:
+        route = route_for_model("gpt-5.5", "openai", ["openai"])
+        evidence = within_run_route_divergence_evidence(
+            route,
+            [
+                {"probe": "model_sync", "input_tokens": 11, "hidden_instruction_chars": 0},
+                {"probe": "model_capability", "input_tokens": 4430, "hidden_instruction_chars": 21334},
+            ],
+        )
+        self.assertIsNotNone(evidence)
+        result = classify(
+            [
+                evidence,
+                Evidence("model_capability", "codex_prompt_fingerprint", "strong", "codex_subscription_relay", "x", {}),
+            ],
+            "openai_official",
+        )
+        self.assertEqual(result["likely_channel"], "heterogeneous_backend_pool")
+        self.assertEqual(result["verdict"], "suspected_substitution")
+        self.assertEqual(result["confidence"], 0.96)
+
+    def test_gpt_image_2_uses_only_non_generation_validation_payloads(self) -> None:
+        route = route_for_model("gpt-image-2", "openai", ["openai"])
+        probes = image_validation_probes(route)
+        self.assertEqual(len(probes), 3)
+        self.assertEqual(probes[0][1], "/v1/images/generations")
+        self.assertEqual(probes[0][2]["size"], "1x1")
+        self.assertNotIn("prompt", probes[1][2])
+        self.assertEqual(probes[2][1], "/v1/responses")
+
 
 class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def response(status: int, body: dict | None = None, headers: dict[str, str] | None = None, text: str = "") -> ProbeResponse:
         return ProbeResponse(status, 1, headers or {}, text or "{}", body or {}, f"digest-{status}")
+
+    async def test_gpt_image_2_run_uses_three_validation_responses_without_generation(self) -> None:
+        route = route_for_model("gpt-image-2", "openai", ["openai"])
+        requests = AsyncMock(
+            side_effect=[
+                self.response(400, {"error": {"type": "invalid_request_error", "code": "invalid_size"}}),
+                self.response(400, {"error": {"type": "invalid_request_error", "code": "missing_prompt"}}),
+                self.response(400, {"error": {"type": "invalid_request_error", "code": "unsupported_model"}}),
+            ]
+        )
+        upstream = {
+            "base_url": "https://relay.example/v1",
+            "api_key_encrypted": "encrypted",
+            "allow_paid_probes": 1,
+        }
+        with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
+            result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
+
+        self.assertEqual(result["protocol"], "openai_images")
+        self.assertEqual(result["success_probes"], 3)
+        self.assertEqual(result["planned_probes"], 3)
+        self.assertEqual(result["verdict"], "inconclusive")
+        payloads = [call.args[4] for call in requests.await_args_list]
+        self.assertTrue(all(payload.get("size") == "1x1" or "prompt" not in payload for payload in payloads))
 
     async def test_responses_404_falls_back_once_then_uses_chat_for_remaining_probes(self) -> None:
         route = route_for_model("gpt-5.6-sol", "openai", ["openai"])

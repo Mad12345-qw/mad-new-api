@@ -5,10 +5,10 @@ from discovery import api_endpoint, parse_model_inventory, route_for_model, vali
 
 
 class DiscoveryTests(unittest.TestCase):
-    def test_versioned_base_replaces_v1_for_gemini_native_route(self) -> None:
+    def test_versioned_base_preserves_images_route(self) -> None:
         self.assertEqual(
-            api_endpoint("https://relay.example/api/v1", "/v1beta/models/gemini-3:generateContent"),
-            "https://relay.example/api/v1beta/models/gemini-3:generateContent",
+            api_endpoint("https://relay.example/api/v1", "/v1/images/generations"),
+            "https://relay.example/api/v1/images/generations",
         )
 
     def test_claude_uses_declared_openai_translation_automatically(self) -> None:
@@ -28,11 +28,12 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(route.protocol, "openai_responses")
         self.assertIn("openai_chat", route.fallbacks)
 
-    def test_gemini_text_uses_native_endpoint_but_image_is_filtered(self) -> None:
-        text = route_for_model("gemini-3.1-pro", "google gemini", ["gemini", "openai"])
-        image = route_for_model("gemini-3-pro-image-preview", "google gemini", ["gemini", "openai"])
-        self.assertEqual(text.protocol, "gemini_generate")
-        self.assertIsNone(image)
+    def test_gemini_is_out_of_scope_and_only_gpt_image_2_is_kept(self) -> None:
+        self.assertIsNone(route_for_model("gemini-3.1-pro", "google gemini", ["gemini", "openai"]))
+        image = route_for_model("gpt-image-2", "openai", ["openai"])
+        self.assertEqual(image.protocol, "openai_images")
+        self.assertEqual(image.endpoint, "/v1/images/generations")
+        self.assertIsNone(route_for_model("gpt-image-2-4k", "openai", ["openai"]))
 
     def test_openai_inventory_is_filtered_and_keeps_endpoint_hints(self) -> None:
         payload = {
@@ -40,11 +41,13 @@ class DiscoveryTests(unittest.TestCase):
                 {"id": "claude-fable-5", "owned_by": "claude", "supported_endpoint_types": ["openai"]},
                 {"id": "gpt-5.6-sol", "owned_by": "openai", "supported_endpoint_types": ["openai"]},
                 {"id": "gpt-image-2", "owned_by": "openai", "supported_endpoint_types": ["openai"]},
+                {"id": "gpt-image-2-4k", "owned_by": "openai", "supported_endpoint_types": ["openai"]},
+                {"id": "gemini-3.1-pro", "owned_by": "google", "supported_endpoint_types": ["gemini"]},
                 {"id": "unrelated-model", "owned_by": "custom", "supported_endpoint_types": ["openai"]},
             ]
         }
         routes = parse_model_inventory(payload, "openai_models")
-        self.assertEqual([item.model for item in routes], ["claude-fable-5", "gpt-5.6-sol"])
+        self.assertEqual([item.model for item in routes], ["claude-fable-5", "gpt-5.6-sol", "gpt-image-2"])
 
     def test_openai_inventory_source_is_used_when_gateway_omits_endpoint_hints(self) -> None:
         routes = parse_model_inventory({"data": [{"id": "claude-fable-5", "owned_by": "claude"}]}, "openai_models")

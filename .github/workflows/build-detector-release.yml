@@ -118,6 +118,15 @@ jobs:
       - name: Test existing media compatibility service
         run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
 
+      - name: Validate detector Compose configuration
+        env:
+          PUBLIC_PORT: "3010"
+          RELEASE_TAG: detector-latest
+          NEW_API_SESSION_SECRET: ci-new-api-session-secret-not-for-production
+          DETECTOR_MASTER_KEY: ci-detector-master-key-not-for-production
+          DETECTOR_ADMIN_TOKEN: ci-detector-admin-token-not-for-production
+        run: docker compose -f server/model-detector/docker-compose.yml config >/dev/null
+
       - name: Build release images
         run: |
           docker build --pull --tag mad-new-api-detector:detector-latest source

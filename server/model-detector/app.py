@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from database import Database, utc_now
 from discovery import discover_models, route_for_model, validate_public_api_url
-from engine import DetectorEngine, Evidence, RULE_PACK, RULE_VERSION
-from security import encrypt_secret, make_session, mask_secret, validate_runtime_secrets, verify_admin_token, verify_session
+from engine import DetectorEngine, Evidence, RULE_PACK, RULE_VERSION, classify, cliproxyapi_header_fingerprint
+from security import decrypt_secret, encrypt_secret, make_session, mask_secret, validate_runtime_secrets, verify_admin_token, verify_session
 
 
 ROOT = Path(__file__).resolve().parent
@@ -23,6 +23,7 @@ engine = DetectorEngine(float(os.environ.get("DETECTOR_TIMEOUT_SECONDS", "30")))
 run_lock = asyncio.Lock()
 scheduler_stop = asyncio.Event()
 CLAUDE_HISTORY_RULE = RULE_PACK.get("history_rules", {}).get("claude_route_change", {})
+CLIPROXY_HISTORY_RULE = RULE_PACK.get("implementation_rules", {}).get("cliproxyapi", {})
 
 
 class LoginInput(BaseModel):
@@ -361,10 +362,85 @@ def historical_route_change_evidence(current: dict[str, Any], history: list[dict
     )
 
 
+def historical_cliproxyapi_evidence(upstream_id: int, model: str) -> Evidence | None:
+    lookback_runs = int(CLIPROXY_HISTORY_RULE.get("lookback_runs", 12))
+    rows = db.rows(
+        "SELECT r.id AS run_id,r.started_at,e.detail_json FROM evidence e "
+        "JOIN runs r ON r.id=e.run_id "
+        "WHERE r.upstream_id=? AND r.mode='active' AND r.status='completed' "
+        "AND e.model=? AND e.category='observation' "
+        "ORDER BY r.id DESC,e.id DESC LIMIT ?",
+        (upstream_id, model, lookback_runs * 12),
+    )
+    for row in rows:
+        try:
+            detail = json.loads(row["detail_json"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        headers = detail.get("headers")
+        if not isinstance(headers, dict):
+            continue
+        fingerprint = cliproxyapi_header_fingerprint({str(key).lower(): str(value) for key, value in headers.items()})
+        if not fingerprint:
+            continue
+        return Evidence(
+            "historical_cpa_headers",
+            "cliproxyapi_implementation",
+            "strong",
+            "codex_subscription_relay",
+            "近期同一模型曾返回 CLIProxyAPI 专属 CPA 响应头",
+            {
+                "rule_id": "cliproxyapi_cpa_headers_history_v1",
+                "source_run_id": row["run_id"],
+                "source_started_at": row["started_at"],
+                **fingerprint,
+                "note": "负载均衡不会保证每轮抽中同一节点；在有限回看窗口内保留已确认的实现级指纹，不能据此声称当前每个请求都经过该节点",
+            },
+        )
+    return None
+
+
 def apply_historical_route_changes(upstream_id: int, model_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     confidence = float(CLAUDE_HISTORY_RULE.get("confidence", 0.93))
     lookback_runs = int(CLAUDE_HISTORY_RULE.get("lookback_runs", 12))
     for result in model_results:
+        if result.get("family") == "openai" and str(result.get("model", "")).lower().startswith("gpt-5"):
+            evidence_items = result.get("evidence", [])
+            has_current_cliproxy = any(item.category == "cliproxyapi_implementation" for item in evidence_items)
+            if not has_current_cliproxy:
+                historical = historical_cliproxyapi_evidence(upstream_id, str(result["model"]))
+                if historical:
+                    evidence_items.append(historical)
+                    terminal = classify(evidence_items, "openai_official")
+                    result.update(
+                        {
+                            "verdict": terminal["verdict"],
+                            "likely_channel": terminal["likely_channel"],
+                            "confidence": terminal["confidence"],
+                            "summary": terminal["summary"] + "；CPA 指纹来自近期同模型历史节点，本轮可能被负载均衡到另一出口",
+                        }
+                    )
+                    chain = result.get("chain") or {"layers": []}
+                    layers = chain.setdefault("layers", [])
+                    if not any(item.get("kind") == "cliproxyapi" for item in layers):
+                        terminal_index = next(
+                            (index for index, item in enumerate(layers) if item.get("position") == "terminal"),
+                            len(layers),
+                        )
+                        layers.insert(
+                            terminal_index,
+                            {
+                                "position": "intermediate",
+                                "kind": "cliproxyapi",
+                                "label": "CLIProxyAPI / CPA 执行层（近期历史确认）",
+                                "confidence": 0.99,
+                                "status": "confirmed_recent",
+                                "note": "本轮未必抽中同一节点；来源为有限回看窗口内同一模型的 CPA 专属响应头",
+                            },
+                        )
+                    chain["minimum_confirmed_hops"] = max(3, int(chain.get("minimum_confirmed_hops") or 0))
+                    chain["observed_logical_layers"] = len(layers)
+                    result["chain"] = chain
         if result.get("family") != "anthropic":
             continue
         current_profile: dict[str, Any] | None = None
@@ -586,7 +662,17 @@ async def discover_upstream_models(value: DiscoveryInput) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = await discover_models(base_url, value.api_key)
     result["base_url"] = base_url
-    result["supported_families"] = ["openai", "anthropic"]
+    result["supported_families"] = ["openai", "anthropic", "google"]
+    return result
+
+
+@app.post("/detector/api/upstreams/{upstream_id}/discover", dependencies=[Depends(require_admin)])
+async def rediscover_saved_upstream_models(upstream_id: int) -> dict[str, Any]:
+    upstream = load_upstream(upstream_id)
+    base_url = str(upstream["base_url"]).rstrip("/")
+    result = await discover_models(base_url, decrypt_secret(upstream["api_key_encrypted"]))
+    result["base_url"] = base_url
+    result["supported_families"] = ["openai", "anthropic", "google"]
     return result
 
 

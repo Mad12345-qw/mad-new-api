@@ -76,6 +76,27 @@ class AppTests(unittest.TestCase):
         self.assertEqual(response.json()["models"][0]["protocol"], "openai_chat")
         self.assertEqual(service.db.row("SELECT COUNT(*) AS count FROM upstreams")["count"], before)
 
+    def test_saved_upstream_can_rediscover_without_returning_or_retyping_key(self) -> None:
+        self.login()
+        with patch("app.validate_public_api_url", return_value=None):
+            created = self.client.post(
+                "/detector/api/upstreams",
+                json={
+                    "name": "Saved Relay",
+                    "base_url": "https://relay.example/v1",
+                    "api_style": "auto",
+                    "api_key": "saved-secret-key",
+                    "models": ["gpt-5.6-sol"],
+                    "allow_paid_probes": True,
+                },
+            ).json()
+        mocked = AsyncMock(return_value={"models": [], "attempts": []})
+        with patch("app.discover_models", mocked):
+            response = self.client.post(f"/detector/api/upstreams/{created['id']}/discover")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("api_key", response.text)
+        self.assertEqual(mocked.await_args.args[1], "saved-secret-key")
+
     def test_existing_new_api_admin_session_is_accepted(self) -> None:
         previous = os.environ.get("DETECTOR_NEW_API_INTERNAL_URL")
         os.environ["DETECTOR_NEW_API_INTERNAL_URL"] = "http://new-api:3000"
@@ -281,6 +302,85 @@ class AppTests(unittest.TestCase):
         self.assertEqual(adjusted["confidence"], 0.93)
         self.assertTrue(any(item.category == "historical_route_change" for item in adjusted["evidence"]))
         self.assertTrue(any(layer["kind"] == "heterogeneous_backend_pool" for layer in adjusted["chain"]["layers"]))
+
+    def test_historical_cliproxyapi_header_survives_load_balanced_rounds(self) -> None:
+        self.login()
+        with patch("app.validate_public_api_url", return_value=None):
+            upstream = self.client.post(
+                "/detector/api/upstreams",
+                json={
+                    "name": "Historical CPA Relay",
+                    "base_url": "https://cpa-history.example/v1",
+                    "api_key": "unit-secret-cpa-history-9999",
+                    "models": ["gpt-5.6-sol"],
+                    "allow_paid_probes": True,
+                },
+            ).json()
+        historical_run = service.db.execute(
+            "INSERT INTO runs(upstream_id,trigger,mode,status,verdict,likely_channel,confidence,summary,rule_version,started_at,finished_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                upstream["id"],
+                "manual",
+                "active",
+                "completed",
+                "probable_alternate_channel",
+                "codex_subscription_relay",
+                0.99,
+                "historical CPA",
+                service.RULE_VERSION,
+                service.utc_now(),
+                service.utc_now(),
+            ),
+        )
+        service.db.execute(
+            "INSERT INTO evidence(run_id,model,probe,category,strength,supports,title,detail_json,raw_sha256,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                historical_run,
+                "gpt-5.6-sol",
+                "model_sync",
+                "observation",
+                "info",
+                None,
+                "headers",
+                json.dumps(
+                    {
+                        "headers": {
+                            "x-cpa-trace-id": "20260729171232-eb53a98a245608bb-abd329cc",
+                            "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT",
+                        }
+                    }
+                ),
+                None,
+                service.utc_now(),
+            ),
+        )
+        current = {
+            "model": "gpt-5.6-sol",
+            "family": "openai",
+            "verdict": "probable_alternate_channel",
+            "likely_channel": "codex_subscription_relay",
+            "confidence": 0.98,
+            "summary": "Codex relay",
+            "chain": {
+                "layers": [
+                    {"position": "outer", "kind": "new_api_gateway"},
+                    {"position": "terminal", "kind": "codex_subscription_relay"},
+                ],
+                "minimum_confirmed_hops": 2,
+            },
+            "evidence": [
+                service.Evidence("model_sync", "codex_prompt_fingerprint", "strong", "codex_subscription_relay", "prompt", {}),
+                service.Evidence("matrix", "request_rewrite", "strong", "codex_subscription_relay", "rewrite", {}),
+                service.Evidence("matrix", "multi_protocol_codex_translation", "strong", "codex_subscription_relay", "protocol", {}),
+            ],
+        }
+        adjusted = service.apply_historical_route_changes(upstream["id"], [current])[0]
+        self.assertEqual(adjusted["confidence"], 0.99)
+        self.assertTrue(any(item.probe == "historical_cpa_headers" for item in adjusted["evidence"]))
+        self.assertTrue(any(layer["kind"] == "cliproxyapi" for layer in adjusted["chain"]["layers"]))
+        self.assertEqual(adjusted["chain"]["minimum_confirmed_hops"], 3)
 
 
 if __name__ == "__main__":

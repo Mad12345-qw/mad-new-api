@@ -124,9 +124,16 @@ class Database:
             evidence_columns = {row["name"] for row in db.execute("PRAGMA table_info(evidence)")}
             if "model" not in evidence_columns:
                 db.execute("ALTER TABLE evidence ADD COLUMN model TEXT")
-            self.set_setting("interval_minutes", 15, db)
-            self.set_setting("scheduled_mode", "safe", db)
-            self.set_setting("webhook_url", "", db)
+            for key, value in (
+                ("interval_minutes", 15),
+                ("scheduled_mode", "safe"),
+                ("webhook_url", ""),
+            ):
+                db.execute(
+                    "INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) "
+                    "ON CONFLICT(key) DO NOTHING",
+                    (key, json.dumps(value, ensure_ascii=False), utc_now()),
+                )
 
     def set_setting(self, key: str, value: Any, db: sqlite3.Connection | None = None) -> None:
         own = db is None

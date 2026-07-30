@@ -1,0 +1,63 @@
+diff --git a/controller/video_proxy.go b/controller/video_proxy.go
+--- a/controller/video_proxy.go
++++ b/controller/video_proxy.go
+@@ -136,6 +136,21 @@ func getVideoTaskForRequest(c *gin.Context, taskID string) (*model.Task, bool, e
+ 	return task, true, nil
+ }
+ 
++func storedVideoResultURL(task *model.Task) string {
++	if task == nil {
++		return ""
++	}
++	for _, candidate := range []string{task.PrivateData.ResultURL, task.FailReason} {
++		candidate = strings.TrimSpace(candidate)
++		if strings.HasPrefix(candidate, "https://") ||
++			strings.HasPrefix(candidate, "http://") ||
++			strings.HasPrefix(candidate, "data:") {
++			return candidate
++		}
++	}
++	return ""
++}
++
+ func VideoProxy(c *gin.Context) {
+ 	taskID := c.Param("task_id")
+ 	if taskID == "" {
+@@ -197,7 +212,9 @@ func VideoProxy(c *gin.Context) {
+ 		return
+ 	}
+ 
+-	if task.Platform == constant.TaskPlatformApiOkSeedance {
++	if resultURL := storedVideoResultURL(task); resultURL != "" {
++		videoURL = resultURL
++	} else if task.Platform == constant.TaskPlatformApiOkSeedance {
+ 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+ 		req.Header.Set("Authorization", "Bearer "+channel.Key)
+ 		resolveJSONContent = true
+diff --git a/controller/video_proxy_content_test.go b/controller/video_proxy_content_test.go
+--- a/controller/video_proxy_content_test.go
++++ b/controller/video_proxy_content_test.go
+@@ -76,6 +76,23 @@ func TestValidateSignedVideoURL(t *testing.T) {
+ 	require.False(t, validateSignedVideoURL("task_public", expires, disabledSignature, tokens, now))
+ }
+ 
++func TestStoredVideoResultURLPrefersPrivateResult(t *testing.T) {
++	task := &model.Task{
++		PrivateData: model.TaskPrivateData{ResultURL: " https://cdn.example.com/current.mp4 "},
++		FailReason:  "https://cdn.example.com/legacy.mp4",
++	}
++
++	require.Equal(t, "https://cdn.example.com/current.mp4", storedVideoResultURL(task))
++}
++
++func TestStoredVideoResultURLSupportsLegacySuccessURL(t *testing.T) {
++	task := &model.Task{FailReason: "https://cdn.example.com/legacy.mp4"}
++
++	require.Equal(t, "https://cdn.example.com/legacy.mp4", storedVideoResultURL(task))
++	require.Empty(t, storedVideoResultURL(&model.Task{FailReason: "completed"}))
++	require.Empty(t, storedVideoResultURL(nil))
++}
++
+ func TestExtractVideoURLFromContentResponse(t *testing.T) {
+ 	url := extractVideoURLFromContentResponse([]byte(`{
+ 		"status":"done",

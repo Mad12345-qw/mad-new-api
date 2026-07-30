@@ -1,0 +1,790 @@
+diff --git a/relay/channel/task/sora/adaptor.go b/relay/channel/task/sora/adaptor.go
+index 7b213d0..3175141 100644
+--- a/relay/channel/task/sora/adaptor.go
++++ b/relay/channel/task/sora/adaptor.go
+@@ -94,6 +94,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
+ 	if info.Action == constant.TaskActionRemix {
+ 		return validateRemixRequest(c)
+ 	}
++	if IsMikotoSeedanceModel(info.OriginModelName) {
++		if err := prepareMikotoSeedanceRequest(c, info); err != nil {
++			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
++		}
++		return nil
++	}
+ 	return relaycommon.ValidateMultipartDirect(c, info)
+ }
+ 
+@@ -188,11 +194,23 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
+ // BuildRequestHeader sets required headers.
+ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
+ 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
++	if IsMikotoSeedanceModel(info.OriginModelName) {
++		req.Header.Set("Content-Type", "application/json")
++		return nil
++	}
+ 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+ 	return nil
+ }
+ 
+ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
++	if IsMikotoSeedanceModel(info.OriginModelName) {
++		if value, exists := c.Get(mikotoSeedanceBodyKey); exists {
++			if body, ok := value.([]byte); ok {
++				return bytes.NewReader(body), nil
++			}
++		}
++		return nil, fmt.Errorf("normalized Mikoto Seedance request is missing")
++	}
+ 	storage, err := common.GetBodyStorage(c)
+ 	if err != nil {
+ 		return nil, errors.Wrap(err, "get_request_body_failed")
+diff --git a/relay/channel/task/sora/adaptor_test.go b/relay/channel/task/sora/adaptor_test.go
+index 422c919..bf2b007 100644
+--- a/relay/channel/task/sora/adaptor_test.go
++++ b/relay/channel/task/sora/adaptor_test.go
+@@ -1,6 +1,7 @@
+ package sora
+ 
+ import (
++	"encoding/json"
+ 	"testing"
+ 
+ 	"github.com/QuantumNous/new-api/model"
+@@ -56,6 +57,105 @@ func TestIsApiOkSeedanceModel(t *testing.T) {
+ 	require.False(t, IsApiOkSeedanceModel("doubao-seedance-2-0-260128"))
+ }
+ 
++func TestMikotoSeedanceModelsAreIsolatedFromLegacyPricingModels(t *testing.T) {
++	require.True(t, IsMikotoSeedanceModel("seedance-2.0-1080p"))
++	require.True(t, IsMikotoSeedanceModel("seedance-2.0-720p"))
++	require.True(t, IsMikotoSeedanceModel("seedance-fast-720p"))
++
++	require.False(t, IsMikotoSeedanceModel("seedance-2.0"))
++	require.False(t, IsMikotoSeedanceModel("seedance-2.0-fast"))
++	require.False(t, IsMikotoSeedanceModel("doubao-seedance-2.0-720p"))
++	require.False(t, IsMikotoSeedanceModel("doubao-seedance-2.0-cf-1080p"))
++	require.False(t, IsApiOkSeedanceModel("seedance-2.0-1080p"))
++}
++
++func TestNormalizeMikotoSeedanceOpenAIRequest(t *testing.T) {
++	input := map[string]interface{}{
++		"model":           "seedance-2.0-720p",
++		"prompt":          "Keep the exact prompt",
++		"seconds":         "6",
++		"size":            "720x1280",
++		"input_reference": "data:image/png;base64,AAAA",
++	}
++
++	request, err := normalizeMikotoSeedanceMap(input, "seedance-2.0-720p")
++	require.NoError(t, err)
++	require.Equal(t, "Keep the exact prompt", request.Prompt)
++	require.Equal(t, 6, request.Duration)
++	require.Equal(t, "9:16", request.AspectRatio)
++	require.Equal(t, []string{"data:image/png;base64,AAAA"}, request.Images)
++}
++
++func TestNormalizeMikotoSeedanceDoubaoContent(t *testing.T) {
++	inputJSON := `{
++		"model":"seedance-2.0-1080p",
++		"duration":5,
++		"ratio":"16:9",
++		"content":[
++			{"type":"text","text":"Preserve this text"},
++			{"type":"image_url","image_url":{"url":"https://example.com/a.png"}},
++			{"type":"video_url","video_url":{"url":"https://example.com/a.mp4"}},
++			{"type":"audio_url","audio_url":{"url":"https://example.com/a.mp3"}}
++		],
++		"generate_audio":true
++	}`
++	var input map[string]interface{}
++	require.NoError(t, json.Unmarshal([]byte(inputJSON), &input))
++
++	request, err := normalizeMikotoSeedanceMap(input, "seedance-2.0-1080p")
++	require.NoError(t, err)
++	require.Equal(t, "Preserve this text", request.Prompt)
++	require.Equal(t, 5, request.Duration)
++	require.Equal(t, "16:9", request.AspectRatio)
++	require.Equal(t, []string{"https://example.com/a.png"}, request.Images)
++	require.Equal(t, []string{"https://example.com/a.mp4"}, request.ReferenceVideos)
++	require.Equal(t, []string{"https://example.com/a.mp3"}, request.ReferenceAudios)
++	require.NotNil(t, request.GenerateAudio)
++	require.True(t, *request.GenerateAudio)
++}
++
++func TestNormalizeMikotoSeedanceNativeReferenceArrays(t *testing.T) {
++	input := map[string]interface{}{
++		"prompt":           "Native request",
++		"duration":         float64(15),
++		"aspect_ratio":     "3:4",
++		"images":           []interface{}{"https://example.com/1.png", "https://example.com/2.png", "https://example.com/3.png"},
++		"referenceVideos": []interface{}{"https://example.com/1.mp4"},
++		"referenceAudios": []interface{}{"https://example.com/1.mp3"},
++	}
++
++	request, err := normalizeMikotoSeedanceMap(input, "seedance-fast-720p")
++	require.NoError(t, err)
++	require.Equal(t, 15, request.Duration)
++	require.Equal(t, "media", request.ReferenceMode)
++	require.Len(t, request.Images, 3)
++	require.Len(t, request.ReferenceVideos, 1)
++	require.Len(t, request.ReferenceAudios, 1)
++}
++
++func TestNormalizeMikotoSeedanceRejectsInvalidDuration(t *testing.T) {
++	for _, duration := range []interface{}{nil, float64(3), float64(16), "4.5"} {
++		input := map[string]interface{}{
++			"prompt":       "duration validation",
++			"aspect_ratio": "16:9",
++		}
++		if duration != nil {
++			input["duration"] = duration
++		}
++		_, err := normalizeMikotoSeedanceMap(input, "seedance-fast-720p")
++		require.Error(t, err)
++	}
++}
++
++func TestNormalizeMikotoSeedanceRejectsUnsupportedRatio(t *testing.T) {
++	_, err := normalizeMikotoSeedanceMap(map[string]interface{}{
++		"prompt":       "unsupported ratio",
++		"duration":     float64(4),
++		"aspect_ratio": "21:9",
++	}, "seedance-fast-720p")
++	require.Error(t, err)
++}
++
+ func TestApiOkSeedanceContent(t *testing.T) {
+ 	content := apiOkSeedanceContent(
+ 		"doubao-seedance-2.0-cf-1080p",
+diff --git a/relay/channel/task/sora/mikoto_seedance.go b/relay/channel/task/sora/mikoto_seedance.go
+new file mode 100644
+index 0000000..2758000
+--- /dev/null
++++ b/relay/channel/task/sora/mikoto_seedance.go
+@@ -0,0 +1,457 @@
++package sora
++
++import (
++	"encoding/base64"
++	"fmt"
++	"io"
++	"mime/multipart"
++	"net/http"
++	"strconv"
++	"strings"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/gin-gonic/gin"
++)
++
++const (
++	mikotoSeedanceBodyKey       = "mikoto_seedance_body"
++	mikotoMultipartMaxFileBytes = int64(50 * 1024 * 1024)
++	mikotoMultipartMaxBodyBytes = int64(96 * 1024 * 1024)
++)
++
++var mikotoAspectRatios = map[string]bool{
++	"16:9": true,
++	"9:16": true,
++	"1:1":  true,
++	"4:3":  true,
++	"3:4":  true,
++}
++
++type mikotoSeedanceRequest struct {
++	Model           string   `json:"model"`
++	Prompt          string   `json:"prompt"`
++	Duration        int      `json:"duration"`
++	AspectRatio     string   `json:"aspect_ratio,omitempty"`
++	Images          []string `json:"images,omitempty"`
++	ReferenceMode   string   `json:"reference_mode,omitempty"`
++	ReferenceVideos []string `json:"referenceVideos,omitempty"`
++	ReferenceAudios []string `json:"referenceAudios,omitempty"`
++	GenerateAudio   *bool    `json:"generate_audio,omitempty"`
++}
++
++func IsMikotoSeedanceModel(model string) bool {
++	switch strings.ToLower(strings.TrimSpace(model)) {
++	case "seedance-2.0-1080p",
++		"seedance-2.0-720p",
++		"seedance-fast-720p":
++		return true
++	default:
++		return false
++	}
++}
++
++func prepareMikotoSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) error {
++	body, request, err := normalizeMikotoSeedanceRequest(c, info.UpstreamModelName)
++	if err != nil {
++		return err
++	}
++	c.Set(mikotoSeedanceBodyKey, body)
++	c.Set("task_request", request)
++	info.Action = constant.TaskActionTextGenerate
++	if len(request.Images) > 0 {
++		info.Action = constant.TaskActionGenerate
++	}
++	return nil
++}
++
++func normalizeMikotoSeedanceRequest(c *gin.Context, upstreamModel string) ([]byte, relaycommon.TaskSubmitReq, error) {
++	input, err := mikotoSeedanceInputMap(c)
++	if err != nil {
++		return nil, relaycommon.TaskSubmitReq{}, err
++	}
++
++	normalized, err := normalizeMikotoSeedanceMap(input, upstreamModel)
++	if err != nil {
++		return nil, relaycommon.TaskSubmitReq{}, err
++	}
++	body, err := common.Marshal(normalized)
++	if err != nil {
++		return nil, relaycommon.TaskSubmitReq{}, fmt.Errorf("marshal normalized Seedance request: %w", err)
++	}
++
++	request := relaycommon.TaskSubmitReq{
++		Prompt:   normalized.Prompt,
++		Model:    normalized.Model,
++		Duration: normalized.Duration,
++		Seconds:  strconv.Itoa(normalized.Duration),
++		Images:   append([]string(nil), normalized.Images...),
++	}
++	return body, request, nil
++}
++
++func mikotoSeedanceInputMap(c *gin.Context) (map[string]interface{}, error) {
++	contentType := strings.ToLower(c.GetHeader("Content-Type"))
++	if strings.Contains(contentType, "multipart/form-data") {
++		return mikotoSeedanceMultipartMap(c)
++	}
++
++	storage, err := common.GetBodyStorage(c)
++	if err != nil {
++		return nil, fmt.Errorf("read Seedance request body: %w", err)
++	}
++	body, err := storage.Bytes()
++	if err != nil {
++		return nil, fmt.Errorf("read Seedance request bytes: %w", err)
++	}
++	var input map[string]interface{}
++	if err := common.Unmarshal(body, &input); err != nil {
++		return nil, fmt.Errorf("Seedance request must be JSON or multipart form: %w", err)
++	}
++	return input, nil
++}
++
++func mikotoSeedanceMultipartMap(c *gin.Context) (map[string]interface{}, error) {
++	form, err := common.ParseMultipartFormReusable(c)
++	if err != nil {
++		return nil, fmt.Errorf("parse Seedance multipart request: %w", err)
++	}
++	input := make(map[string]interface{}, len(form.Value)+len(form.File))
++	for key, values := range form.Value {
++		if len(values) == 1 {
++			input[key] = values[0]
++		} else if len(values) > 1 {
++			items := make([]interface{}, 0, len(values))
++			for _, value := range values {
++				items = append(items, value)
++			}
++			input[key] = items
++		}
++	}
++
++	var totalBytes int64
++	for field, files := range form.File {
++		for _, file := range files {
++			totalBytes += file.Size
++			if totalBytes > mikotoMultipartMaxBodyBytes {
++				return nil, fmt.Errorf("multipart media exceeds 96MB; use public URLs or data URIs")
++			}
++			dataURI, err := mikotoFileDataURI(file)
++			if err != nil {
++				return nil, err
++			}
++			appendInputValue(input, field, dataURI)
++		}
++	}
++	return input, nil
++}
++
++func mikotoFileDataURI(file *multipart.FileHeader) (string, error) {
++	if file.Size > mikotoMultipartMaxFileBytes {
++		return "", fmt.Errorf("file %q exceeds 50MB; use a public URL", file.Filename)
++	}
++	stream, err := file.Open()
++	if err != nil {
++		return "", fmt.Errorf("open multipart file %q: %w", file.Filename, err)
++	}
++	defer stream.Close()
++
++	data, err := io.ReadAll(io.LimitReader(stream, mikotoMultipartMaxFileBytes+1))
++	if err != nil {
++		return "", fmt.Errorf("read multipart file %q: %w", file.Filename, err)
++	}
++	if int64(len(data)) > mikotoMultipartMaxFileBytes {
++		return "", fmt.Errorf("file %q exceeds 50MB; use a public URL", file.Filename)
++	}
++	mimeType := strings.TrimSpace(file.Header.Get("Content-Type"))
++	if mimeType == "" || mimeType == "application/octet-stream" {
++		mimeType = http.DetectContentType(data)
++	}
++	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
++}
++
++func appendInputValue(input map[string]interface{}, field string, value interface{}) {
++	if existing, ok := input[field]; ok {
++		switch values := existing.(type) {
++		case []interface{}:
++			input[field] = append(values, value)
++		default:
++			input[field] = []interface{}{existing, value}
++		}
++		return
++	}
++	input[field] = value
++}
++
++func normalizeMikotoSeedanceMap(input map[string]interface{}, upstreamModel string) (mikotoSeedanceRequest, error) {
++	prompt := firstString(input, "prompt", "input", "text")
++	images := collectFields(input, "images", "image_urls", "reference_image_urls", "image", "image_url", "input_reference")
++	videos := collectFields(input, "referenceVideos", "reference_videos", "video_urls", "videos", "video_url")
++	audios := collectFields(input, "referenceAudios", "reference_audios", "audio_urls", "audios", "audio_url")
++
++	contentPrompt, contentImages, contentVideos, contentAudios := extractMikotoContent(input["content"])
++	if strings.TrimSpace(prompt) == "" {
++		prompt = contentPrompt
++	}
++	images = appendUnique(images, contentImages...)
++	videos = appendUnique(videos, contentVideos...)
++	audios = appendUnique(audios, contentAudios...)
++
++	duration, err := mikotoDuration(input)
++	if err != nil {
++		return mikotoSeedanceRequest{}, err
++	}
++	aspectRatio, err := mikotoAspectRatio(input)
++	if err != nil {
++		return mikotoSeedanceRequest{}, err
++	}
++	if strings.TrimSpace(prompt) == "" {
++		return mikotoSeedanceRequest{}, fmt.Errorf("prompt is required")
++	}
++	if len(images) > 9 {
++		return mikotoSeedanceRequest{}, fmt.Errorf("images supports at most 9 items")
++	}
++	if len(videos) > 3 {
++		return mikotoSeedanceRequest{}, fmt.Errorf("referenceVideos supports at most 3 items")
++	}
++	if len(audios) > 3 {
++		return mikotoSeedanceRequest{}, fmt.Errorf("referenceAudios supports at most 3 items")
++	}
++
++	referenceMode := strings.ToLower(strings.TrimSpace(firstString(input, "reference_mode", "referenceMode")))
++	if referenceMode != "" && referenceMode != "frame" && referenceMode != "media" {
++		return mikotoSeedanceRequest{}, fmt.Errorf("reference_mode must be frame or media")
++	}
++	if referenceMode == "" && len(images) >= 3 {
++		referenceMode = "media"
++	}
++
++	normalized := mikotoSeedanceRequest{
++		Model:           upstreamModel,
++		Prompt:          prompt,
++		Duration:        duration,
++		AspectRatio:     aspectRatio,
++		Images:          images,
++		ReferenceMode:   referenceMode,
++		ReferenceVideos: videos,
++		ReferenceAudios: audios,
++		GenerateAudio:   firstBool(input, "generate_audio", "audio"),
++	}
++	return normalized, nil
++}
++
++func mikotoDuration(input map[string]interface{}) (int, error) {
++	value, ok := firstValue(input, "duration", "seconds", "duration_seconds", "durationSeconds")
++	if !ok {
++		if metadata, ok := input["metadata"].(map[string]interface{}); ok {
++			value, ok = firstValue(metadata, "duration", "seconds", "duration_seconds", "durationSeconds")
++		}
++	}
++	if !ok {
++		return 0, fmt.Errorf("duration is required and must be an integer from 4 to 15")
++	}
++
++	var duration int
++	switch typed := value.(type) {
++	case float64:
++		duration = int(typed)
++		if float64(duration) != typed {
++			return 0, fmt.Errorf("duration must be an integer from 4 to 15")
++		}
++	case int:
++		duration = typed
++	case string:
++		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
++		if err != nil {
++			return 0, fmt.Errorf("duration must be an integer from 4 to 15")
++		}
++		duration = parsed
++	default:
++		return 0, fmt.Errorf("duration must be an integer from 4 to 15")
++	}
++	if duration < 4 || duration > 15 {
++		return 0, fmt.Errorf("duration must be between 4 and 15 seconds")
++	}
++	return duration, nil
++}
++
++func mikotoAspectRatio(input map[string]interface{}) (string, error) {
++	ratio := strings.TrimSpace(firstString(input, "aspect_ratio", "aspectRatio", "ratio"))
++	if ratio == "" {
++		if metadata, ok := input["metadata"].(map[string]interface{}); ok {
++			ratio = strings.TrimSpace(firstString(metadata, "aspect_ratio", "aspectRatio", "ratio"))
++		}
++	}
++	if ratio == "" {
++		ratio = aspectRatioFromSize(firstString(input, "size"))
++	}
++	if ratio == "" {
++		ratio = "16:9"
++	}
++	if !mikotoAspectRatios[ratio] {
++		return "", fmt.Errorf("aspect_ratio must be one of 16:9, 9:16, 1:1, 4:3, or 3:4")
++	}
++	return ratio, nil
++}
++
++func aspectRatioFromSize(size string) string {
++	parts := strings.Split(strings.ToLower(strings.TrimSpace(size)), "x")
++	if len(parts) != 2 {
++		return ""
++	}
++	width, errWidth := strconv.Atoi(parts[0])
++	height, errHeight := strconv.Atoi(parts[1])
++	if errWidth != nil || errHeight != nil || width <= 0 || height <= 0 {
++		return ""
++	}
++	switch {
++	case width == height:
++		return "1:1"
++	case width*9 == height*16:
++		return "16:9"
++	case width*16 == height*9:
++		return "9:16"
++	case width*3 == height*4:
++		return "4:3"
++	case width*4 == height*3:
++		return "3:4"
++	default:
++		return ""
++	}
++}
++
++func extractMikotoContent(raw interface{}) (string, []string, []string, []string) {
++	if text, ok := raw.(string); ok {
++		trimmed := strings.TrimSpace(text)
++		if strings.HasPrefix(trimmed, "[") {
++			var decoded []interface{}
++			if common.Unmarshal([]byte(trimmed), &decoded) == nil {
++				return extractMikotoContent(decoded)
++			}
++		}
++		return text, nil, nil, nil
++	}
++	items, ok := raw.([]interface{})
++	if !ok {
++		return "", nil, nil, nil
++	}
++
++	texts := make([]string, 0)
++	var images, videos, audios []string
++	for _, rawItem := range items {
++		item, ok := rawItem.(map[string]interface{})
++		if !ok {
++			continue
++		}
++		itemType := strings.ToLower(strings.TrimSpace(firstString(item, "type")))
++		switch itemType {
++		case "text", "input_text":
++			if text := firstString(item, "text", "content"); strings.TrimSpace(text) != "" {
++				texts = append(texts, text)
++			}
++		case "image", "image_url", "input_image":
++			images = appendUnique(images, extractURL(item["image_url"]), extractURL(item["image"]), extractURL(item["url"]))
++		case "video", "video_url", "input_video":
++			videos = appendUnique(videos, extractURL(item["video_url"]), extractURL(item["video"]), extractURL(item["url"]))
++		case "audio", "audio_url", "input_audio":
++			audios = appendUnique(audios, extractURL(item["audio_url"]), extractURL(item["audio"]), extractURL(item["url"]))
++		}
++	}
++	return strings.Join(texts, "\n"), images, videos, audios
++}
++
++func collectFields(input map[string]interface{}, keys ...string) []string {
++	values := make([]string, 0)
++	for _, key := range keys {
++		if value, ok := input[key]; ok {
++			values = appendCollected(values, value)
++		}
++	}
++	return values
++}
++
++func appendCollected(values []string, value interface{}) []string {
++	switch typed := value.(type) {
++	case []interface{}:
++		for _, item := range typed {
++			values = appendUnique(values, extractURL(item))
++		}
++	case []string:
++		values = appendUnique(values, typed...)
++	default:
++		values = appendUnique(values, extractURL(typed))
++	}
++	return values
++}
++
++func extractURL(value interface{}) string {
++	switch typed := value.(type) {
++	case string:
++		return strings.TrimSpace(typed)
++	case map[string]interface{}:
++		for _, key := range []string{"url", "image_url", "video_url", "audio_url", "data"} {
++			if nested, ok := typed[key]; ok {
++				if result := extractURL(nested); result != "" {
++					return result
++				}
++			}
++		}
++	}
++	return ""
++}
++
++func appendUnique(values []string, candidates ...string) []string {
++	seen := make(map[string]bool, len(values)+len(candidates))
++	for _, value := range values {
++		seen[value] = true
++	}
++	for _, candidate := range candidates {
++		candidate = strings.TrimSpace(candidate)
++		if candidate == "" || seen[candidate] {
++			continue
++		}
++		seen[candidate] = true
++		values = append(values, candidate)
++	}
++	return values
++}
++
++func firstString(input map[string]interface{}, keys ...string) string {
++	value, ok := firstValue(input, keys...)
++	if !ok {
++		return ""
++	}
++	text, _ := value.(string)
++	return text
++}
++
++func firstValue(input map[string]interface{}, keys ...string) (interface{}, bool) {
++	for _, key := range keys {
++		if value, ok := input[key]; ok && value != nil {
++			return value, true
++		}
++	}
++	return nil, false
++}
++
++func firstBool(input map[string]interface{}, keys ...string) *bool {
++	value, ok := firstValue(input, keys...)
++	if !ok {
++		return nil
++	}
++	var result bool
++	switch typed := value.(type) {
++	case bool:
++		result = typed
++	case string:
++		parsed, err := strconv.ParseBool(strings.TrimSpace(typed))
++		if err != nil {
++			return nil
++		}
++		result = parsed
++	default:
++		return nil
++	}
++	return &result
++}
+diff --git a/router/video-router.go b/router/video-router.go
+index 06689f9..4b96fc4 100644
+--- a/router/video-router.go
++++ b/router/video-router.go
+@@ -38,6 +38,8 @@ func SetVideoRouter(router *gin.Engine) {
+ 	// docs: https://platform.openai.com/docs/api-reference/videos/create
+ 	{
+ 		videoV1Router.POST("/videos", controller.RelayTask)
++		videoV1Router.POST("/videos/generations", controller.RelayTask)
++		videoV1Router.GET("/videos/generations/:task_id", controller.RelayTaskFetch)
+ 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
+ 	}
+ 
+diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
+index d65004d..5c05833 100644
+--- a/web/default/src/features/playground/hooks/use-chat-handler.ts
++++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
+@@ -48,6 +48,7 @@ import {
+   isGrokImagineVideoModel,
+   isGptImage2Model,
+   isGeminiImageModel,
++  isMikotoSeedanceModel,
+   isSeedanceCf1080pModel,
+   isSeedanceVideoModel,
+   updateCurrentVersionContent,
+@@ -524,7 +525,43 @@ export function useChatHandler({
+ 
+         if (modelKind === 'video') {
+           let payload: FormData | Record<string, unknown>
+-          if (isSeedanceVideoModel(config.model)) {
++          if (isMikotoSeedanceModel(config.model)) {
++            const duration = Math.max(4, Math.min(15, config.videoSeconds))
++            const imageAttachments = attachments.filter(
++              (attachment) => attachment.kind === 'image'
++            )
++            const videoAttachments = attachments.filter(
++              (attachment) => attachment.kind === 'video'
++            )
++            const audioAttachments = attachments.filter(
++              (attachment) => attachment.kind === 'audio'
++            )
++            payload = {
++              model: config.model,
++              group: config.group,
++              prompt,
++              duration,
++              aspect_ratio: getVideoAspectRatio(config.videoSize),
++              generate_audio: true,
++            }
++            if (imageAttachments.length > 0) {
++              payload.images = imageAttachments
++                .slice(0, 9)
++                .map((attachment) => attachment.dataUrl)
++              payload.reference_mode =
++                imageAttachments.length >= 3 ? 'media' : 'frame'
++            }
++            if (videoAttachments.length > 0) {
++              payload.referenceVideos = videoAttachments
++                .slice(0, 3)
++                .map((attachment) => attachment.dataUrl)
++            }
++            if (audioAttachments.length > 0) {
++              payload.referenceAudios = audioAttachments
++                .slice(0, 3)
++                .map((attachment) => attachment.dataUrl)
++            }
++          } else if (isSeedanceVideoModel(config.model)) {
+             const duration = Math.max(4, Math.min(15, config.videoSeconds))
+             const imageAttachments = attachments.filter(
+               (attachment) => attachment.kind === 'image'
+diff --git a/web/default/src/features/playground/lib/model/model-profiles.ts b/web/default/src/features/playground/lib/model/model-profiles.ts
+index f545b20..0e2e075 100644
+--- a/web/default/src/features/playground/lib/model/model-profiles.ts
++++ b/web/default/src/features/playground/lib/model/model-profiles.ts
+@@ -79,6 +79,22 @@ const SEEDANCE_CF_1080P_SIZES: PlaygroundSelectOption[] = [
+   { value: "1440x1080", label: "4:3 | CF 1080p" },
+ ];
+ 
++const MIKOTO_SEEDANCE_720P_SIZES: PlaygroundSelectOption[] = [
++  { value: "1280x720", label: "16:9 | HD 720p" },
++  { value: "720x1280", label: "9:16 | HD 720p" },
++  { value: "720x720", label: "1:1 | HD 720p" },
++  { value: "720x960", label: "3:4 | HD 720p" },
++  { value: "960x720", label: "4:3 | HD 720p" },
++];
++
++const MIKOTO_SEEDANCE_1080P_SIZES: PlaygroundSelectOption[] = [
++  { value: "1920x1080", label: "16:9 | Full HD 1080p" },
++  { value: "1080x1920", label: "9:16 | Full HD 1080p" },
++  { value: "1080x1080", label: "1:1 | Full HD 1080p" },
++  { value: "1080x1440", label: "3:4 | Full HD 1080p" },
++  { value: "1440x1080", label: "4:3 | Full HD 1080p" },
++];
++
+ export function isMossTtsModel(model: string): boolean {
+   return /(?:^|[-_.])(moss[-_.]?tts|speechify[-_.]?tts)(?:$|[-_.])/i.test(
+     model,
+@@ -121,12 +137,39 @@ export function isSeedanceVideoModel(model: string): boolean {
+     case "seedance-2.0-fast":
+     case "doubao-seedance-2.0-720p":
+     case "doubao-seedance-2.0-cf-1080p":
++    case "seedance-2.0-1080p":
++    case "seedance-2.0-720p":
++    case "seedance-fast-720p":
+       return true;
+     default:
+       return false;
+   }
+ }
+ 
++export function isMikotoSeedanceModel(model: string): boolean {
++  switch (model.trim().toLowerCase()) {
++    case "seedance-2.0-1080p":
++    case "seedance-2.0-720p":
++    case "seedance-fast-720p":
++      return true;
++    default:
++      return false;
++  }
++}
++
++function getMikotoSeedancePrice(model: string): string {
++  switch (model.trim().toLowerCase()) {
++    case "seedance-2.0-1080p":
++      return "¥0.60/second";
++    case "seedance-2.0-720p":
++      return "¥0.44/second";
++    case "seedance-fast-720p":
++      return "¥0.40/second";
++    default:
++      return "";
++  }
++}
++
+ export function isSeedanceCf1080pModel(model: string): boolean {
+   return model.trim().toLowerCase() === "doubao-seedance-2.0-cf-1080p";
+ }
+@@ -271,6 +314,30 @@ export function getPlaygroundModelProfile(
+   }
+ 
+   if (isSeedanceVideoModel(model)) {
++	if (isMikotoSeedanceModel(model)) {
++	  const is1080p = model.trim().toLowerCase() === "seedance-2.0-1080p";
++	  const price = getMikotoSeedancePrice(model);
++	  return {
++		badge: "Seedance Video",
++		description: `Seedance 2.0 ${is1080p ? "1080p" : "720p"}; ${price}, billed by requested duration. Supports text, images, reference video and reference audio for 4-15 second generation.`,
++		endpoint: "/v1/videos",
++		kind,
++		requestHints: [
++		  { label: "model", value: model },
++		  { label: "price", value: price },
++		  { label: "duration", value: "4-15 seconds" },
++		  { label: "aspect_ratio", value: "16:9 / 9:16 / 1:1 / 4:3 / 3:4" },
++		  { label: "request", value: "JSON: model + prompt + duration + aspect_ratio" },
++		],
++		videoDurationMax: 15,
++		videoDurationMin: 4,
++		videoSizes: is1080p
++		  ? MIKOTO_SEEDANCE_1080P_SIZES
++		  : MIKOTO_SEEDANCE_720P_SIZES,
++		defaultVideoSeconds: 4,
++		defaultVideoSize: is1080p ? "1920x1080" : "1280x720",
++	  };
++	}
+     const cf1080p = isSeedanceCf1080pModel(model);
+     return {
+       badge: "Seedance Video",

@@ -634,7 +634,7 @@ index 06689f9..4b96fc4 100644
  	}
  
 diff --git a/web/default/src/features/playground/hooks/use-chat-handler.ts b/web/default/src/features/playground/hooks/use-chat-handler.ts
-index d65004d..5c05833 100644
+index d65004d..1d3a09b 100644
 --- a/web/default/src/features/playground/hooks/use-chat-handler.ts
 +++ b/web/default/src/features/playground/hooks/use-chat-handler.ts
 @@ -48,6 +48,7 @@ import {
@@ -659,7 +659,7 @@ index d65004d..5c05833 100644
 +              (attachment) => attachment.kind === 'video'
 +            )
 +            const audioAttachments = attachments.filter(
-+              (attachment) => attachment.kind === 'audio'
++              (attachment) => attachment.mimeType.startsWith('audio/')
 +            )
 +            payload = {
 +              model: config.model,

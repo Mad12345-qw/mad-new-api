@@ -1,0 +1,95 @@
+diff --git a/relay/relay_task.go b/relay/relay_task.go
+--- a/relay/relay_task.go
++++ b/relay/relay_task.go
+@@ -137,10 +137,33 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
+ 	return nil
+ }
+ 
++func isPerSecondSeedanceModel(modelName string) bool {
++	switch strings.ToLower(strings.TrimSpace(modelName)) {
++	case "seedance-2.0-1080p", "seedance-2.0-720p", "seedance-fast-720p":
++		return true
++	default:
++		return false
++	}
++}
++
+ func applyTaskBillingRatios(info *relaycommon.RelayInfo, modelName string) {
+ 	// ModelPrice is the administrator-configured fixed charge for one request.
+-	// Keep request dimensions as task metadata, but never multiply that charge.
+-	if info.PriceData.UsePrice || common.StringsContains(constant.TaskPricePatches, modelName) {
++	// The three channel-37 Seedance prices are explicitly per-second prices,
++	// so only their requested duration multiplies the configured base price.
++	if info.PriceData.UsePrice {
++		if !isPerSecondSeedanceModel(modelName) {
++			return
++		}
++		seconds := info.PriceData.OtherRatios()["seconds"]
++		if seconds <= 0 {
++			return
++		}
++		quota, clamp := common.QuotaFromFloatChecked(float64(info.PriceData.Quota) * seconds)
++		info.PriceData.Quota = quota
++		noteTaskQuotaClamp(info, clamp)
++		return
++	}
++	if common.StringsContains(constant.TaskPricePatches, modelName) {
+ 		return
+ 	}
+ 
+diff --git a/relay/relay_task_billing_test.go b/relay/relay_task_billing_test.go
+--- a/relay/relay_task_billing_test.go
++++ b/relay/relay_task_billing_test.go
+@@ -20,6 +20,52 @@ func TestApplyTaskBillingRatiosKeepsFixedRequestPrice(t *testing.T) {
+ 	require.Equal(t, 480000, info.PriceData.Quota)
+ }
+ 
++func TestApplyTaskBillingRatiosBillsSeedance37ByRequestedSeconds(t *testing.T) {
++	tests := []struct {
++		model   string
++		quota   int
++		seconds float64
++		want    int
++	}{
++		{model: "seedance-2.0-1080p", quota: 300000, seconds: 4, want: 1200000},
++		{model: "seedance-2.0-720p", quota: 220000, seconds: 4, want: 880000},
++		{model: "seedance-fast-720p", quota: 200000, seconds: 4, want: 800000},
++		{model: "seedance-fast-720p", quota: 200000, seconds: 15, want: 3000000},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.model, func(t *testing.T) {
++			info := &relaycommon.RelayInfo{
++				PriceData: types.PriceData{UsePrice: true, Quota: tt.quota},
++			}
++			info.PriceData.AddOtherRatio("seconds", tt.seconds)
++			info.PriceData.AddOtherRatio("size", 1.666667)
++
++			applyTaskBillingRatios(info, tt.model)
++
++			require.Equal(t, tt.want, info.PriceData.Quota)
++		})
++	}
++}
++
++func TestApplyTaskBillingRatiosKeepsLegacySeedanceFixedPrice(t *testing.T) {
++	for _, modelName := range []string{
++		"seedance-2.0",
++		"seedance-2.0-fast",
++		"doubao-seedance-2.0-720p",
++		"doubao-seedance-2.0-cf-1080p",
++	} {
++		info := &relaycommon.RelayInfo{
++			PriceData: types.PriceData{UsePrice: true, Quota: 600000},
++		}
++		info.PriceData.AddOtherRatio("seconds", 4)
++
++		applyTaskBillingRatios(info, modelName)
++
++		require.Equal(t, 600000, info.PriceData.Quota)
++	}
++}
++
+ func TestApplyAdjustedTaskBillingRatiosKeepsFixedRequestPrice(t *testing.T) {
+ 	info := &relaycommon.RelayInfo{
+ 		PriceData: types.PriceData{UsePrice: true, Quota: 480000},

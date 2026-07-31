@@ -1,0 +1,965 @@
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+index 95b19ad..626bc78 100644
+--- a/controller/codex_compat.go
++++ b/controller/codex_compat.go
+@@ -122,6 +122,7 @@ func CodexResponses(c *gin.Context) {
+ 	convertInfo := &relaycommon.RelayInfo{
+ 		RelayFormat:     types.RelayFormatOpenAIResponses,
+ 		OriginModelName: responsesReq.Model,
++		Request:         responsesReq,
+ 		ChannelMeta: &relaycommon.ChannelMeta{
+ 			UpstreamModelName: responsesReq.Model,
+ 		},
+diff --git a/dto/openai_response.go b/dto/openai_response.go
+index 2de6014..1df0579 100644
+--- a/dto/openai_response.go
++++ b/dto/openai_response.go
+@@ -370,7 +370,9 @@ type ResponsesOutput struct {
+ 	Size      string                   `json:"size"`
+ 	CallId    string                   `json:"call_id,omitempty"`
+ 	Name      string                   `json:"name,omitempty"`
++	Namespace string                   `json:"namespace,omitempty"`
+ 	Arguments json.RawMessage          `json:"arguments,omitempty"`
++	Input     json.RawMessage          `json:"input,omitempty"`
+ }
+ 
+ // ArgumentsString returns function call arguments in the string form expected by Chat Completions.
+@@ -416,6 +418,7 @@ type ResponsesStreamResponse struct {
+ 	Type     string                   `json:"type"`
+ 	Response *OpenAIResponsesResponse `json:"response,omitempty"`
+ 	Delta    string                   `json:"delta,omitempty"`
++	Input    string                   `json:"input,omitempty"`
+ 	Item     *ResponsesOutput         `json:"item,omitempty"`
+ 	// - response.function_call_arguments.delta
+ 	// - response.function_call_arguments.done
+diff --git a/service/relayconvert/internal/oai_chat/responses_namespace.go b/service/relayconvert/internal/oai_chat/responses_namespace.go
+new file mode 100644
+index 0000000..9e08f59
+--- /dev/null
++++ b/service/relayconvert/internal/oai_chat/responses_namespace.go
+@@ -0,0 +1,165 @@
++package oaichat
++
++import (
++	"encoding/json"
++	"strings"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/dto"
++)
++
++type responsesToolDescriptor struct {
++	Name      string
++	Namespace string
++	Custom    bool
++}
++
++func responsesToolDescriptors(req *dto.OpenAIResponsesRequest) map[string]responsesToolDescriptor {
++	descriptors := make(map[string]responsesToolDescriptor)
++	if req == nil {
++		return descriptors
++	}
++
++	collect := func(value any) {
++		tools, err := responsesNamespaceToolsFromValue(value)
++		if err != nil {
++			return
++		}
++		for _, tool := range tools {
++			collectResponsesToolDescriptor(descriptors, tool, "")
++		}
++	}
++
++	if len(req.Tools) > 0 {
++		collect(json.RawMessage(req.Tools))
++	}
++	if len(req.Input) > 0 && common.GetJsonType(req.Input) == "array" {
++		var inputItems []map[string]any
++		if err := common.Unmarshal(req.Input, &inputItems); err == nil {
++			for _, item := range inputItems {
++				if strings.TrimSpace(common.Interface2String(item["type"])) == "additional_tools" {
++					collect(item["tools"])
++				}
++			}
++		}
++	}
++	return descriptors
++}
++
++func collectResponsesToolDescriptor(descriptors map[string]responsesToolDescriptor, tool map[string]any, namespace string) {
++	toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
++	if toolType == "namespace" {
++		children, err := responsesNamespaceToolsFromValue(tool["tools"])
++		if err != nil {
++			return
++		}
++		namespaceName := strings.TrimSpace(common.Interface2String(tool["name"]))
++		for _, child := range children {
++			collectResponsesToolDescriptor(descriptors, child, namespaceName)
++		}
++		return
++	}
++	if toolType != "" && toolType != "function" && toolType != dto.CustomType {
++		return
++	}
++	name := responsesNamespaceToolName(tool)
++	qualifiedName := qualifyResponsesNamespaceName(namespace, name)
++	if qualifiedName == "" {
++		return
++	}
++	descriptors[qualifiedName] = responsesToolDescriptor{
++		Name:      name,
++		Namespace: strings.TrimSpace(namespace),
++		Custom:    toolType == dto.CustomType,
++	}
++}
++
++func responsesNamespaceToolsFromValue(value any) ([]map[string]any, error) {
++	if value == nil {
++		return nil, nil
++	}
++	var raw []byte
++	var err error
++	if message, ok := value.(json.RawMessage); ok {
++		raw = message
++	} else {
++		raw, err = common.Marshal(value)
++		if err != nil {
++			return nil, err
++		}
++	}
++	var tools []map[string]any
++	if err := common.Unmarshal(raw, &tools); err != nil {
++		return nil, err
++	}
++	return tools, nil
++}
++
++func responsesNamespaceToolName(tool map[string]any) string {
++	if name := strings.TrimSpace(common.Interface2String(tool["name"])); name != "" {
++		return name
++	}
++	if function, ok := tool["function"].(map[string]any); ok {
++		return strings.TrimSpace(common.Interface2String(function["name"]))
++	}
++	return ""
++}
++
++func qualifyResponsesNamespaceName(namespace, name string) string {
++	namespace = strings.TrimSpace(namespace)
++	name = strings.TrimSpace(name)
++	if namespace == "" || name == "" || strings.HasPrefix(name, "mcp__") || strings.HasPrefix(name, namespace+"__") {
++		return name
++	}
++	if strings.HasSuffix(namespace, "__") {
++		return namespace + name
++	}
++	return namespace + "__" + name
++}
++
++func restoreResponsesToolOutput(output *dto.ResponsesOutput, descriptors map[string]responsesToolDescriptor) {
++	if output == nil {
++		return
++	}
++	descriptor, ok := descriptors[strings.TrimSpace(output.Name)]
++	if !ok {
++		return
++	}
++	if descriptor.Custom {
++		output.Type = "custom_tool_call"
++		output.Input = unwrapResponsesCustomInput(output.Arguments)
++		output.Arguments = nil
++		return
++	}
++	output.Name = descriptor.Name
++	output.Namespace = descriptor.Namespace
++}
++
++func RestoreResponsesToolOutputs(resp *dto.OpenAIResponsesResponse, req *dto.OpenAIResponsesRequest) {
++	if resp == nil || req == nil {
++		return
++	}
++	descriptors := responsesToolDescriptors(req)
++	for index := range resp.Output {
++		restoreResponsesToolOutput(&resp.Output[index], descriptors)
++	}
++}
++
++func unwrapResponsesCustomInput(arguments json.RawMessage) json.RawMessage {
++	if len(arguments) == 0 {
++		return json.RawMessage(`""`)
++	}
++	argumentString := dto.ResponsesArgumentsString(arguments)
++	var wrapped map[string]any
++	if err := common.Unmarshal([]byte(argumentString), &wrapped); err == nil {
++		if input, ok := wrapped["input"]; ok {
++			if raw, err := common.Marshal(input); err == nil {
++				return raw
++			}
++		}
++	}
++	if raw, err := common.Marshal(argumentString); err == nil {
++		return raw
++	}
++	return json.RawMessage(`""`)
++}
+diff --git a/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go b/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
+index a5034a0..4590974 100644
+--- a/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
++++ b/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
+@@ -1,6 +1,7 @@
+ package oaichat
+ 
+ import (
++	"encoding/json"
+ 	"testing"
+ 
+ 	"github.com/QuantumNous/new-api/dto"
+@@ -41,6 +42,88 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
+ 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(resp.Output[1].Arguments))
+ }
+ 
++func TestRestoreResponsesToolOutputsRestoresNamespaceAndCustomTools(t *testing.T) {
++	req := &dto.OpenAIResponsesRequest{
++		Tools: mustResponsesRawMessage(t, []map[string]any{
++			{
++				"type":  "namespace",
++				"name":  "mcp__github",
++				"tools": []map[string]any{{"type": "function", "name": "get_me"}},
++			},
++		}),
++		Input: mustResponsesRawMessage(t, []map[string]any{
++			{
++				"type": "additional_tools",
++				"tools": []map[string]any{
++					{
++						"type":  "namespace",
++						"name":  "terminal",
++						"tools": []map[string]any{{"type": "custom", "name": "exec"}},
++					},
++				},
++			},
++		}),
++	}
++	resp := &dto.OpenAIResponsesResponse{Output: []dto.ResponsesOutput{
++		{Type: "function_call", Name: "mcp__github__get_me", Arguments: []byte(`"{}"`)},
++		{Type: "function_call", Name: "terminal__exec", Arguments: []byte(`"{\"input\":\"pwd\"}"`)},
++	}}
++
++	RestoreResponsesToolOutputs(resp, req)
++	require.Len(t, resp.Output, 2)
++	assert.Equal(t, "get_me", resp.Output[0].Name)
++	assert.Equal(t, "mcp__github", resp.Output[0].Namespace)
++	assert.Equal(t, "custom_tool_call", resp.Output[1].Type)
++	assert.Equal(t, "terminal__exec", resp.Output[1].Name)
++	assert.JSONEq(t, `"pwd"`, string(resp.Output[1].Input))
++	assert.Empty(t, resp.Output[1].Arguments)
++}
++
++func TestChatToResponsesStreamRestoresNamespaceToolCall(t *testing.T) {
++	req := &dto.OpenAIResponsesRequest{Tools: mustResponsesRawMessage(t, []map[string]any{
++		{
++			"type":  "namespace",
++			"name":  "mcp__github",
++			"tools": []map[string]any{{"type": "function", "name": "get_me"}},
++		},
++	})}
++	state := NewChatToResponsesStreamState("resp_1", "deepseek-v4-flash")
++	state.SetOriginalResponsesRequest(req)
++	toolIndex := 0
++	chunk := &dto.ChatCompletionsStreamResponse{Choices: []dto.ChatCompletionsStreamResponseChoice{
++		{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{
++			{Index: &toolIndex, ID: "call_1", Type: "function", Function: dto.FunctionResponse{Name: "mcp__github__get_me", Arguments: `{}`}},
++		}}},
++	}}
++
++	events, err := ChatCompletionsStreamChunkToResponsesEvents(chunk, state)
++	require.NoError(t, err)
++	var added *dto.ResponsesOutput
++	for _, event := range events {
++		if event.Type == responsesEventOutputItemAdded {
++			added = event.Payload.Item
++		}
++	}
++	require.NotNil(t, added)
++	assert.Equal(t, "get_me", added.Name)
++	assert.Equal(t, "mcp__github", added.Namespace)
++
++	finalEvents := FinalizeChatCompletionsStreamToResponses(state)
++	require.NotEmpty(t, finalEvents)
++	completed := finalEvents[len(finalEvents)-1].Payload.Response
++	require.NotNil(t, completed)
++	require.Len(t, completed.Output, 1)
++	assert.Equal(t, "get_me", completed.Output[0].Name)
++	assert.Equal(t, "mcp__github", completed.Output[0].Namespace)
++}
++
++func mustResponsesRawMessage(t *testing.T, value any) json.RawMessage {
++	t.Helper()
++	raw, err := json.Marshal(value)
++	require.NoError(t, err)
++	return raw
++}
++
+ func TestChatCompletionsResponseToResponsesMapsIncompleteFinishReasons(t *testing.T) {
+ 	tests := []struct {
+ 		name         string
+diff --git a/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go b/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
+index 75c602d..cfb26ea 100644
+--- a/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
++++ b/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
+@@ -1,6 +1,7 @@
+ package oaichat
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"sort"
+ 	"strings"
+@@ -35,6 +36,7 @@ type ChatToResponsesStreamState struct {
+ 	outputOrder       []chatToResponsesOutputRef
+ 	text              strings.Builder
+ 	reasoning         strings.Builder
++	toolDescriptors   map[string]responsesToolDescriptor
+ }
+ 
+ type chatToResponsesStreamTool struct {
+@@ -42,6 +44,8 @@ type chatToResponsesStreamTool struct {
+ 	OutputIndex int
+ 	ID          string
+ 	Name        string
++	Namespace   string
++	Custom      bool
+ 	Arguments   strings.Builder
+ 	Done        bool
+ }
+@@ -61,9 +65,17 @@ func NewChatToResponsesStreamState(id string, model string) *ChatToResponsesStre
+ 		textOutputIndex: -1,
+ 		reasoningIndex:  -1,
+ 		toolsByIndex:    make(map[int]*chatToResponsesStreamTool),
++		toolDescriptors: make(map[string]responsesToolDescriptor),
+ 	}
+ }
+ 
++func (s *ChatToResponsesStreamState) SetOriginalResponsesRequest(req *dto.OpenAIResponsesRequest) {
++	if s == nil || req == nil || len(s.toolDescriptors) > 0 {
++		return
++	}
++	s.toolDescriptors = responsesToolDescriptors(req)
++}
++
+ func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStreamResponse, state *ChatToResponsesStreamState) ([]ChatToResponsesStreamEvent, error) {
+ 	if chunk == nil || state == nil {
+ 		return nil, nil
+@@ -199,44 +211,70 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
+ 	tool := s.toolsByIndex[chatIndex]
+ 	events := make([]ChatToResponsesStreamEvent, 0, 2)
+ 	if tool == nil {
++		qualifiedName := strings.TrimSpace(toolCall.Function.Name)
++		descriptor, hasDescriptor := s.toolDescriptors[qualifiedName]
+ 		tool = &chatToResponsesStreamTool{
+ 			ChatIndex:   chatIndex,
+ 			OutputIndex: s.nextIndex("tool", chatIndex),
+ 			ID:          strings.TrimSpace(toolCall.ID),
+-			Name:        strings.TrimSpace(toolCall.Function.Name),
++			Name:        qualifiedName,
++		}
++		if hasDescriptor {
++			tool.Custom = descriptor.Custom
++			if !descriptor.Custom {
++				tool.Name = descriptor.Name
++				tool.Namespace = descriptor.Namespace
++			}
+ 		}
+ 		if tool.ID == "" {
+ 			tool.ID = fmt.Sprintf("%s_call_%d", s.ID, chatIndex)
+ 		}
+ 		s.toolsByIndex[chatIndex] = tool
++		item := &dto.ResponsesOutput{
++			Type:      responsesOutputTypeFunctionCall,
++			ID:        tool.ID,
++			Status:    "in_progress",
++			CallId:    tool.ID,
++			Name:      tool.Name,
++			Namespace: tool.Namespace,
++			Arguments: []byte(`""`),
++		}
++		if tool.Custom {
++			item.Type = "custom_tool_call"
++			item.Input = []byte(`""`)
++			item.Arguments = nil
++		}
+ 		events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
+ 			Type:        responsesEventOutputItemAdded,
+ 			OutputIndex: intPtr(tool.OutputIndex),
+ 			ItemID:      tool.ID,
+-			Item: &dto.ResponsesOutput{
+-				Type:      responsesOutputTypeFunctionCall,
+-				ID:        tool.ID,
+-				Status:    "in_progress",
+-				CallId:    tool.ID,
+-				Name:      tool.Name,
+-				Arguments: []byte(`""`),
+-			},
++			Item:        item,
+ 		}))
+ 	}
+ 	if strings.TrimSpace(toolCall.ID) != "" {
+ 		tool.ID = strings.TrimSpace(toolCall.ID)
+ 	}
+ 	if strings.TrimSpace(toolCall.Function.Name) != "" {
+-		tool.Name = strings.TrimSpace(toolCall.Function.Name)
++		qualifiedName := strings.TrimSpace(toolCall.Function.Name)
++		tool.Name = qualifiedName
++		if descriptor, ok := s.toolDescriptors[qualifiedName]; ok {
++			tool.Custom = descriptor.Custom
++			if !descriptor.Custom {
++				tool.Name = descriptor.Name
++				tool.Namespace = descriptor.Namespace
++			}
++		}
+ 	}
+ 	if toolCall.Function.Arguments != "" {
+ 		tool.Arguments.WriteString(toolCall.Function.Arguments)
+-		events = append(events, responsesStreamEvent(responsesEventFunctionArgsDelta, dto.ResponsesStreamResponse{
+-			Type:        responsesEventFunctionArgsDelta,
+-			OutputIndex: intPtr(tool.OutputIndex),
+-			ItemID:      tool.ID,
+-			Delta:       toolCall.Function.Arguments,
+-		}))
++		if !tool.Custom {
++			events = append(events, responsesStreamEvent(responsesEventFunctionArgsDelta, dto.ResponsesStreamResponse{
++				Type:        responsesEventFunctionArgsDelta,
++				OutputIndex: intPtr(tool.OutputIndex),
++				ItemID:      tool.ID,
++				Delta:       toolCall.Function.Arguments,
++			}))
++		}
+ 	}
+ 	return events, nil
+ }
+@@ -281,11 +319,20 @@ func (s *ChatToResponsesStreamState) doneDeltaEvents() []ChatToResponsesStreamEv
+ 			continue
+ 		}
+ 		tool.Done = true
+-		events = append(events, responsesStreamEvent(responsesEventFunctionArgsDone, dto.ResponsesStreamResponse{
+-			Type:        responsesEventFunctionArgsDone,
+-			OutputIndex: intPtr(tool.OutputIndex),
+-			ItemID:      tool.ID,
+-		}))
++		if tool.Custom {
++			events = append(events, responsesStreamEvent("response.custom_tool_call_input.done", dto.ResponsesStreamResponse{
++				Type:        "response.custom_tool_call_input.done",
++				OutputIndex: intPtr(tool.OutputIndex),
++				ItemID:      tool.ID,
++				Input:       responsesCustomInputString(tool.Arguments.String()),
++			}))
++		} else {
++			events = append(events, responsesStreamEvent(responsesEventFunctionArgsDone, dto.ResponsesStreamResponse{
++				Type:        responsesEventFunctionArgsDone,
++				OutputIndex: intPtr(tool.OutputIndex),
++				ItemID:      tool.ID,
++			}))
++		}
+ 		events = append(events, responsesStreamEvent(responsesEventOutputItemDone, dto.ResponsesStreamResponse{
+ 			Type:        responsesEventOutputItemDone,
+ 			OutputIndex: intPtr(tool.OutputIndex),
+@@ -406,12 +453,28 @@ func (s *ChatToResponsesStreamState) reasoningOutput(status string) *dto.Respons
+ }
+ 
+ func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool, status string) *dto.ResponsesOutput {
+-	return &dto.ResponsesOutput{
++	output := &dto.ResponsesOutput{
+ 		Type:      responsesOutputTypeFunctionCall,
+ 		ID:        tool.ID,
+ 		Status:    status,
+ 		CallId:    tool.ID,
+ 		Name:      tool.Name,
++		Namespace: tool.Namespace,
+ 		Arguments: chatArgumentsRawMessage(tool.Arguments.String()),
+ 	}
++	if tool.Custom {
++		output.Type = "custom_tool_call"
++		output.Input = unwrapResponsesCustomInput(output.Arguments)
++		output.Arguments = nil
++	}
++	return output
++}
++
++func responsesCustomInputString(arguments string) string {
++	raw := unwrapResponsesCustomInput(chatArgumentsRawMessage(arguments))
++	var input string
++	if err := json.Unmarshal(raw, &input); err == nil {
++		return input
++	}
++	return string(raw)
+ }
+diff --git a/service/relayconvert/internal/oai_responses/to_oai_chat_req.go b/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
+index 7779364..b26f06d 100644
+--- a/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
++++ b/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
+@@ -15,6 +15,7 @@ const (
+ 	responsesInputTypeFunctionCallOutput = "function_call_output"
+ 	responsesInputTypeCustomToolCall     = "custom_tool_call"
+ 	responsesInputTypeCustomToolOutput   = "custom_tool_call_output"
++	responsesInputTypeAdditionalTools    = "additional_tools"
+ )
+ 
+ const (
+@@ -40,7 +41,7 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
+ 		return nil, err
+ 	}
+ 
+-	tools, err := responsesRequestToolsToChat(req.Tools)
++	tools, err := responsesRequestToolsToChat(req)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -166,6 +167,8 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
+ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, error) {
+ 	itemType := strings.TrimSpace(common.Interface2String(item["type"]))
+ 	switch itemType {
++	case responsesInputTypeAdditionalTools:
++		return messages, nil
+ 	case responsesInputTypeFunctionCall:
+ 		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
+ 		if err != nil {
+@@ -178,7 +181,7 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
+ 			return nil, err
+ 		}
+ 		return appendToolCallToLastAssistant(messages, toolCall), nil
+-	case responsesInputTypeFunctionCallOutput:
++	case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
+ 		callID := strings.TrimSpace(common.Interface2String(item["call_id"]))
+ 		content := responseToolOutputToChatContent(item["output"])
+ 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
+@@ -279,6 +282,7 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
+ 	if name == "" {
+ 		return dto.ToolCallRequest{}, errors.New("function_call item is missing name")
+ 	}
++	name = qualifyResponsesNamespaceToolName(common.Interface2String(item["namespace"]), name)
+ 	return dto.ToolCallRequest{
+ 		ID:   responsesCallID(item),
+ 		Type: "function",
+@@ -290,17 +294,21 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
+ }
+ 
+ func responsesCustomToolCallItemToChatToolCall(item map[string]any) (dto.ToolCallRequest, error) {
+-	raw, err := common.Marshal(item)
++	name := strings.TrimSpace(common.Interface2String(item["name"]))
++	if name == "" {
++		return dto.ToolCallRequest{}, errors.New("custom_tool_call item is missing name")
++	}
++	name = qualifyResponsesNamespaceToolName(common.Interface2String(item["namespace"]), name)
++	wrappedInput, err := common.Marshal(map[string]any{"input": item["input"]})
+ 	if err != nil {
+ 		return dto.ToolCallRequest{}, err
+ 	}
+ 	return dto.ToolCallRequest{
+-		ID:     responsesCallID(item),
+-		Type:   dto.CustomType,
+-		Custom: raw,
++		ID:   responsesCallID(item),
++		Type: "function",
+ 		Function: dto.FunctionRequest{
+-			Name:      strings.TrimSpace(common.Interface2String(item["name"])),
+-			Arguments: responsesArgumentsString(item["input"]),
++			Name:      name,
++			Arguments: string(wrappedInput),
+ 		},
+ 	}, nil
+ }
+@@ -318,41 +326,164 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
+ 	return messages
+ }
+ 
+-func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, error) {
+-	if !rawJSONPresent(raw) {
++func responsesRequestToolsToChat(req *dto.OpenAIResponsesRequest) ([]dto.ToolCallRequest, error) {
++	if req == nil {
+ 		return nil, nil
+ 	}
+ 
+-	var tools []map[string]any
+-	if err := common.Unmarshal(raw, &tools); err != nil {
+-		return nil, fmt.Errorf("invalid tools: %w", err)
+-	}
+-
+-	out := make([]dto.ToolCallRequest, 0, len(tools))
+-	for _, tool := range tools {
+-		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
+-		if toolType == "function" {
+-			out = append(out, dto.ToolCallRequest{
+-				Type: "function",
+-				Function: dto.FunctionRequest{
+-					Name:        strings.TrimSpace(common.Interface2String(tool["name"])),
+-					Description: common.Interface2String(tool["description"]),
+-					Parameters:  tool["parameters"],
+-				},
+-			})
+-			continue
++	toolGroups := make([][]map[string]any, 0, 2)
++	if rawJSONPresent(req.Tools) {
++		var tools []map[string]any
++		if err := common.Unmarshal(req.Tools, &tools); err != nil {
++			return nil, fmt.Errorf("invalid tools: %w", err)
++		}
++		toolGroups = append(toolGroups, tools)
++	}
++	if rawJSONPresent(req.Input) && common.GetJsonType(req.Input) == "array" {
++		var inputItems []map[string]any
++		if err := common.Unmarshal(req.Input, &inputItems); err != nil {
++			return nil, fmt.Errorf("invalid input: %w", err)
++		}
++		for _, item := range inputItems {
++			if strings.TrimSpace(common.Interface2String(item["type"])) != responsesInputTypeAdditionalTools {
++				continue
++			}
++			tools, err := responsesToolsFromValue(item["tools"])
++			if err != nil {
++				return nil, fmt.Errorf("invalid additional_tools: %w", err)
++			}
++			toolGroups = append(toolGroups, tools)
+ 		}
++	}
++
++	out := make([]dto.ToolCallRequest, 0)
++	for _, tools := range toolGroups {
++		for _, tool := range tools {
++			if err := appendResponsesToolToChat(&out, tool, ""); err != nil {
++				return nil, err
++			}
++		}
++	}
++	return out, nil
++}
+ 
++func appendResponsesToolToChat(out *[]dto.ToolCallRequest, tool map[string]any, namespace string) error {
++	toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
++	switch toolType {
++	case "", "function":
++		name := qualifyResponsesNamespaceToolName(namespace, responsesToolName(tool))
++		if name == "" {
++			return nil
++		}
++		*out = append(*out, dto.ToolCallRequest{
++			Type: "function",
++			Function: dto.FunctionRequest{
++				Name:        name,
++				Description: responsesToolDescription(tool),
++				Parameters:  responsesToolParameters(tool),
++			},
++		})
++	case dto.CustomType:
++		name := qualifyResponsesNamespaceToolName(namespace, responsesToolName(tool))
++		if name == "" {
++			return nil
++		}
++		*out = append(*out, dto.ToolCallRequest{
++			Type: "function",
++			Function: dto.FunctionRequest{
++				Name:        name,
++				Description: responsesToolDescription(tool),
++				Parameters: map[string]any{
++					"type": "object",
++					"properties": map[string]any{
++						"input": map[string]any{"type": "string"},
++					},
++					"required": []string{"input"},
++				},
++			},
++		})
++	case "namespace":
++		children, err := responsesToolsFromValue(tool["tools"])
++		if err != nil {
++			return fmt.Errorf("invalid namespace tools: %w", err)
++		}
++		namespaceName := strings.TrimSpace(common.Interface2String(tool["name"]))
++		for _, child := range children {
++			if err := appendResponsesToolToChat(out, child, namespaceName); err != nil {
++				return err
++			}
++		}
++	default:
+ 		rawTool, err := common.Marshal(tool)
+ 		if err != nil {
+-			return nil, err
++			return err
+ 		}
+-		out = append(out, dto.ToolCallRequest{
+-			Type:   toolType,
+-			Custom: rawTool,
+-		})
++		*out = append(*out, dto.ToolCallRequest{Type: toolType, Custom: rawTool})
+ 	}
+-	return out, nil
++	return nil
++}
++
++func responsesToolsFromValue(value any) ([]map[string]any, error) {
++	if value == nil {
++		return nil, nil
++	}
++	raw, err := common.Marshal(value)
++	if err != nil {
++		return nil, err
++	}
++	var tools []map[string]any
++	if err := common.Unmarshal(raw, &tools); err != nil {
++		return nil, err
++	}
++	return tools, nil
++}
++
++func responsesToolName(tool map[string]any) string {
++	if name := strings.TrimSpace(common.Interface2String(tool["name"])); name != "" {
++		return name
++	}
++	if function, ok := tool["function"].(map[string]any); ok {
++		return strings.TrimSpace(common.Interface2String(function["name"]))
++	}
++	return ""
++}
++
++func responsesToolDescription(tool map[string]any) string {
++	if description := common.Interface2String(tool["description"]); description != "" {
++		return description
++	}
++	if function, ok := tool["function"].(map[string]any); ok {
++		return common.Interface2String(function["description"])
++	}
++	return ""
++}
++
++func responsesToolParameters(tool map[string]any) any {
++	for _, key := range []string{"parameters", "parametersJsonSchema", "input_schema"} {
++		if parameters, ok := tool[key]; ok {
++			return parameters
++		}
++	}
++	if function, ok := tool["function"].(map[string]any); ok {
++		for _, key := range []string{"parameters", "parametersJsonSchema"} {
++			if parameters, ok := function[key]; ok {
++				return parameters
++			}
++		}
++	}
++	return map[string]any{}
++}
++
++func qualifyResponsesNamespaceToolName(namespace, name string) string {
++	namespace = strings.TrimSpace(namespace)
++	name = strings.TrimSpace(name)
++	if namespace == "" || name == "" || strings.HasPrefix(name, "mcp__") || strings.HasPrefix(name, namespace+"__") {
++		return name
++	}
++	if strings.HasSuffix(namespace, "__") {
++		return namespace + name
++	}
++	return namespace + "__" + name
+ }
+ 
+ func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
+@@ -373,6 +504,7 @@ func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
+ 	}
+ 	if common.Interface2String(choice["type"]) == "function" {
+ 		name := strings.TrimSpace(common.Interface2String(choice["name"]))
++		name = qualifyResponsesNamespaceToolName(common.Interface2String(choice["namespace"]), name)
+ 		if name != "" {
+ 			return map[string]any{
+ 				"type": "function",
+diff --git a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
+index 6924c82..4c76bf4 100644
+--- a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
++++ b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
+@@ -55,6 +55,87 @@ func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *t
+ 	assert.Equal(t, "abc", gjson.GetBytes(got.Metadata, "trace").String())
+ }
+ 
++func TestResponsesRequestToChatCompletionsRequestFlattensNamespaceTools(t *testing.T) {
++	req := &dto.OpenAIResponsesRequest{
++		Model: "deepseek-v4-flash",
++		Tools: mustRawMessage(t, []map[string]any{
++			{
++				"type": "namespace",
++				"name": "mcp__github",
++				"tools": []map[string]any{
++					{"type": "function", "name": "get_me", "description": "Get current user", "parameters": map[string]any{"type": "object"}},
++					{"type": "custom", "name": "raw_query", "description": "Run a raw query"},
++				},
++			},
++		}),
++		Input: mustRawMessage(t, []map[string]any{
++			{"role": "user", "content": []map[string]any{{"type": "input_text", "text": "check"}}},
++			{
++				"type": "additional_tools",
++				"tools": []map[string]any{
++					{
++						"type":  "namespace",
++						"name":  "collaboration",
++						"tools": []map[string]any{{"type": "function", "name": "send_message", "parameters": map[string]any{"type": "object"}}},
++					},
++				},
++			},
++		}),
++	}
++
++	got, err := ResponsesRequestToChatCompletionsRequest(req)
++	require.NoError(t, err)
++	require.Len(t, got.Messages, 1, "additional_tools must not become an empty user message")
++	require.Len(t, got.Tools, 3)
++	assert.Equal(t, "mcp__github__get_me", got.Tools[0].Function.Name)
++	assert.Equal(t, "mcp__github__raw_query", got.Tools[1].Function.Name)
++	assert.Equal(t, "collaboration__send_message", got.Tools[2].Function.Name)
++
++	customParameters, ok := got.Tools[1].Function.Parameters.(map[string]any)
++	require.True(t, ok)
++	assert.Equal(t, "object", customParameters["type"])
++	assert.Equal(t, []string{"input"}, customParameters["required"])
++}
++
++func TestResponsesRequestToChatCompletionsRequestQualifiesNamespaceHistory(t *testing.T) {
++	req := &dto.OpenAIResponsesRequest{
++		Model: "deepseek-v4-flash",
++		Input: mustRawMessage(t, []map[string]any{
++			{"type": "function_call", "call_id": "call_1", "name": "get_me", "namespace": "mcp__github", "arguments": `{}`},
++			{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
++			{"type": "custom_tool_call", "call_id": "call_2", "name": "exec", "namespace": "terminal", "input": "pwd"},
++			{"type": "custom_tool_call_output", "call_id": "call_2", "output": "C:/work"},
++		}),
++	}
++
++	got, err := ResponsesRequestToChatCompletionsRequest(req)
++	require.NoError(t, err)
++	require.Len(t, got.Messages, 4)
++	firstCalls := got.Messages[0].ParseToolCalls()
++	require.Len(t, firstCalls, 1)
++	assert.Equal(t, "mcp__github__get_me", firstCalls[0].Function.Name)
++	assert.Equal(t, "tool", got.Messages[1].Role)
++	secondCalls := got.Messages[2].ParseToolCalls()
++	require.Len(t, secondCalls, 1)
++	assert.Equal(t, "terminal__exec", secondCalls[0].Function.Name)
++	assert.JSONEq(t, `{"input":"pwd"}`, secondCalls[0].Function.Arguments)
++	assert.Equal(t, "tool", got.Messages[3].Role)
++}
++
++func TestResponsesRequestToChatCompletionsRequestQualifiesNamespaceToolChoice(t *testing.T) {
++	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
++		Model:      "deepseek-v4-flash",
++		Input:      mustRawMessage(t, "use a tool"),
++		ToolChoice: mustRawMessage(t, map[string]any{"type": "function", "name": "get_me", "namespace": "mcp__github"}),
++	})
++	require.NoError(t, err)
++	choice, ok := got.ToolChoice.(map[string]any)
++	require.True(t, ok)
++	function, ok := choice["function"].(map[string]any)
++	require.True(t, ok)
++	assert.Equal(t, "mcp__github__get_me", function["name"])
++}
++
+ func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
+ 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+ 		Model: "gpt-test",
+@@ -199,7 +280,7 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t
+ 	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
+ }
+ 
+-func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
++func TestResponsesRequestToChatCompletionsRequestCustomToolCallUsesFunctionWrapper(t *testing.T) {
+ 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+ 		Model: "gpt-test",
+ 		Input: mustRawMessage(t, []map[string]any{
+@@ -216,12 +297,11 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape
+ 	require.Len(t, got.Messages, 1)
+ 	toolCalls := got.Messages[0].ParseToolCalls()
+ 	require.Len(t, toolCalls, 1)
+-	assert.Equal(t, dto.CustomType, toolCalls[0].Type)
++	assert.Equal(t, "function", toolCalls[0].Type)
+ 	assert.Equal(t, "call_custom", toolCalls[0].ID)
+ 	assert.Equal(t, "apply_patch", toolCalls[0].Function.Name)
+-	assert.Equal(t, "patch body", toolCalls[0].Function.Arguments)
+-	assert.Equal(t, "custom_tool_call", gjson.GetBytes(toolCalls[0].Custom, "type").String())
+-	assert.Equal(t, "patch body", gjson.GetBytes(toolCalls[0].Custom, "input").String())
++	assert.JSONEq(t, `{"input":"patch body"}`, toolCalls[0].Function.Arguments)
++	assert.Empty(t, toolCalls[0].Custom)
+ }
+ 
+ func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {
+diff --git a/service/relayconvert/response_compat.go b/service/relayconvert/response_compat.go
+index b42bed4..b796b16 100644
+--- a/service/relayconvert/response_compat.go
++++ b/service/relayconvert/response_compat.go
+@@ -84,6 +84,10 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id
+ 	return oaichat.ChatCompletionsResponseToResponsesResponse(resp, id)
+ }
+ 
++func RestoreResponsesToolOutputs(resp *dto.OpenAIResponsesResponse, req *dto.OpenAIResponsesRequest) {
++	oaichat.RestoreResponsesToolOutputs(resp, req)
++}
++
+ func ResponsesStatusFromChatFinishReason(finishReason string) (string, *dto.IncompleteDetails) {
+ 	return oaichat.ResponsesStatusFromChatFinishReason(finishReason)
+ }
+@@ -96,6 +100,10 @@ func NewChatToResponsesStreamState(id string, model string) *ChatToResponsesStre
+ 	return oaichat.NewChatToResponsesStreamState(id, model)
+ }
+ 
++func SetChatToResponsesOriginalRequest(state *ChatToResponsesStreamState, req *dto.OpenAIResponsesRequest) {
++	state.SetOriginalResponsesRequest(req)
++}
++
+ func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStreamResponse, state *ChatToResponsesStreamState) ([]ChatToResponsesStreamEvent, error) {
+ 	return oaichat.ChatCompletionsStreamChunkToResponsesEvents(chunk, state)
+ }
+diff --git a/service/relayconvert/response_registry.go b/service/relayconvert/response_registry.go
+index 43ef9d3..b99b5b2 100644
+--- a/service/relayconvert/response_registry.go
++++ b/service/relayconvert/response_registry.go
+@@ -786,7 +786,7 @@ func usageFromClaudeResponse(resp *dto.ClaudeResponse) *dto.Usage {
+ 	return nil
+ }
+ 
+-func convertOAIChatResponseToOAIResponses(_ *gin.Context, _ *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
++func convertOAIChatResponseToOAIResponses(_ *gin.Context, info *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
+ 	chatResponse, err := asOAIChatResponse(response)
+ 	if err != nil {
+ 		return nil, nil, err
+@@ -795,7 +795,16 @@ func convertOAIChatResponseToOAIResponses(_ *gin.Context, _ *relaycommon.RelayIn
+ 	if id == "" {
+ 		id = fmt.Sprintf("resp_%s", common.GetUUID())
+ 	}
+-	return ChatCompletionsResponseToResponsesResponse(chatResponse, id)
++	responsesResponse, usage, err := ChatCompletionsResponseToResponsesResponse(chatResponse, id)
++	if err != nil {
++		return nil, nil, err
++	}
++	if info != nil {
++		if originalRequest, ok := info.Request.(*dto.OpenAIResponsesRequest); ok {
++			RestoreResponsesToolOutputs(responsesResponse, originalRequest)
++		}
++	}
++	return responsesResponse, usage, nil
+ }
+ 
+ func convertOAIResponsesResponseToOAIChat(_ *gin.Context, _ *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
+@@ -822,7 +831,7 @@ func newOAIChatToOAIResponsesStreamState(options ResponseStreamOptions) any {
+ 	return state
+ }
+ 
+-func convertOAIChatStreamResponseToOAIResponses(_ *gin.Context, _ *relaycommon.RelayInfo, response any, state any) ([]any, *dto.Usage, error) {
++func convertOAIChatStreamResponseToOAIResponses(_ *gin.Context, info *relaycommon.RelayInfo, response any, state any) ([]any, *dto.Usage, error) {
+ 	chatResponse, err := asOAIChatStreamResponse(response)
+ 	if err != nil {
+ 		return nil, nil, err
+@@ -831,6 +840,11 @@ func convertOAIChatStreamResponseToOAIResponses(_ *gin.Context, _ *relaycommon.R
+ 	if !ok || streamState == nil {
+ 		return nil, nil, errors.New("OAI chat to OAI responses stream state is required")
+ 	}
++	if info != nil {
++		if originalRequest, ok := info.Request.(*dto.OpenAIResponsesRequest); ok {
++			SetChatToResponsesOriginalRequest(streamState, originalRequest)
++		}
++	}
+ 	events, err := ChatCompletionsStreamChunkToResponsesEvents(chatResponse, streamState)
+ 	if err != nil {
+ 		return nil, nil, err

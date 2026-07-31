@@ -1,0 +1,233 @@
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+index 3efd509..7d2f401 100644
+--- a/controller/codex_compat.go
++++ b/controller/codex_compat.go
+@@ -46,7 +46,7 @@ var (
+ 			MaxIdleConns:          32,
+ 			MaxIdleConnsPerHost:   32,
+ 			IdleConnTimeout:       90 * time.Second,
+-			ResponseHeaderTimeout: 120 * time.Second,
++			ResponseHeaderTimeout: 360 * time.Second,
+ 		},
+ 	}
+ )
+@@ -166,6 +166,7 @@ func CodexResponses(c *gin.Context) {
+ 		return
+ 	}
+ 	defer resp.Body.Close()
++	copyCodexTraceHeaders(c, resp)
+ 
+ 	if stream || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+ 		if err = streamCodexCPAResponse(c, resp, responsesReq.Model, originalBody, body); err != nil && !c.Writer.Written() {
+@@ -184,6 +185,14 @@ func CodexResponses(c *gin.Context) {
+ 	}
+ }
+ 
++func copyCodexTraceHeaders(c *gin.Context, resp *http.Response) {
++	for _, header := range []string{"X-Oneapi-Request-Id", "X-Request-Id"} {
++		if value := resp.Header.Get(header); value != "" {
++			c.Header(header, value)
++		}
++	}
++}
++
+ func readCodexRequestBody(c *gin.Context) ([]byte, error) {
+ 	body, err := common.GetRequestBody(c)
+ 	if err != nil {
+@@ -218,15 +227,58 @@ func writeCodexCPANonStreamResponse(c *gin.Context, resp *http.Response, modelNa
+ 	return err
+ }
+ 
++type codexStreamTerminalState struct {
++	responseID   string
++	nextSequence int
++	terminal     bool
++}
++
++func (state *codexStreamTerminalState) observe(chunk []byte) {
++	var event string
++	var data []byte
++	for _, line := range bytes.Split(chunk, []byte("\n")) {
++		line = bytes.TrimSpace(line)
++		switch {
++		case bytes.HasPrefix(line, []byte("event:")):
++			event = strings.TrimSpace(string(bytes.TrimPrefix(line, []byte("event:"))))
++		case bytes.HasPrefix(line, []byte("data:")):
++			data = bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
++		}
++	}
++	switch event {
++	case "response.completed", "response.failed", "response.incomplete":
++		state.terminal = true
++	}
++	if len(data) == 0 {
++		return
++	}
++	var envelope struct {
++		SequenceNumber int `json:"sequence_number"`
++		Response       struct {
++			ID string `json:"id"`
++		} `json:"response"`
++	}
++	if json.Unmarshal(data, &envelope) != nil {
++		return
++	}
++	if envelope.SequenceNumber >= state.nextSequence {
++		state.nextSequence = envelope.SequenceNumber + 1
++	}
++	if envelope.Response.ID != "" {
++		state.responseID = envelope.Response.ID
++	}
++}
++
+ func streamCodexCPAResponse(c *gin.Context, resp *http.Response, modelName string, originalRequest, convertedRequest []byte) error {
+ 	c.Header("Content-Type", "text/event-stream")
+ 	c.Header("Cache-Control", "no-cache")
+ 	c.Header("Connection", "keep-alive")
+ 	c.Status(http.StatusOK)
+ 
+ 	scanner := bufio.NewScanner(resp.Body)
+ 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
+ 	var state any
++	terminalState := codexStreamTerminalState{}
+ 	for scanner.Scan() {
+ 		line := bytes.TrimSpace(scanner.Bytes())
+ 		if len(line) == 0 || bytes.HasPrefix(line, []byte("event:")) {
+@@ -258,18 +322,54 @@ func streamCodexCPAResponse(c *gin.Context, resp *http.Response, modelName strin
+ 			c.Request.Context(), modelName, originalRequest, convertedRequest, append([]byte(nil), line...), &state,
+ 		)
+ 		for _, chunk := range chunks {
++			terminalState.observe(chunk)
+ 			if _, err := c.Writer.Write(append(chunk, '\n', '\n')); err != nil {
+ 				return err
+ 			}
+ 			c.Writer.Flush()
+ 		}
+ 	}
+ 	if err := scanner.Err(); err != nil {
+-		return err
++		return writeCodexStreamFailure(c, &terminalState, "upstream stream failed before a terminal event")
++	}
++	if !terminalState.terminal {
++		return writeCodexStreamFailure(c, &terminalState, "upstream stream ended before a terminal event")
+ 	}
+ 	return nil
+ }
+ 
++func writeCodexStreamFailure(c *gin.Context, state *codexStreamTerminalState, message string) error {
++	responseID := state.responseID
++	if responseID == "" {
++		responseID = fmt.Sprintf("resp_madapi_failed_%d", time.Now().UnixNano())
++	}
++	payload := map[string]any{
++		"type":            "response.failed",
++		"sequence_number": state.nextSequence,
++		"response": map[string]any{
++			"id":         responseID,
++			"object":     "response",
++			"created_at": time.Now().Unix(),
++			"status":     "failed",
++			"background": false,
++			"error": map[string]any{
++				"code":    "upstream_stream_ended",
++				"message": message,
++			},
++			"output": []any{},
++		},
++	}
++	raw, err := json.Marshal(payload)
++	if err != nil {
++		return err
++	}
++	if _, err = fmt.Fprintf(c.Writer, "event: response.failed\ndata: %s\n\n", raw); err != nil {
++		return err
++	}
++	c.Writer.Flush()
++	return nil
++}
++
+ func normalizeCodexDeveloperMessages(request *dto.GeneralOpenAIRequest) {
+ 	for index := range request.Messages {
+ 		role := strings.TrimSpace(request.Messages[index].Role)
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index 59ac37f..792790b 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -11,6 +11,7 @@ import (
+ 	"strings"
+ 	"sync/atomic"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/dto"
+@@ -324,3 +325,57 @@ func TestCodexResponsesPreservesInnerErrorWithoutCompatibilityRetry(t *testing.T
+ 	require.Equal(t, http.StatusBadGateway, recorder.Code)
+ 	require.JSONEq(t, `{"error":{"message":"upstream unavailable","type":"upstream_error"}}`, recorder.Body.String())
+ }
++
++func TestCodexInternalResponseHeaderTimeoutIsLongEnoughForSlowTextModels(t *testing.T) {
++	transport, ok := codexInternalHTTPClient.Transport.(*http.Transport)
++	require.True(t, ok)
++	require.Equal(t, 360*time.Second, transport.ResponseHeaderTimeout)
++}
++
++func TestCodexStreamWritesFailureWhenUpstreamEndsWithoutDone(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", nil)
++
++	upstream := strings.Join([]string{
++		`data: {"id":"chatcmpl-truncated","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}`,
++		"",
++	}, "\n")
++	resp := &http.Response{Body: io.NopCloser(strings.NewReader(upstream)), Header: make(http.Header)}
++
++	err := streamCodexCPAResponse(c, resp, "gpt-test", []byte(`{"model":"gpt-test","stream":true}`), nil)
++	require.NoError(t, err)
++	require.Contains(t, recorder.Body.String(), "event: response.failed")
++	require.Contains(t, recorder.Body.String(), `"code":"upstream_stream_ended"`)
++	require.NotContains(t, recorder.Body.String(), "event: response.completed")
++}
++
++func TestCodexStreamKeepsNormalCompletedTerminalEvent(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", nil)
++
++	upstream := strings.Join([]string{
++		`data: {"id":"chatcmpl-complete","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`,
++		"",
++		"data: [DONE]",
++		"",
++	}, "\n")
++	resp := &http.Response{Body: io.NopCloser(strings.NewReader(upstream)), Header: make(http.Header)}
++
++	err := streamCodexCPAResponse(c, resp, "gpt-test", []byte(`{"model":"gpt-test","stream":true}`), nil)
++	require.NoError(t, err)
++	require.Contains(t, recorder.Body.String(), "event: response.completed")
++	require.NotContains(t, recorder.Body.String(), "event: response.failed")
++}
++
++func TestCopyCodexTraceHeaders(t *testing.T) {
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	resp := &http.Response{Header: make(http.Header)}
++	resp.Header.Set("X-Oneapi-Request-Id", "req-inner-1")
++
++	copyCodexTraceHeaders(c, resp)
++
++	require.Equal(t, "req-inner-1", recorder.Header().Get("X-Oneapi-Request-Id"))
++}
+diff --git a/router/web-router.go b/router/web-router.go
+index f8050ca..8ce48d1 100644
+--- a/router/web-router.go
++++ b/router/web-router.go
+@@ -54,6 +54,6 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
+ 	router.NoRoute(func(c *gin.Context) {
+ 		c.Set(middleware.RouteTagKey, "web")
+-		if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
++		if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/codex") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
+ 			controller.RelayNotFound(c)
+ 			return
+ 		}

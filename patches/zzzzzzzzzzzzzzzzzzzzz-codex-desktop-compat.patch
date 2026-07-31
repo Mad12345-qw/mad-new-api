@@ -1,0 +1,575 @@
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+new file mode 100644
+index 00000000..13351378
+--- /dev/null
++++ b/controller/codex_compat.go
+@@ -0,0 +1,299 @@
++package controller
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"sort"
++	"strings"
++	"time"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/dto"
++	"github.com/QuantumNous/new-api/model"
++	"github.com/QuantumNous/new-api/relay/channel/openai"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/relay/helper"
++	"github.com/QuantumNous/new-api/service/relayconvert"
++	"github.com/QuantumNous/new-api/types"
++	"github.com/gin-gonic/gin"
++	"github.com/samber/lo"
++)
++
++const (
++	defaultCodexInternalBaseURL = "http://127.0.0.1:3000/v1"
++	codexCompatibilityLimit     = 16
++)
++
++var (
++	codexInternalBaseURL     = defaultCodexInternalBaseURL
++	codexCompatibilitySlots  = make(chan struct{}, codexCompatibilityLimit)
++	codexTextPricingProvider = codexTextPricingModels
++	codexInternalHTTPClient  = &http.Client{
++		Transport: &http.Transport{
++			Proxy:                 http.ProxyFromEnvironment,
++			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
++			ForceAttemptHTTP2:     false,
++			MaxIdleConns:          32,
++			MaxIdleConnsPerHost:   32,
++			IdleConnTimeout:       90 * time.Second,
++			ResponseHeaderTimeout: 120 * time.Second,
++		},
++	}
++)
++
++type codexOpenAIModelsResponse struct {
++	Data []dto.OpenAIModels `json:"data"`
++}
++
++type codexModelsResponse struct {
++	Models []map[string]any `json:"models"`
++}
++
++func CodexListModels(c *gin.Context) {
++	req, err := newCodexInternalRequest(c, http.MethodGet, "/models", nil)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusInternalServerError, err)
++		return
++	}
++
++	resp, err := codexInternalHTTPClient.Do(req)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("model catalog request failed: %w", err))
++		return
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		proxyCodexErrorResponse(c, resp)
++		return
++	}
++
++	var upstream codexOpenAIModelsResponse
++	decoder := json.NewDecoder(io.LimitReader(resp.Body, 8<<20))
++	if err = decoder.Decode(&upstream); err != nil {
++		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("invalid model catalog response: %w", err))
++		return
++	}
++
++	textPricing := codexTextPricingProvider()
++	models := make([]dto.OpenAIModels, 0, len(upstream.Data))
++	for _, candidate := range upstream.Data {
++		if isCodexConversationModel(candidate, textPricing) {
++			models = append(models, candidate)
++		}
++	}
++	sort.SliceStable(models, func(i, j int) bool {
++		return strings.ToLower(models[i].Id) < strings.ToLower(models[j].Id)
++	})
++
++	catalog := make([]map[string]any, 0, len(models))
++	for index, candidate := range models {
++		catalog = append(catalog, buildCodexModel(candidate, index))
++	}
++	c.Header("Cache-Control", "private, no-store")
++	c.JSON(http.StatusOK, codexModelsResponse{Models: catalog})
++}
++
++func CodexResponses(c *gin.Context) {
++	select {
++	case codexCompatibilitySlots <- struct{}{}:
++		defer func() { <-codexCompatibilitySlots }()
++	default:
++		codexCompatibilityError(c, http.StatusTooManyRequests, fmt.Errorf("Codex compatibility capacity is busy; retry shortly"))
++		return
++	}
++
++	responsesReq, err := helper.GetAndValidateResponsesRequest(c)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadRequest, err)
++		return
++	}
++	if !isCodexConversationModel(dto.OpenAIModels{Id: responsesReq.Model}, codexTextPricingProvider()) {
++		codexCompatibilityError(c, http.StatusBadRequest, fmt.Errorf("model %q is not a Codex conversation model", responsesReq.Model))
++		return
++	}
++
++	// The model name is only the routing key. The internal chat route selects a
++	// channel using existing abilities/weights and then converts by channel API
++	// type (OpenAI, Anthropic, Gemini, DeepSeek, and other existing adaptors).
++	convertInfo := &relaycommon.RelayInfo{
++		RelayFormat:     types.RelayFormatOpenAIResponses,
++		OriginModelName: responsesReq.Model,
++		ChannelMeta: &relaycommon.ChannelMeta{
++			UpstreamModelName: responsesReq.Model,
++		},
++	}
++	converted, err := relayconvert.ConvertRequest(c, convertInfo, types.RelayFormatOpenAI, responsesReq)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadRequest, fmt.Errorf("Responses request conversion failed: %w", err))
++		return
++	}
++	chatReq, ok := converted.Value.(*dto.GeneralOpenAIRequest)
++	if !ok {
++		codexCompatibilityError(c, http.StatusInternalServerError, fmt.Errorf("unexpected converted request type %T", converted.Value))
++		return
++	}
++	if lo.FromPtrOr(chatReq.Stream, false) {
++		chatReq.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
++	}
++
++	body, err := common.Marshal(chatReq)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusInternalServerError, err)
++		return
++	}
++	innerReq, err := newCodexInternalRequest(c, http.MethodPost, "/chat/completions", bytes.NewReader(body))
++	if err != nil {
++		codexCompatibilityError(c, http.StatusInternalServerError, err)
++		return
++	}
++	innerReq.Header.Set("Content-Type", "application/json")
++
++	resp, err := codexInternalHTTPClient.Do(innerReq)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("chat compatibility request failed: %w", err))
++		return
++	}
++	if resp.StatusCode != http.StatusOK {
++		defer resp.Body.Close()
++		proxyCodexErrorResponse(c, resp)
++		return
++	}
++
++	convertInfo.IsStream = lo.FromPtrOr(chatReq.Stream, false) || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
++	if convertInfo.IsStream {
++		_, apiErr := openai.OaiChatToResponsesStreamHandler(c, convertInfo, resp)
++		if apiErr != nil {
++			codexCompatibilityError(c, apiErr.StatusCode, apiErr)
++		}
++		return
++	}
++	_, apiErr := openai.OaiChatToResponsesHandler(c, convertInfo, resp)
++	if apiErr != nil {
++		codexCompatibilityError(c, apiErr.StatusCode, apiErr)
++	}
++}
++
++func newCodexInternalRequest(c *gin.Context, method string, path string, body io.Reader) (*http.Request, error) {
++	base := strings.TrimRight(codexInternalBaseURL, "/")
++	req, err := http.NewRequestWithContext(c.Request.Context(), method, base+path, body)
++	if err != nil {
++		return nil, err
++	}
++	if authorization := c.GetHeader("Authorization"); authorization != "" {
++		req.Header.Set("Authorization", authorization)
++	}
++	if userAgent := c.GetHeader("User-Agent"); userAgent != "" {
++		req.Header.Set("User-Agent", userAgent)
++	}
++	if clientIP := c.ClientIP(); clientIP != "" {
++		req.Header.Set("X-Forwarded-For", clientIP)
++	}
++	return req, nil
++}
++
++func codexTextPricingModels() map[string]struct{} {
++	models := make(map[string]struct{})
++	for _, pricing := range model.GetPricing() {
++		// Existing pricing metadata distinguishes token-priced conversation
++		// models from fixed-price media/task APIs without guessing by model name.
++		if pricing.QuotaType == 0 {
++			models[pricing.ModelName] = struct{}{}
++		}
++	}
++	return models
++}
++
++func isCodexConversationModel(candidate dto.OpenAIModels, textPricing map[string]struct{}) bool {
++	id := strings.TrimSpace(candidate.Id)
++	if id == "" {
++		return false
++	}
++	if _, ok := textPricing[id]; !ok {
++		return false
++	}
++	if len(candidate.SupportedEndpointTypes) == 0 {
++		return true
++	}
++	for _, endpoint := range candidate.SupportedEndpointTypes {
++		switch endpoint {
++		case "openai", "openai-response", "anthropic", "gemini":
++			return true
++		}
++	}
++	return false
++}
++
++func buildCodexModel(candidate dto.OpenAIModels, index int) map[string]any {
++	displayName := strings.TrimSpace(candidate.Id)
++	return map[string]any{
++		"slug":                                 candidate.Id,
++		"display_name":                         displayName,
++		"description":                          "Available through MadAPI: " + displayName,
++		"prefer_websockets":                    false,
++		"support_verbosity":                    false,
++		"default_verbosity":                    "low",
++		"web_search_tool_type":                 "text_and_image",
++		"input_modalities":                     []string{"text"},
++		"supports_image_detail_original":       false,
++		"truncation_policy":                    map[string]any{"mode": "tokens", "limit": 10000},
++		"supports_parallel_tool_calls":         true,
++		"tool_mode":                            nil,
++		"multi_agent_version":                  nil,
++		"use_responses_lite":                   false,
++		"include_skills_usage_instructions":    true,
++		"auto_review_model_override":           nil,
++		"context_window":                       128000,
++		"max_context_window":                   128000,
++		"auto_compact_token_limit":             nil,
++		"comp_hash":                            "madapi-codex-compat-v1",
++		"reasoning_summary_format":             "none",
++		"default_reasoning_summary":            "none",
++		"default_reasoning_level":              "none",
++		"supported_reasoning_levels":           []any{map[string]any{"effort": "none", "description": "Uses the model's default reasoning behavior"}},
++		"shell_type":                           "shell_command",
++		"visibility":                           "list",
++		"minimal_client_version":               "0.0.0",
++		"supported_in_api":                     true,
++		"priority":                             100 + index,
++		"model_messages":                       map[string]any{"instructions_template": codexCompatibilityBaseInstructions},
++		"experimental_supported_tools":         []any{},
++		"supports_search_tool":                 false,
++		"default_service_tier":                 nil,
++		"service_tiers":                        []any{},
++		"additional_speed_tiers":               []any{},
++		"supports_reasoning_summary_parameter": false,
++		"supports_reasoning_summaries":         false,
++		"base_instructions":                    codexCompatibilityBaseInstructions,
++	}
++}
++
++const codexCompatibilityBaseInstructions = "You are a coding agent. Follow the user's instructions, use the provided tools when needed, preserve existing work, make focused changes, and report verification accurately."
++
++func proxyCodexErrorResponse(c *gin.Context, resp *http.Response) {
++	for key, values := range resp.Header {
++		if strings.EqualFold(key, "Content-Length") || strings.EqualFold(key, "Transfer-Encoding") || strings.EqualFold(key, "Connection") {
++			continue
++		}
++		for _, value := range values {
++			c.Writer.Header().Add(key, value)
++		}
++	}
++	c.Status(resp.StatusCode)
++	_, _ = io.Copy(c.Writer, io.LimitReader(resp.Body, 8<<20))
++}
++
++func codexCompatibilityError(c *gin.Context, status int, err error) {
++	if status < http.StatusBadRequest {
++		status = http.StatusInternalServerError
++	}
++	c.JSON(status, gin.H{
++		"error": gin.H{
++			"type":    "codex_compatibility_error",
++			"message": err.Error(),
++		},
++	})
++}
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+new file mode 100644
+index 00000000..f2815005
+--- /dev/null
++++ b/controller/codex_compat_test.go
+@@ -0,0 +1,243 @@
++package controller
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync/atomic"
++	"testing"
++
++	"github.com/QuantumNous/new-api/constant"
++	"github.com/QuantumNous/new-api/dto"
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/require"
++)
++
++func withCodexCompatibilityTestServer(t *testing.T, handler http.Handler, textModels ...string) string {
++	t.Helper()
++	server := httptest.NewServer(handler)
++	originalBaseURL := codexInternalBaseURL
++	originalPricingProvider := codexTextPricingProvider
++	codexInternalBaseURL = server.URL
++	codexTextPricingProvider = func() map[string]struct{} {
++		models := make(map[string]struct{}, len(textModels))
++		for _, modelName := range textModels {
++			models[modelName] = struct{}{}
++		}
++		return models
++	}
++	t.Cleanup(func() {
++		server.Close()
++		codexInternalBaseURL = originalBaseURL
++		codexTextPricingProvider = originalPricingProvider
++	})
++	return server.URL
++}
++
++func TestCodexListModelsUsesExistingTextPricingAndEndpointMetadata(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var authorization string
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		authorization = r.Header.Get("Authorization")
++		require.Equal(t, "/models", r.URL.Path)
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"object":"list","data":[`+
++			`{"id":"claude-opus-test","object":"model","supported_endpoint_types":["anthropic","openai"]},`+
++			`{"id":"media-task-test","object":"model","supported_endpoint_types":["openai"]},`+
++			`{"id":"embedding-test","object":"model","supported_endpoint_types":["jina-rerank"]}`+
++			`]}`)
++	}), "claude-opus-test", "embedding-test")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodGet, "/codex/v1/models?client_version=1.2.3", nil)
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++
++	CodexListModels(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++	require.Equal(t, "Bearer test-token", authorization)
++	require.Equal(t, "private, no-store", recorder.Header().Get("Cache-Control"))
++	var payload codexModelsResponse
++	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
++	require.Len(t, payload.Models, 1)
++	model := payload.Models[0]
++	require.Equal(t, "claude-opus-test", model["slug"])
++	require.Equal(t, "list", model["visibility"])
++	require.Equal(t, false, model["prefer_websockets"])
++	require.Equal(t, "none", model["default_reasoning_level"])
++	require.NotEmpty(t, model["supported_reasoning_levels"])
++	require.NotEmpty(t, model["model_messages"])
++}
++
++func TestCodexResponsesDelegatesArbitraryModelsThroughExistingChatRoute(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	modelNames := []string{"claude-opus-test", "gemini-flash-test"}
++	var calls atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		require.Equal(t, http.MethodPost, r.Method)
++		require.Equal(t, "/chat/completions", r.URL.Path)
++		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
++		var request dto.GeneralOpenAIRequest
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.Contains(t, modelNames, request.Model)
++		require.False(t, *request.Stream)
++		require.NotEmpty(t, request.Messages)
++
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, fmt.Sprintf(`{"id":"chatcmpl-test","object":"chat.completion","created":1,"model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"converted response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}`, request.Model))
++	}), modelNames...)
++
++	for _, modelName := range modelNames {
++		recorder := httptest.NewRecorder()
++		c, _ := gin.CreateTestContext(recorder)
++		body := fmt.Sprintf(`{"model":%q,"input":"hello","stream":false}`, modelName)
++		c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(body))
++		c.Request.Header.Set("Authorization", "Bearer test-token")
++		c.Request.Header.Set("Content-Type", "application/json")
++
++		CodexResponses(c)
++
++		require.Equal(t, http.StatusOK, recorder.Code)
++		var payload map[string]any
++		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
++		require.Equal(t, "response", payload["object"])
++		require.Equal(t, "completed", payload["status"])
++	}
++	require.Equal(t, int32(len(modelNames)), calls.Load(), "each request must submit exactly one billable inner request")
++}
++
++func TestCodexResponsesPreservesFunctionToolsForChannelAdaptor(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		var request dto.GeneralOpenAIRequest
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.Len(t, request.Tools, 1)
++		require.Equal(t, "function", request.Tools[0].Type)
++		require.Equal(t, "lookup", request.Tools[0].Function.Name)
++
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"id":"chatcmpl-tool","object":"chat.completion","created":1,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}`)
++	}), "gpt-test")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{
++		"model":"gpt-test",
++		"input":"use the tool",
++		"tools":[{"type":"function","name":"lookup","description":"Lookup data","parameters":{"type":"object"}}],
++		"stream":false
++	}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++}
++
++func TestCodexResponsesConvertsChatStreamToResponsesEvents(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	originalStreamingTimeout := constant.StreamingTimeout
++	constant.StreamingTimeout = 30
++	t.Cleanup(func() { constant.StreamingTimeout = originalStreamingTimeout })
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		var request dto.GeneralOpenAIRequest
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.True(t, *request.Stream)
++		require.NotNil(t, request.StreamOptions)
++		require.True(t, request.StreamOptions.IncludeUsage)
++
++		w.Header().Set("Content-Type", "text/event-stream")
++		flusher, ok := w.(http.Flusher)
++		require.True(t, ok)
++		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":null}]}\n\n")
++		flusher.Flush()
++		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}\n\n")
++		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
++		flusher.Flush()
++	}), "gpt-test")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","stream":true}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++	body := recorder.Body.String()
++	require.Contains(t, body, "response.created")
++	require.Contains(t, body, "response.output_text.delta")
++	require.Contains(t, body, "response.completed")
++}
++
++func TestCodexResponsesRejectsFixedPriceModelBeforeInnerRequest(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		w.WriteHeader(http.StatusInternalServerError)
++	}))
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"video-task-test","input":"hello","stream":false}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, int32(0), calls.Load())
++	require.Equal(t, http.StatusBadRequest, recorder.Code)
++	require.Contains(t, recorder.Body.String(), "not a Codex conversation model")
++}
++
++func TestCodexResponsesRejectsStatefulInputBeforeInnerRequest(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		w.WriteHeader(http.StatusInternalServerError)
++	}), "gpt-test")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","previous_response_id":"resp_1","stream":false}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, int32(0), calls.Load())
++	require.Equal(t, http.StatusBadRequest, recorder.Code)
++	require.Contains(t, recorder.Body.String(), "previous_response_id")
++}
++
++func TestCodexResponsesPreservesInnerErrorWithoutCompatibilityRetry(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		w.Header().Set("Content-Type", "application/json")
++		w.WriteHeader(http.StatusBadGateway)
++		_, _ = io.WriteString(w, `{"error":{"message":"upstream unavailable","type":"upstream_error"}}`)
++	}), "gpt-test")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","stream":false}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, int32(1), calls.Load())
++	require.Equal(t, http.StatusBadGateway, recorder.Code)
++	require.JSONEq(t, `{"error":{"message":"upstream unavailable","type":"upstream_error"}}`, recorder.Body.String())
++}
+diff --git a/router/relay-router.go b/router/relay-router.go
+index 412ef4b9..5afbbbd5 100644
+--- a/router/relay-router.go
++++ b/router/relay-router.go
+@@ -16,5 +16,16 @@ func SetRelayRouter(router *gin.Engine) {
+ 	router.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
+ 	router.Use(middleware.StatsMiddleware())
++	// Codex Desktop needs a richer catalog than the standard OpenAI model list.
++	// Requests are normalized once, then delegated to the existing chat route so
++	// channel selection and protocol conversion continue to follow channel type.
++	codexRouter := router.Group("/codex/v1")
++	codexRouter.Use(middleware.RouteTag("codex_compat"))
++	codexRouter.Use(middleware.TokenAuth())
++	{
++		codexRouter.GET("/models", controller.CodexListModels)
++		codexRouter.POST("/responses", controller.CodexResponses)
++	}
++
+ 	// https://platform.openai.com/docs/api-reference/introduction
+ 	modelsRouter := router.Group("/v1/models")
+ 	modelsRouter.Use(middleware.RouteTag("relay"))

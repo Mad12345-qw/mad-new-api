@@ -305,10 +305,10 @@ index 00000000..13351378
 +}
 diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
 new file mode 100644
-index 00000000..bbea7264
+index 00000000..f2815005
 --- /dev/null
 +++ b/controller/codex_compat_test.go
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,243 @@
 +package controller
 +
 +import (
@@ -321,6 +321,7 @@ index 00000000..bbea7264
 +	"sync/atomic"
 +	"testing"
 +
++	"github.com/QuantumNous/new-api/constant"
 +	"github.com/QuantumNous/new-api/dto"
 +	"github.com/gin-gonic/gin"
 +	"github.com/stretchr/testify/require"
@@ -452,6 +453,9 @@ index 00000000..bbea7264
 +
 +func TestCodexResponsesConvertsChatStreamToResponsesEvents(t *testing.T) {
 +	gin.SetMode(gin.TestMode)
++	originalStreamingTimeout := constant.StreamingTimeout
++	constant.StreamingTimeout = 30
++	t.Cleanup(func() { constant.StreamingTimeout = originalStreamingTimeout })
 +	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 +		var request dto.GeneralOpenAIRequest
 +		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))

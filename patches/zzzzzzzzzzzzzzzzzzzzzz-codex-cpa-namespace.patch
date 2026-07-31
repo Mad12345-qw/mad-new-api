@@ -1,5 +1,5 @@
 diff --git a/controller/codex_compat.go b/controller/codex_compat.go
-index 95b19ad..c0cd21e 100644
+index 95b19ad..3efd509 100644
 --- a/controller/codex_compat.go
 +++ b/controller/codex_compat.go
 @@ -1,6 +1,7 @@
@@ -81,7 +81,7 @@ index 95b19ad..c0cd21e 100644
  	if err != nil {
  		codexCompatibilityError(c, http.StatusInternalServerError, err)
  		return
-@@ -164,19 +158,80 @@ func CodexResponses(c *gin.Context) {
+@@ -164,19 +158,84 @@ func CodexResponses(c *gin.Context) {
  		proxyCodexErrorResponse(c, resp)
  		return
  	}
@@ -114,7 +114,11 @@ index 95b19ad..c0cd21e 100644
 +	if _, err = body.Seek(0, io.SeekStart); err != nil {
 +		return nil, err
 +	}
-+	raw, err := io.ReadAll(body)
++	reader, ok := body.(io.Reader)
++	if !ok {
++		return nil, fmt.Errorf("request body is not readable")
++	}
++	raw, err := io.ReadAll(reader)
 +	if _, seekErr := body.Seek(0, io.SeekStart); err == nil && seekErr != nil {
 +		err = seekErr
 +	}

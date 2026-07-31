@@ -495,7 +495,7 @@ index 75c602d..cfb26ea 100644
 +	return string(raw)
  }
 diff --git a/service/relayconvert/internal/oai_responses/to_oai_chat_req.go b/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
-index 7779364..b26f06d 100644
+index 7779364..56cdcbb 100644
 --- a/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
 +++ b/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
 @@ -15,6 +15,7 @@ const (
@@ -515,7 +515,26 @@ index 7779364..b26f06d 100644
  	if err != nil {
  		return nil, err
  	}
-@@ -166,6 +167,8 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
+@@ -49,6 +50,9 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	if len(tools) == 0 {
++		toolChoice = nil
++	}
+ 
+ 	responseFormat, err := responsesRequestTextToChatResponseFormat(req.Text)
+ 	if err != nil {
+@@ -81,7 +85,7 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
+ 	if req.ServiceTier != "" {
+ 		out.ServiceTier, _ = common.Marshal(req.ServiceTier)
+ 	}
+-	if len(req.ParallelToolCalls) > 0 && common.GetJsonType(req.ParallelToolCalls) == "boolean" {
++	if len(tools) > 0 && len(req.ParallelToolCalls) > 0 && common.GetJsonType(req.ParallelToolCalls) == "boolean" {
+ 		var parallelToolCalls bool
+ 		if err := common.Unmarshal(req.ParallelToolCalls, &parallelToolCalls); err == nil {
+ 			out.ParallelTooCalls = &parallelToolCalls
+@@ -166,6 +170,8 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
  func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, error) {
  	itemType := strings.TrimSpace(common.Interface2String(item["type"]))
  	switch itemType {
@@ -524,7 +543,7 @@ index 7779364..b26f06d 100644
  	case responsesInputTypeFunctionCall:
  		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
  		if err != nil {
-@@ -178,7 +181,7 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
+@@ -178,7 +184,7 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
  			return nil, err
  		}
  		return appendToolCallToLastAssistant(messages, toolCall), nil
@@ -533,7 +552,7 @@ index 7779364..b26f06d 100644
  		callID := strings.TrimSpace(common.Interface2String(item["call_id"]))
  		content := responseToolOutputToChatContent(item["output"])
  		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
-@@ -279,6 +282,7 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
+@@ -279,6 +285,7 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
  	if name == "" {
  		return dto.ToolCallRequest{}, errors.New("function_call item is missing name")
  	}
@@ -541,7 +560,7 @@ index 7779364..b26f06d 100644
  	return dto.ToolCallRequest{
  		ID:   responsesCallID(item),
  		Type: "function",
-@@ -290,17 +294,21 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
+@@ -290,17 +297,21 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
  }
  
  func responsesCustomToolCallItemToChatToolCall(item map[string]any) (dto.ToolCallRequest, error) {
@@ -569,7 +588,7 @@ index 7779364..b26f06d 100644
  		},
  	}, nil
  }
-@@ -318,41 +326,164 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
+@@ -318,43 +329,164 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
  	return messages
  }
  
@@ -622,17 +641,24 @@ index 7779364..b26f06d 100644
 +			toolGroups = append(toolGroups, tools)
  		}
 +	}
-+
+ 
+-		rawTool, err := common.Marshal(tool)
+-		if err != nil {
+-			return nil, err
 +	out := make([]dto.ToolCallRequest, 0)
 +	for _, tools := range toolGroups {
 +		for _, tool := range tools {
 +			if err := appendResponsesToolToChat(&out, tool, ""); err != nil {
 +				return nil, err
 +			}
-+		}
-+	}
-+	return out, nil
-+}
+ 		}
+-		out = append(out, dto.ToolCallRequest{
+-			Type:   toolType,
+-			Custom: rawTool,
+-		})
+ 	}
+ 	return out, nil
+ }
  
 +func appendResponsesToolToChat(out *[]dto.ToolCallRequest, tool map[string]any, namespace string) error {
 +	toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
@@ -681,18 +707,10 @@ index 7779364..b26f06d 100644
 +			}
 +		}
 +	default:
- 		rawTool, err := common.Marshal(tool)
- 		if err != nil {
--			return nil, err
-+			return err
- 		}
--		out = append(out, dto.ToolCallRequest{
--			Type:   toolType,
--			Custom: rawTool,
--		})
-+		*out = append(*out, dto.ToolCallRequest{Type: toolType, Custom: rawTool})
- 	}
--	return out, nil
++		// Chat Completions providers only accept function tools. Responses-only
++		// built-ins such as web_search stay client-side and must not be forwarded.
++		return nil
++	}
 +	return nil
 +}
 +
@@ -757,10 +775,12 @@ index 7779364..b26f06d 100644
 +		return namespace + name
 +	}
 +	return namespace + "__" + name
- }
- 
++}
++
  func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
-@@ -373,6 +504,7 @@ func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
+ 	if !rawJSONPresent(raw) {
+ 		return nil, nil
+@@ -373,6 +505,7 @@ func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
  	}
  	if common.Interface2String(choice["type"]) == "function" {
  		name := strings.TrimSpace(common.Interface2String(choice["name"]))
@@ -769,10 +789,10 @@ index 7779364..b26f06d 100644
  			return map[string]any{
  				"type": "function",
 diff --git a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
-index 6924c82..4c76bf4 100644
+index 6924c82..367ed12 100644
 --- a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
 +++ b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
-@@ -55,6 +55,87 @@ func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *t
+@@ -55,6 +55,107 @@ func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *t
  	assert.Equal(t, "abc", gjson.GetBytes(got.Metadata, "trace").String())
  }
  
@@ -780,6 +800,7 @@ index 6924c82..4c76bf4 100644
 +	req := &dto.OpenAIResponsesRequest{
 +		Model: "deepseek-v4-flash",
 +		Tools: mustRawMessage(t, []map[string]any{
++			{"type": "web_search"},
 +			{
 +				"type": "namespace",
 +				"name": "mcp__github",
@@ -816,6 +837,25 @@ index 6924c82..4c76bf4 100644
 +	require.True(t, ok)
 +	assert.Equal(t, "object", customParameters["type"])
 +	assert.Equal(t, []string{"input"}, customParameters["required"])
++}
++
++func TestResponsesRequestToChatCompletionsRequestDropsResponsesOnlyTools(t *testing.T) {
++	parallelToolCalls := true
++	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
++		Model:             "deepseek-v4-flash",
++		Input:             mustRawMessage(t, "search for current information"),
++		Tools:             mustRawMessage(t, []map[string]any{
++			{"type": "web_search"},
++			{"type": "computer"},
++			{"type": "local_shell"},
++		}),
++		ToolChoice:        mustRawMessage(t, "auto"),
++		ParallelToolCalls: mustRawMessage(t, parallelToolCalls),
++	})
++	require.NoError(t, err)
++	assert.Empty(t, got.Tools)
++	assert.Nil(t, got.ToolChoice)
++	assert.Nil(t, got.ParallelTooCalls)
 +}
 +
 +func TestResponsesRequestToChatCompletionsRequestQualifiesNamespaceHistory(t *testing.T) {
@@ -860,7 +900,7 @@ index 6924c82..4c76bf4 100644
  func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
  	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
  		Model: "gpt-test",
-@@ -199,7 +280,7 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t
+@@ -199,7 +300,7 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t
  	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
  }
  
@@ -869,7 +909,7 @@ index 6924c82..4c76bf4 100644
  	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
  		Model: "gpt-test",
  		Input: mustRawMessage(t, []map[string]any{
-@@ -216,12 +297,11 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape
+@@ -216,12 +317,11 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape
  	require.Len(t, got.Messages, 1)
  	toolCalls := got.Messages[0].ParseToolCalls()
  	require.Len(t, toolCalls, 1)

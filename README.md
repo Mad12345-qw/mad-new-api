@@ -13,7 +13,7 @@ This repository applies a small backend patch to the upstream New API source:
 - browser-memory attachment and media cleanup without a server upload directory
 - a versioned media compatibility service that normalizes mainstream OpenAI, New API, Gemini, and Seedance/Volc image and video request shapes into the site's verified canonical routes, while honoring image URL/Base64 responses and asynchronous video task polling
 - isolated media resource controls so large Gemini image responses cannot consume the New API container's memory budget, plus route-level handling that prevents endpoint-fallback clients from submitting the same video through multiple aliases
-- native xAI video task support for channel 40, including mainstream request normalization, 1-15 second validation, 720p/1080p billing, private result proxying, and official task polling
+- native xAI video task support for channel 40, including mainstream request normalization, single-image and up-to-seven-reference-image modes, duration and resolution validation, private result proxying, and official task polling
 
 GitHub Actions applies and verifies every patch, runs backend, frontend, and image compatibility tests, builds the Docker image away from the production server, and publishes stable release artifacts. No production credentials are stored in this repository.
 

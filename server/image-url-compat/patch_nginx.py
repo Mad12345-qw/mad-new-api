@@ -32,6 +32,7 @@ ROUTES = (
     ("/v3/contents/generations/tasks", "video-create-v3"),
     ("/ark/api/v3/contents/generations/tasks", "video-create-ark-v3"),
 )
+DIRECT_NEW_API_ROUTES = {"/v1/videos/generations"}
 VIDEO_STATUS_MARKER = "    # mad-media-compat video-status block\n"
 VIDEO_STATUS_BLOCK = r"""    # mad-media-compat video-status block
     location ~ ^/(?:pg/videos|(?:v1/)?(?:videos/generations|video/generations|contents/generations/tasks)|volc/v1/contents/generations/tasks|api/v3/contents/generations/tasks|v3/contents/generations/tasks|ark/api/v3/contents/generations/tasks|(?:v1/)?tasks)/[^/]+$ {
@@ -62,11 +63,13 @@ DUPLICATE_PREFIX_BLOCK = r"""    # mad-media-compat duplicate-prefix block
 """
 
 
-def route_block(path, label):
+def route_block(path, label, upstream_port=None):
+    if upstream_port is None:
+        upstream_port = 3001 if path in DIRECT_NEW_API_ROUTES else 3010
     return f"""    # image-url-compat {label} block
     location = {path} {{
         client_max_body_size 64m;
-        proxy_pass http://127.0.0.1:3010;
+        proxy_pass http://127.0.0.1:{upstream_port};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -88,18 +91,30 @@ PLAYGROUND_BLOCK = route_block(*ROUTES[0])
 def patched_config(content):
     if INSERT_BEFORE not in content:
         raise RuntimeError("image compatibility marker not found")
-    missing = [
-        route_block(path, label)
-        for path, label in ROUTES
-        if f"location = {path}" not in content
-    ]
-    if VIDEO_STATUS_MARKER not in content:
+    updated = content
+    changed = False
+    missing = []
+    for path, label in ROUTES:
+        expected = route_block(path, label)
+        if expected in updated:
+            continue
+        legacy = route_block(path, label, upstream_port=3010)
+        if path in DIRECT_NEW_API_ROUTES and legacy in updated:
+            updated = updated.replace(legacy, expected, 1)
+            changed = True
+            continue
+        if f"location = {path}" not in updated:
+            missing.append(expected)
+    if VIDEO_STATUS_MARKER not in updated:
         missing.append(VIDEO_STATUS_BLOCK)
-    if DUPLICATE_PREFIX_MARKER not in content:
+    if DUPLICATE_PREFIX_MARKER not in updated:
         missing.append(DUPLICATE_PREFIX_BLOCK)
-    if not missing:
-        return content, False
-    return content.replace(INSERT_BEFORE, "".join(missing) + INSERT_BEFORE, 1), True
+    if missing:
+        updated = updated.replace(
+            INSERT_BEFORE, "".join(missing) + INSERT_BEFORE, 1
+        )
+        changed = True
+    return updated, changed
 
 
 def write_atomic(path, content):

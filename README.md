@@ -15,7 +15,7 @@ This repository applies a small backend patch to the upstream New API source:
 - isolated media resource controls so large Gemini image responses cannot consume the New API container's memory budget, plus route-level handling that prevents endpoint-fallback clients from submitting the same video through multiple aliases
 - native xAI video task support for channel 40, including mainstream request normalization, single-image and up-to-seven-reference-image modes, duration and resolution validation, private result proxying, and official task polling
 - an isolated Codex Desktop compatibility surface at `/codex/v1`: its catalog is synthesized from each token's current conversation-model access, while Responses requests are normalized once and delegated to New API's existing channel selection, mapping, retry, billing, and channel-type adaptors
-- CPA-compatible Codex namespace tools: top-level and `additional_tools` namespaces are flattened for upstream chat providers, historical calls remain adjacent to outputs, and streaming/non-streaming responses restore the original namespace contract
+- the MIT-licensed CPA Responses-to-Chat translator is vendored intact behind `/codex/v1`, including its original request/response regression suite; only thin New API authentication, routing, and billing adapters surround it
 
 GitHub Actions applies and verifies every patch, runs backend, frontend, and image compatibility tests, builds the Docker image away from the production server, and publishes stable release artifacts. No production credentials are stored in this repository.
 

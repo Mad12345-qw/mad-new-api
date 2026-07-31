@@ -68,7 +68,6 @@ jobs:
           files=(
             controller/codex_compat.go
             controller/codex_compat_test.go
-            dto/openai_response.go
             controller/playground.go
             middleware/distributor.go
             middleware/playground_path.go
@@ -84,13 +83,14 @@ jobs:
             router/relay-router.go
             service/quota.go
             service/quota_audio_test.go
-            service/relayconvert/internal/oai_chat/responses_namespace.go
-            service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
-            service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
-            service/relayconvert/internal/oai_responses/to_oai_chat_req.go
-            service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
-            service/relayconvert/response_compat.go
-            service/relayconvert/response_registry.go
+            service/relayconvert/cpa_responses_compat.go
+            service/relayconvert/request_compat.go
+            service/relayconvert/internal/cpa_common/bytes.go
+            service/relayconvert/internal/cpa_responses/request.go
+            service/relayconvert/internal/cpa_responses/request_test.go
+            service/relayconvert/internal/cpa_responses/response.go
+            service/relayconvert/internal/cpa_responses/response_test.go
+            service/relayconvert/internal/cpa_responses/tools.go
           )
           unformatted=$(gofmt -l "${files[@]}")
           if [ -n "$unformatted" ]; then
@@ -101,7 +101,7 @@ jobs:
 
       - name: Test backend paths
         working-directory: source
-        run: go test ./controller ./middleware ./relay/common ./relay/channel/task/xai ./relay ./router ./service ./service/relayconvert ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
+        run: go test ./controller ./middleware ./relay/common ./relay/channel/task/xai ./relay ./router ./service ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses
 
       - name: Verify playground frontend
         working-directory: source/web/default

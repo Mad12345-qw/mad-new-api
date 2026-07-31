@@ -1,1005 +1,3477 @@
 diff --git a/controller/codex_compat.go b/controller/codex_compat.go
-index 95b19ad..626bc78 100644
+index 95b19ad..c0cd21e 100644
 --- a/controller/codex_compat.go
 +++ b/controller/codex_compat.go
-@@ -122,6 +122,7 @@ func CodexResponses(c *gin.Context) {
- 	convertInfo := &relaycommon.RelayInfo{
- 		RelayFormat:     types.RelayFormatOpenAIResponses,
- 		OriginModelName: responsesReq.Model,
-+		Request:         responsesReq,
- 		ChannelMeta: &relaycommon.ChannelMeta{
- 			UpstreamModelName: responsesReq.Model,
- 		},
-diff --git a/dto/openai_response.go b/dto/openai_response.go
-index 2de6014..1df0579 100644
---- a/dto/openai_response.go
-+++ b/dto/openai_response.go
-@@ -370,7 +370,9 @@ type ResponsesOutput struct {
- 	Size      string                   `json:"size"`
- 	CallId    string                   `json:"call_id,omitempty"`
- 	Name      string                   `json:"name,omitempty"`
-+	Namespace string                   `json:"namespace,omitempty"`
- 	Arguments json.RawMessage          `json:"arguments,omitempty"`
-+	Input     json.RawMessage          `json:"input,omitempty"`
- }
+@@ -1,6 +1,7 @@
+ package controller
  
- // ArgumentsString returns function call arguments in the string form expected by Chat Completions.
-@@ -416,6 +418,7 @@ type ResponsesStreamResponse struct {
- 	Type     string                   `json:"type"`
- 	Response *OpenAIResponsesResponse `json:"response,omitempty"`
- 	Delta    string                   `json:"delta,omitempty"`
-+	Input    string                   `json:"input,omitempty"`
- 	Item     *ResponsesOutput         `json:"item,omitempty"`
- 	// - response.function_call_arguments.delta
- 	// - response.function_call_arguments.done
-diff --git a/service/relayconvert/internal/oai_chat/responses_namespace.go b/service/relayconvert/internal/oai_chat/responses_namespace.go
-new file mode 100644
-index 0000000..9e08f59
---- /dev/null
-+++ b/service/relayconvert/internal/oai_chat/responses_namespace.go
-@@ -0,0 +1,165 @@
-+package oaichat
+ import (
++	"bufio"
+ 	"bytes"
+ 	"encoding/json"
+ 	"fmt"
+@@ -14,11 +15,8 @@ import (
+ 	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/dto"
+ 	"github.com/QuantumNous/new-api/model"
+-	"github.com/QuantumNous/new-api/relay/channel/openai"
+-	relaycommon "github.com/QuantumNous/new-api/relay/common"
+ 	"github.com/QuantumNous/new-api/relay/helper"
+ 	"github.com/QuantumNous/new-api/service/relayconvert"
+-	"github.com/QuantumNous/new-api/types"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/samber/lo"
+ )
+@@ -106,6 +104,11 @@ func CodexResponses(c *gin.Context) {
+ 		return
+ 	}
+ 
++	originalBody, err := readCodexRequestBody(c)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadRequest, err)
++		return
++	}
+ 	responsesReq, err := helper.GetAndValidateResponsesRequest(c)
+ 	if err != nil {
+ 		codexCompatibilityError(c, http.StatusBadRequest, err)
+@@ -115,34 +118,25 @@ func CodexResponses(c *gin.Context) {
+ 		codexCompatibilityError(c, http.StatusBadRequest, fmt.Errorf("model %q is not a Codex conversation model", responsesReq.Model))
+ 		return
+ 	}
+-
+-	// The model name is only the routing key. The internal chat route selects a
+-	// channel using existing abilities/weights and then converts by channel API
+-	// type (OpenAI, Anthropic, Gemini, DeepSeek, and other existing adaptors).
+-	convertInfo := &relaycommon.RelayInfo{
+-		RelayFormat:     types.RelayFormatOpenAIResponses,
+-		OriginModelName: responsesReq.Model,
+-		ChannelMeta: &relaycommon.ChannelMeta{
+-			UpstreamModelName: responsesReq.Model,
+-		},
+-	}
+-	converted, err := relayconvert.ConvertRequest(c, convertInfo, types.RelayFormatOpenAI, responsesReq)
+-	if err != nil {
+-		codexCompatibilityError(c, http.StatusBadRequest, fmt.Errorf("Responses request conversion failed: %w", err))
++	if err = relayconvert.ValidateResponsesRequestForChat(responsesReq); err != nil {
++		codexCompatibilityError(c, http.StatusBadRequest, err)
+ 		return
+ 	}
+-	chatReq, ok := converted.Value.(*dto.GeneralOpenAIRequest)
+-	if !ok {
+-		codexCompatibilityError(c, http.StatusInternalServerError, fmt.Errorf("unexpected converted request type %T", converted.Value))
 +
-+import (
-+	"encoding/json"
-+	"strings"
-+
-+	"github.com/QuantumNous/new-api/common"
-+	"github.com/QuantumNous/new-api/dto"
-+)
-+
-+type responsesToolDescriptor struct {
-+	Name      string
-+	Namespace string
-+	Custom    bool
++	stream := lo.FromPtrOr(responsesReq.Stream, false)
++	convertedBody := relayconvert.ConvertCPAResponsesRequestToChat(responsesReq.Model, originalBody, stream)
++	var chatReq dto.GeneralOpenAIRequest
++	if err = common.Unmarshal(convertedBody, &chatReq); err != nil {
++		codexCompatibilityError(c, http.StatusInternalServerError, fmt.Errorf("CPA request conversion failed: %w", err))
+ 		return
+ 	}
+-	normalizeCodexDeveloperMessages(chatReq)
+-	normalizeCodexGLMToolChoice(chatReq)
+-	if lo.FromPtrOr(chatReq.Stream, false) {
++	normalizeCodexDeveloperMessages(&chatReq)
++	normalizeCodexGLMToolChoice(&chatReq)
++	if stream {
+ 		chatReq.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
+ 	}
+ 
+-	body, err := common.Marshal(chatReq)
++	body, err := common.Marshal(&chatReq)
+ 	if err != nil {
+ 		codexCompatibilityError(c, http.StatusInternalServerError, err)
+ 		return
+@@ -164,19 +158,80 @@ func CodexResponses(c *gin.Context) {
+ 		proxyCodexErrorResponse(c, resp)
+ 		return
+ 	}
++	defer resp.Body.Close()
+ 
+-	convertInfo.IsStream = lo.FromPtrOr(chatReq.Stream, false) || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
+-	if convertInfo.IsStream {
+-		_, apiErr := openai.OaiChatToResponsesStreamHandler(c, convertInfo, resp)
+-		if apiErr != nil {
+-			codexCompatibilityError(c, apiErr.StatusCode, apiErr)
++	if stream || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
++		if err = streamCodexCPAResponse(c, resp, responsesReq.Model, originalBody, body); err != nil && !c.Writer.Written() {
++			codexCompatibilityError(c, http.StatusBadGateway, err)
+ 		}
+ 		return
+ 	}
+-	_, apiErr := openai.OaiChatToResponsesHandler(c, convertInfo, resp)
+-	if apiErr != nil {
+-		codexCompatibilityError(c, apiErr.StatusCode, apiErr)
++	if err = writeCodexCPANonStreamResponse(c, resp, responsesReq.Model, originalBody, body); err != nil {
++		codexCompatibilityError(c, http.StatusBadGateway, err)
++	}
 +}
 +
-+func responsesToolDescriptors(req *dto.OpenAIResponsesRequest) map[string]responsesToolDescriptor {
-+	descriptors := make(map[string]responsesToolDescriptor)
-+	if req == nil {
-+		return descriptors
++func readCodexRequestBody(c *gin.Context) ([]byte, error) {
++	body, err := common.GetRequestBody(c)
++	if err != nil {
++		return nil, err
++	}
++	if _, err = body.Seek(0, io.SeekStart); err != nil {
++		return nil, err
++	}
++	raw, err := io.ReadAll(body)
++	if _, seekErr := body.Seek(0, io.SeekStart); err == nil && seekErr != nil {
++		err = seekErr
++	}
++	return raw, err
++}
++
++func writeCodexCPANonStreamResponse(c *gin.Context, resp *http.Response, modelName string, originalRequest, convertedRequest []byte) error {
++	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
++	if err != nil {
++		return err
++	}
++	converted := relayconvert.ConvertCPAChatResponseToResponsesNonStream(c.Request.Context(), modelName, originalRequest, convertedRequest, body)
++	if !json.Valid(converted) {
++		return fmt.Errorf("CPA returned invalid non-stream JSON")
++	}
++	c.Header("Content-Type", "application/json")
++	c.Status(http.StatusOK)
++	_, err = c.Writer.Write(converted)
++	return err
++}
++
++func streamCodexCPAResponse(c *gin.Context, resp *http.Response, modelName string, originalRequest, convertedRequest []byte) error {
++	c.Header("Content-Type", "text/event-stream")
++	c.Header("Cache-Control", "no-cache")
++	c.Header("Connection", "keep-alive")
++	c.Status(http.StatusOK)
++
++	scanner := bufio.NewScanner(resp.Body)
++	scanner.Buffer(make([]byte, 64<<10), 16<<20)
++	var state any
++	for scanner.Scan() {
++		line := bytes.TrimSpace(scanner.Bytes())
++		if len(line) == 0 || bytes.HasPrefix(line, []byte("event:")) {
++			continue
++		}
++		if !bytes.HasPrefix(line, []byte("data:")) {
++			continue
++		}
++		chunks := relayconvert.ConvertCPAChatResponseToResponsesStream(
++			c.Request.Context(), modelName, originalRequest, convertedRequest, append([]byte(nil), line...), &state,
++		)
++		for _, chunk := range chunks {
++			if _, err := c.Writer.Write(append(chunk, '\n', '\n')); err != nil {
++				return err
++			}
++			c.Writer.Flush()
++		}
++	}
++	if err := scanner.Err(); err != nil {
++		return err
+ 	}
++	return nil
+ }
+ 
+ func normalizeCodexDeveloperMessages(request *dto.GeneralOpenAIRequest) {
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index 9fa9454..59ac37f 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -144,6 +144,60 @@ func TestCodexResponsesPreservesFunctionToolsForChannelAdaptor(t *testing.T) {
+ 	require.Equal(t, http.StatusOK, recorder.Code)
+ }
+ 
++func TestCodexResponsesUsesCPAForResponsesOnlyAndNamespaceTools(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	parallelToolCalls := true
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		var request dto.GeneralOpenAIRequest
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.Len(t, request.Tools, 2)
++		for _, tool := range request.Tools {
++			require.Equal(t, "function", tool.Type)
++		}
++		require.Equal(t, "mcp__github__get_me", request.Tools[0].Function.Name)
++		require.Equal(t, "terminal__exec", request.Tools[1].Function.Name)
++		require.NotNil(t, request.ParallelTooCalls)
++		require.Equal(t, parallelToolCalls, *request.ParallelTooCalls)
++
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"id":"chatcmpl-tool","object":"chat.completion","created":1,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_get_me","type":"function","function":{"name":"mcp__github__get_me","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}`)
++	}), "gpt-test")
++
++	body := `{
++		"model":"gpt-test",
++		"input":[
++			{"role":"user","content":"use get_me"},
++			{"type":"additional_tools","tools":[{"type":"namespace","name":"terminal","tools":[{"type":"custom","name":"exec"}]}]}
++		],
++		"tools":[
++			{"type":"web_search"},
++			{"type":"namespace","name":"mcp__github","tools":[{"type":"function","name":"get_me","parameters":{"type":"object"}}]}
++		],
++		"tool_choice":"auto",
++		"parallel_tool_calls":true,
++		"stream":false
++	}`
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(body))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++	var response struct {
++		Output []struct {
++			Name      string `json:"name"`
++			Namespace string `json:"namespace"`
++		} `json:"output"`
++	}
++	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
++	require.Len(t, response.Output, 1)
++	require.Equal(t, "get_me", response.Output[0].Name)
++	require.Equal(t, "mcp__github", response.Output[0].Namespace)
++}
++
+ func TestNormalizeCodexGLMToolChoiceForNonStreamingRequests(t *testing.T) {
+ 	streamFalse := false
+ 	tools := []dto.ToolCallRequest{{Type: "function"}}
+diff --git a/service/relayconvert/cpa_responses_compat.go b/service/relayconvert/cpa_responses_compat.go
+new file mode 100644
+index 0000000..1ac98c9
+--- /dev/null
++++ b/service/relayconvert/cpa_responses_compat.go
+@@ -0,0 +1,23 @@
++package relayconvert
++
++import (
++	"context"
++
++	cparesponses "github.com/QuantumNous/new-api/service/relayconvert/internal/cpa_responses"
++)
++
++func ConvertCPAResponsesRequestToChat(modelName string, rawJSON []byte, stream bool) []byte {
++	return cparesponses.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName, rawJSON, stream)
++}
++
++func ConvertCPAChatResponseToResponsesNonStream(ctx context.Context, modelName string, originalRequest, convertedRequest, response []byte) []byte {
++	return cparesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(
++		ctx, modelName, originalRequest, convertedRequest, response, nil,
++	)
++}
++
++func ConvertCPAChatResponseToResponsesStream(ctx context.Context, modelName string, originalRequest, convertedRequest, response []byte, state *any) [][]byte {
++	return cparesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponses(
++		ctx, modelName, originalRequest, convertedRequest, response, state,
++	)
++}
+diff --git a/service/relayconvert/internal/cpa_common/bytes.go b/service/relayconvert/internal/cpa_common/bytes.go
+new file mode 100644
+index 0000000..7a1de92
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_common/bytes.go
+@@ -0,0 +1,108 @@
++package cpacommon
++
++import (
++	"strconv"
++
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++func GeminiTokenCountJSON(count int64) []byte {
++	out := make([]byte, 0, 96)
++	out = append(out, `{"totalTokens":`...)
++	out = strconv.AppendInt(out, count, 10)
++	out = append(out, `,"promptTokensDetails":[{"modality":"TEXT","tokenCount":`...)
++	out = strconv.AppendInt(out, count, 10)
++	out = append(out, `}]}`...)
++	return out
++}
++
++func ClaudeInputTokensJSON(count int64) []byte {
++	out := make([]byte, 0, 32)
++	out = append(out, `{"input_tokens":`...)
++	out = strconv.AppendInt(out, count, 10)
++	out = append(out, '}')
++	return out
++}
++
++// NewRawArrayItems creates a raw item slice sized for the expected input.
++func NewRawArrayItems(capacity int64) [][]byte {
++	if capacity <= 0 {
++		return nil
++	}
++	return make([][]byte, 0, int(capacity))
++}
++
++func JoinRawArray(items [][]byte) []byte {
++	if len(items) == 0 {
++		return []byte("[]")
++	}
++	size := len(items) + 1
++	for _, item := range items {
++		size += len(item)
++	}
++	out := make([]byte, 0, size)
++	out = append(out, '[')
++	for i, item := range items {
++		if i > 0 {
++			out = append(out, ',')
++		}
++		out = append(out, item...)
++	}
++	return append(out, ']')
++}
++
++// SetRawArrayItems replaces an empty JSON array at path with raw items.
++// The single-item path avoids allocating an intermediate joined array.
++func SetRawArrayItems(data []byte, path string, items [][]byte) []byte {
++	if len(items) == 0 {
++		return data
++	}
++	if len(items) == 1 {
++		array := gjson.GetBytes(data, path)
++		if array.Raw == "[]" && array.Index >= 0 && array.Index+len(array.Raw) <= len(data) {
++			out := make([]byte, 0, len(data)+len(items[0]))
++			out = append(out, data[:array.Index]...)
++			out = append(out, '[')
++			out = append(out, items[0]...)
++			out = append(out, ']')
++			return append(out, data[array.Index+len(array.Raw):]...)
++		}
++	}
++	data, _ = sjson.SetRawBytes(data, path, JoinRawArray(items))
++	return data
++}
++
++func SSEEventData(event string, payload []byte) []byte {
++	out := make([]byte, 0, len(event)+len(payload)+14)
++	out = append(out, "event: "...)
++	out = append(out, event...)
++	out = append(out, '\n')
++	out = append(out, "data: "...)
++	out = append(out, payload...)
++	return out
++}
++
++func AppendSSEEventString(out []byte, event, payload string, trailingNewlines int) []byte {
++	out = append(out, "event: "...)
++	out = append(out, event...)
++	out = append(out, '\n')
++	out = append(out, "data: "...)
++	out = append(out, payload...)
++	for i := 0; i < trailingNewlines; i++ {
++		out = append(out, '\n')
++	}
++	return out
++}
++
++func AppendSSEEventBytes(out []byte, event string, payload []byte, trailingNewlines int) []byte {
++	out = append(out, "event: "...)
++	out = append(out, event...)
++	out = append(out, '\n')
++	out = append(out, "data: "...)
++	out = append(out, payload...)
++	for i := 0; i < trailingNewlines; i++ {
++		out = append(out, '\n')
++	}
++	return out
++}
+diff --git a/service/relayconvert/internal/cpa_responses/LICENSE.CLIProxyAPI b/service/relayconvert/internal/cpa_responses/LICENSE.CLIProxyAPI
+new file mode 100644
+index 0000000..e3305a1
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/LICENSE.CLIProxyAPI
+@@ -0,0 +1,22 @@
++MIT License
++
++Copyright (c) 2025-2005.9 Luis Pater
++Copyright (c) 2025.9-present Router-For.ME
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+\ No newline at end of file
+diff --git a/service/relayconvert/internal/cpa_responses/request.go b/service/relayconvert/internal/cpa_responses/request.go
+new file mode 100644
+index 0000000..150dd5d
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/request.go
+@@ -0,0 +1,362 @@
++package cparesponses
++
++import (
++	"strings"
++
++	translatorcommon "github.com/QuantumNous/new-api/service/relayconvert/internal/cpa_common"
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++// ConvertOpenAIResponsesRequestToOpenAIChatCompletions converts OpenAI responses format to OpenAI chat completions format.
++// It transforms the OpenAI responses API format (with instructions and input array) into the standard
++// OpenAI chat completions format (with messages array and system content).
++//
++// The conversion handles:
++// 1. Model name and streaming configuration
++// 2. Instructions to system message conversion
++// 3. Input array to messages array transformation
++// 4. Tool definitions and tool choice conversion
++// 5. Function calls and function results handling
++// 6. Generation parameters mapping (max_tokens, reasoning, etc.)
++//
++// Parameters:
++//   - modelName: The name of the model to use for the request
++//   - rawJSON: The raw JSON request data in OpenAI responses format
++//   - stream: A boolean indicating if the request is for a streaming response
++//
++// Returns:
++//   - []byte: The transformed request data in OpenAI chat completions format
++func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inputRawJSON []byte, stream bool) []byte {
++	rawJSON := inputRawJSON
++	// Base OpenAI chat completions template with default values
++	out := []byte(`{"model":"","messages":[],"stream":false}`)
++
++	root := gjson.ParseBytes(rawJSON)
++
++	messages := make([][]byte, 0)
++	appendMessage := func(message []byte) {
++		messages = append(messages, message)
 +	}
 +
-+	collect := func(value any) {
-+		tools, err := responsesNamespaceToolsFromValue(value)
-+		if err != nil {
++	// Set model name
++	out, _ = sjson.SetBytes(out, "model", modelName)
++
++	// Set stream configuration
++	out, _ = sjson.SetBytes(out, "stream", stream)
++
++	// Map generation parameters from responses format to chat completions format
++	if maxTokens := root.Get("max_output_tokens"); maxTokens.Exists() {
++		out, _ = sjson.SetBytes(out, "max_tokens", maxTokens.Int())
++	}
++
++	// Convert instructions to system message
++	if instructions := root.Get("instructions"); instructions.Exists() {
++		systemMessage := []byte(`{"role":"system","content":""}`)
++		systemMessage, _ = sjson.SetBytes(systemMessage, "content", instructions.String())
++		appendMessage(systemMessage)
++	}
++
++	// Convert input array to messages
++	if input := root.Get("input"); input.Exists() && input.IsArray() {
++		inputItems := input.Array()
++		outputCallIDs := make(map[string]struct{})
++		for _, item := range inputItems {
++			itemType := item.Get("type").String()
++			if itemType != "function_call_output" && itemType != "custom_tool_call_output" {
++				continue
++			}
++			callID := strings.TrimSpace(item.Get("call_id").String())
++			if callID == "" {
++				continue
++			}
++			outputCallIDs[callID] = struct{}{}
++		}
++
++		pendingToolCalls := make([]interface{}, 0)
++		pendingToolCallIDs := make([]string, 0)
++		pendingReasoningContent := ""
++		awaitingToolOutputs := make(map[string]struct{})
++		deferredMessages := make([][]byte, 0)
++
++		takePendingReasoningContent := func() string {
++			reasoningContent := pendingReasoningContent
++			pendingReasoningContent = ""
++			return reasoningContent
++		}
++		flushPendingToolCalls := func() {
++			if len(pendingToolCalls) == 0 {
++				return
++			}
++			assistantMessage := []byte(`{"role":"assistant","tool_calls":[]}`)
++			assistantMessage, _ = sjson.SetBytes(assistantMessage, "tool_calls", pendingToolCalls)
++			if reasoningContent := takePendingReasoningContent(); reasoningContent != "" {
++				assistantMessage, _ = sjson.SetBytes(assistantMessage, "reasoning_content", reasoningContent)
++			}
++			appendMessage(assistantMessage)
++			for _, id := range pendingToolCallIDs {
++				if strings.TrimSpace(id) == "" {
++					continue
++				}
++				awaitingToolOutputs[id] = struct{}{}
++			}
++			pendingToolCalls = pendingToolCalls[:0]
++			pendingToolCallIDs = pendingToolCallIDs[:0]
++		}
++		flushDeferredMessages := func() {
++			for _, message := range deferredMessages {
++				appendMessage(message)
++			}
++			deferredMessages = deferredMessages[:0]
++		}
++		hasAwaitingToolOutput := func() bool {
++			for id := range awaitingToolOutputs {
++				if _, ok := outputCallIDs[id]; ok {
++					return true
++				}
++			}
++			return false
++		}
++		appendRegularMessage := func(message []byte) {
++			// Keep tool-call adjacency strict for providers that require
++			// assistant(tool_calls) -> tool(tool_call_id) with no message in between.
++			if hasAwaitingToolOutput() {
++				deferredMessages = append(deferredMessages, message)
++				return
++			}
++			appendMessage(message)
++		}
++		appendPendingReasoningMessage := func() {
++			reasoningContent := takePendingReasoningContent()
++			if reasoningContent == "" {
++				return
++			}
++			message := []byte(`{"role":"assistant","content":"","reasoning_content":""}`)
++			message, _ = sjson.SetBytes(message, "reasoning_content", reasoningContent)
++			appendRegularMessage(message)
++		}
++
++		for _, item := range inputItems {
++			itemType := item.Get("type").String()
++			if itemType == "" && item.Get("role").String() != "" {
++				itemType = "message"
++			}
++			if itemType != "function_call" && itemType != "custom_tool_call" {
++				flushPendingToolCalls()
++			}
++
++			switch itemType {
++			case "message", "":
++				// Handle regular message conversion
++				role := item.Get("role").String()
++				if role == "developer" {
++					role = "user"
++				}
++				if role != "assistant" {
++					appendPendingReasoningMessage()
++				}
++				message := []byte(`{"role":"","content":[]}`)
++				message, _ = sjson.SetBytes(message, "role", role)
++
++				if content := item.Get("content"); content.Exists() && content.IsArray() {
++					var contentItems [][]byte
++					content.ForEach(func(_, contentItem gjson.Result) bool {
++						contentType := contentItem.Get("type").String()
++						if contentType == "" {
++							contentType = "input_text"
++						}
++
++						switch contentType {
++						case "input_text", "output_text":
++							text := contentItem.Get("text").String()
++							contentPart := []byte(`{"type":"text","text":""}`)
++							contentPart, _ = sjson.SetBytes(contentPart, "text", text)
++							contentItems = append(contentItems, contentPart)
++						case "input_image":
++							imageURL := contentItem.Get("image_url").String()
++							contentPart := []byte(`{"type":"image_url","image_url":{"url":""}}`)
++							contentPart, _ = sjson.SetBytes(contentPart, "image_url.url", imageURL)
++							if detail := contentItem.Get("detail"); detail.Exists() {
++								contentPart, _ = sjson.SetBytes(contentPart, "image_url.detail", detail.String())
++							}
++							contentItems = append(contentItems, contentPart)
++						}
++						return true
++					})
++					message = translatorcommon.SetRawArrayItems(message, "content", contentItems)
++				} else if content.Type == gjson.String {
++					message, _ = sjson.SetBytes(message, "content", content.String())
++				}
++
++				if role == "assistant" {
++					reasoningContent := item.Get("reasoning_content").String()
++					if reasoningContent == "" {
++						reasoningContent = takePendingReasoningContent()
++					} else {
++						pendingReasoningContent = ""
++					}
++					if reasoningContent != "" {
++						message, _ = sjson.SetBytes(message, "reasoning_content", reasoningContent)
++					}
++				}
++
++				appendRegularMessage(message)
++
++			case "reasoning":
++				reasoningContent := collectOpenAIResponsesReasoningContent(item)
++				if pendingReasoningContent == "" {
++					pendingReasoningContent = reasoningContent
++				} else {
++					pendingReasoningContent += reasoningContent
++				}
++
++			case "function_call":
++				// Buffer consecutive function calls and emit them as one assistant message.
++				toolCall := []byte(`{"id":"","type":"function","function":{"name":"","arguments":""}}`)
++
++				if callId := item.Get("call_id"); callId.Exists() {
++					toolCall, _ = sjson.SetBytes(toolCall, "id", callId.String())
++				}
++
++				if name := item.Get("name"); name.Exists() {
++					functionName := name.String()
++					if namespace := strings.TrimSpace(item.Get("namespace").String()); namespace != "" {
++						functionName = qualifyResponsesNamespaceToolName(namespace, functionName)
++					}
++					toolCall, _ = sjson.SetBytes(toolCall, "function.name", functionName)
++				}
++
++				if arguments := item.Get("arguments"); arguments.Exists() {
++					toolCall, _ = sjson.SetBytes(toolCall, "function.arguments", arguments.String())
++				}
++				pendingToolCalls = append(pendingToolCalls, gjson.ParseBytes(toolCall).Value())
++				if callID := strings.TrimSpace(item.Get("call_id").String()); callID != "" {
++					pendingToolCallIDs = append(pendingToolCallIDs, callID)
++				}
++
++			case "function_call_output":
++				// Handle function call output conversion to tool message
++				toolMessage := []byte(`{"role":"tool","tool_call_id":"","content":""}`)
++				callID := ""
++
++				if callId := item.Get("call_id"); callId.Exists() {
++					callID = strings.TrimSpace(callId.String())
++					toolMessage, _ = sjson.SetBytes(toolMessage, "tool_call_id", callID)
++				}
++
++				if output := item.Get("output"); output.Exists() {
++					toolMessage, _ = sjson.SetBytes(toolMessage, "content", output.String())
++				}
++
++				appendMessage(toolMessage)
++				if callID != "" {
++					delete(awaitingToolOutputs, callID)
++				}
++				if len(awaitingToolOutputs) == 0 && len(deferredMessages) > 0 {
++					flushDeferredMessages()
++				}
++
++			case "custom_tool_call":
++				// Codex freeform tool call replay: wrap the raw input so it
++				// matches the {"input": string} function shape used when
++				// converting custom tool definitions.
++				toolCall := []byte(`{"id":"","type":"function","function":{"name":"","arguments":""}}`)
++				toolCall, _ = sjson.SetBytes(toolCall, "id", item.Get("call_id").String())
++				toolCall, _ = sjson.SetBytes(toolCall, "function.name", item.Get("name").String())
++				wrappedArgs, _ := sjson.SetBytes([]byte(`{"input":""}`), "input", item.Get("input").String())
++				toolCall, _ = sjson.SetBytes(toolCall, "function.arguments", string(wrappedArgs))
++				pendingToolCalls = append(pendingToolCalls, gjson.ParseBytes(toolCall).Value())
++				if callID := strings.TrimSpace(item.Get("call_id").String()); callID != "" {
++					pendingToolCallIDs = append(pendingToolCallIDs, callID)
++				}
++
++			case "custom_tool_call_output":
++				toolMessage := []byte(`{"role":"tool","tool_call_id":"","content":""}`)
++				callID := strings.TrimSpace(item.Get("call_id").String())
++				toolMessage, _ = sjson.SetBytes(toolMessage, "tool_call_id", callID)
++				toolMessage, _ = sjson.SetBytes(toolMessage, "content", responsesToolOutputText(item.Get("output")))
++				appendMessage(toolMessage)
++				if callID != "" {
++					delete(awaitingToolOutputs, callID)
++				}
++				if len(awaitingToolOutputs) == 0 && len(deferredMessages) > 0 {
++					flushDeferredMessages()
++				}
++			}
++
++		}
++		flushPendingToolCalls()
++		appendPendingReasoningMessage()
++		flushDeferredMessages()
++	} else if input.Type == gjson.String {
++		msg := []byte(`{}`)
++		msg, _ = sjson.SetBytes(msg, "role", "user")
++		msg, _ = sjson.SetBytes(msg, "content", input.String())
++		appendMessage(msg)
++	}
++
++	if len(messages) > 0 {
++		out, _ = sjson.SetRawBytes(out, "messages", translatorcommon.JoinRawArray(messages))
++	}
++
++	// Convert tools from responses format to chat completions format.
++	// Codex Desktop (Responses Lite) delivers tool definitions through an
++	// "additional_tools" input item instead of the top-level "tools" field,
++	// so merge both sources.
++	var chatCompletionsTools []interface{}
++	appendChatTools := func(tools gjson.Result) {
++		if !tools.Exists() || !tools.IsArray() {
 +			return
 +		}
-+		for _, tool := range tools {
-+			collectResponsesToolDescriptor(descriptors, tool, "")
++		tools.ForEach(func(_, tool gjson.Result) bool {
++			for _, chatTool := range convertResponsesToolToOpenAIChatTools(tool) {
++				chatCompletionsTools = append(chatCompletionsTools, gjson.ParseBytes(chatTool).Value())
++			}
++			return true
++		})
++	}
++	appendChatTools(root.Get("tools"))
++	if input := root.Get("input"); input.Exists() && input.IsArray() {
++		input.ForEach(func(_, item gjson.Result) bool {
++			if item.Get("type").String() == "additional_tools" {
++				appendChatTools(item.Get("tools"))
++			}
++			return true
++		})
++	}
++	if len(chatCompletionsTools) > 0 {
++		out, _ = sjson.SetBytes(out, "tools", chatCompletionsTools)
++		if parallelToolCalls := root.Get("parallel_tool_calls"); parallelToolCalls.Exists() {
++			out, _ = sjson.SetBytes(out, "parallel_tool_calls", parallelToolCalls.Bool())
++		}
++		if toolChoice := root.Get("tool_choice"); toolChoice.Exists() {
++			out, _ = sjson.SetRawBytes(out, "tool_choice", []byte(toolChoice.Raw))
 +		}
 +	}
 +
-+	if len(req.Tools) > 0 {
-+		collect(json.RawMessage(req.Tools))
++	if reasoningEffort := root.Get("reasoning.effort"); reasoningEffort.Exists() {
++		effort := strings.ToLower(strings.TrimSpace(reasoningEffort.String()))
++		if effort != "" {
++			out, _ = sjson.SetBytes(out, "reasoning_effort", effort)
++		}
 +	}
-+	if len(req.Input) > 0 && common.GetJsonType(req.Input) == "array" {
-+		var inputItems []map[string]any
-+		if err := common.Unmarshal(req.Input, &inputItems); err == nil {
-+			for _, item := range inputItems {
-+				if strings.TrimSpace(common.Interface2String(item["type"])) == "additional_tools" {
-+					collect(item["tools"])
++
++	return out
++}
++
++func collectOpenAIResponsesReasoningContent(item gjson.Result) string {
++	var reasoningText strings.Builder
++	if summary := item.Get("summary"); summary.Exists() && summary.IsArray() {
++		summary.ForEach(func(_, summaryItem gjson.Result) bool {
++			if summaryItem.Get("type").String() != "summary_text" {
++				return true
++			}
++			reasoningText.WriteString(summaryItem.Get("text").String())
++			return true
++		})
++	}
++	if reasoningText.Len() == 0 {
++		return "[reasoning unavailable]"
++	}
++	return reasoningText.String()
++}
+diff --git a/service/relayconvert/internal/cpa_responses/request_test.go b/service/relayconvert/internal/cpa_responses/request_test.go
+new file mode 100644
+index 0000000..b04b302
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/request_test.go
+@@ -0,0 +1,475 @@
++package cparesponses
++
++import (
++	"bytes"
++	"encoding/json"
++	"testing"
++
++	"github.com/tidwall/gjson"
++)
++
++func prettyJSONForTest(raw []byte) string {
++	if !gjson.ValidBytes(raw) {
++		return string(raw)
++	}
++	var out bytes.Buffer
++	if err := json.Indent(&out, raw, "", "  "); err != nil {
++		return string(raw)
++	}
++	return out.String()
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_MergeConsecutiveFunctionCalls(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{"type":"function_call","call_id":"exec_command:0","name":"exec_command","arguments":"{\"cmd\":\"ls\"}"},
++			{"type":"function_call","call_id":"exec_command:1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"},
++			{"type":"function_call_output","call_id":"exec_command:0","output":"ok0"},
++			{"type":"function_call_output","call_id":"exec_command:1","output":"ok1"}
++		]
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("kimi-k2.6", raw, true)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	msgs := gjson.GetBytes(out, "messages")
++	if !msgs.Exists() || !msgs.IsArray() {
++		t.Fatalf("messages should be an array")
++	}
++	if got := len(msgs.Array()); got != 3 {
++		t.Fatalf("messages count = %d, want %d", got, 3)
++	}
++
++	if got := gjson.GetBytes(out, "messages.0.role").String(); got != "assistant" {
++		t.Fatalf("messages.0.role = %q, want %q", got, "assistant")
++	}
++	if got := len(gjson.GetBytes(out, "messages.0.tool_calls").Array()); got != 2 {
++		t.Fatalf("messages.0.tool_calls length = %d, want %d", got, 2)
++	}
++	if got := gjson.GetBytes(out, "messages.0.tool_calls.0.id").String(); got != "exec_command:0" {
++		t.Fatalf("messages.0.tool_calls.0.id = %q, want %q", got, "exec_command:0")
++	}
++	if got := gjson.GetBytes(out, "messages.0.tool_calls.1.id").String(); got != "exec_command:1" {
++		t.Fatalf("messages.0.tool_calls.1.id = %q, want %q", got, "exec_command:1")
++	}
++
++	if got := gjson.GetBytes(out, "messages.1.tool_call_id").String(); got != "exec_command:0" {
++		t.Fatalf("messages.1.tool_call_id = %q, want %q", got, "exec_command:0")
++	}
++	if got := gjson.GetBytes(out, "messages.2.tool_call_id").String(); got != "exec_command:1" {
++		t.Fatalf("messages.2.tool_call_id = %q, want %q", got, "exec_command:1")
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_SplitFunctionCallsWhenInterrupted(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{"type":"function_call","call_id":"call_a","name":"tool_a","arguments":"{}"},
++			{"type":"message","role":"user","content":"next"},
++			{"type":"function_call","call_id":"call_b","name":"tool_b","arguments":"{}"}
++		]
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("kimi-k2.6", raw, false)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	if got := len(gjson.GetBytes(out, "messages").Array()); got != 3 {
++		t.Fatalf("messages count = %d, want %d", got, 3)
++	}
++	if got := gjson.GetBytes(out, "messages.0.tool_calls.0.id").String(); got != "call_a" {
++		t.Fatalf("messages.0.tool_calls.0.id = %q, want %q", got, "call_a")
++	}
++	if got := gjson.GetBytes(out, "messages.2.tool_calls.0.id").String(); got != "call_b" {
++		t.Fatalf("messages.2.tool_calls.0.id = %q, want %q", got, "call_b")
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_DefersMessageUntilToolOutput(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{"type":"function_call","call_id":"call_x","name":"exec_command","arguments":"{\"cmd\":\"echo hi\"}"},
++			{"type":"message","role":"user","content":"Approved command prefix saved"},
++			{"type":"function_call_output","call_id":"call_x","output":"ok"},
++			{"type":"message","role":"user","content":"next"}
++		]
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("kimi-k2.6", raw, true)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	if got := len(gjson.GetBytes(out, "messages").Array()); got != 4 {
++		t.Fatalf("messages count = %d, want %d", got, 4)
++	}
++	if got := gjson.GetBytes(out, "messages.0.role").String(); got != "assistant" {
++		t.Fatalf("messages.0.role = %q, want %q", got, "assistant")
++	}
++	if got := gjson.GetBytes(out, "messages.1.role").String(); got != "tool" {
++		t.Fatalf("messages.1.role = %q, want %q", got, "tool")
++	}
++	if got := gjson.GetBytes(out, "messages.1.tool_call_id").String(); got != "call_x" {
++		t.Fatalf("messages.1.tool_call_id = %q, want %q", got, "call_x")
++	}
++	if got := gjson.GetBytes(out, "messages.2.role").String(); got != "user" {
++		t.Fatalf("messages.2.role = %q, want %q", got, "user")
++	}
++	if got := gjson.GetBytes(out, "messages.2.content").String(); got != "Approved command prefix saved" {
++		t.Fatalf("messages.2.content = %q, want %q", got, "Approved command prefix saved")
++	}
++	if got := gjson.GetBytes(out, "messages.3.content").String(); got != "next" {
++		t.Fatalf("messages.3.content = %q, want %q", got, "next")
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_AttachesReasoningToAssistantMessage(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{
++				"type": "reasoning",
++				"id": "rs_1",
++				"summary": [
++					{"type": "summary_text", "text": "first line\n"},
++					{"type": "summary_text", "text": "second line"}
++				]
++			},
++			{
++				"type": "message",
++				"role": "assistant",
++				"content": [{"type": "output_text", "text": "answer"}]
++			},
++			{"type": "message", "role": "user", "content": "next"}
++		]
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("deepseek-v4-flash", raw, false)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	if got := gjson.GetBytes(out, "messages.#").Int(); got != 2 {
++		t.Fatalf("messages count = %d, want 2; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.role").String(); got != "assistant" {
++		t.Fatalf("messages.0.role = %q, want assistant; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.reasoning_content").String(); got != "first line\nsecond line" {
++		t.Fatalf("messages.0.reasoning_content = %q, want %q; output=%s", got, "first line\nsecond line", out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.content.0.text").String(); got != "answer" {
++		t.Fatalf("messages.0.content.0.text = %q, want answer; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.1.role").String(); got != "user" {
++		t.Fatalf("messages.1.role = %q, want user; output=%s", got, out)
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_AttachesReasoningToToolCallMessage(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{
++				"type": "reasoning",
++				"id": "rs_tool",
++				"summary": [{"type": "summary_text", "text": "tool reasoning"}]
++			},
++			{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"},
++			{"type":"function_call_output","call_id":"call_1","output":"ok"}
++		]
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("deepseek-v4-flash", raw, true)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	if got := gjson.GetBytes(out, "messages.#").Int(); got != 2 {
++		t.Fatalf("messages count = %d, want 2; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.role").String(); got != "assistant" {
++		t.Fatalf("messages.0.role = %q, want assistant; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.reasoning_content").String(); got != "tool reasoning" {
++		t.Fatalf("messages.0.reasoning_content = %q, want tool reasoning; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.tool_calls.0.id").String(); got != "call_1" {
++		t.Fatalf("messages.0.tool_calls.0.id = %q, want call_1; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.1.role").String(); got != "tool" {
++		t.Fatalf("messages.1.role = %q, want tool; output=%s", got, out)
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_KeepsReasoningBeforeUserMessage(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{"type": "reasoning", "id": "rs_empty", "summary": []},
++			{"type": "message", "role": "user", "content": "continue"}
++		]
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("deepseek-v4-flash", raw, false)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	if got := gjson.GetBytes(out, "messages.#").Int(); got != 2 {
++		t.Fatalf("messages count = %d, want 2; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.role").String(); got != "assistant" {
++		t.Fatalf("messages.0.role = %q, want assistant; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.reasoning_content").String(); got != "[reasoning unavailable]" {
++		t.Fatalf("messages.0.reasoning_content = %q, want placeholder; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.1.role").String(); got != "user" {
++		t.Fatalf("messages.1.role = %q, want user; output=%s", got, out)
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_FlattensNamespaceTools(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{"role":"user","content":"Use add_numbers."}
++		],
++		"tools": [
++			{
++				"type": "namespace",
++				"name": "mcp__test_mcp__",
++				"description": "Tools in the mcp__test_mcp__ namespace.",
++				"tools": [
++					{
++						"type": "function",
++						"name": "add_numbers",
++						"description": "Add two numbers",
++						"parameters": {
++							"type": "object",
++							"properties": {
++								"a": { "type": "number" },
++								"b": { "type": "number" }
++							},
++							"required": ["a", "b"]
++						}
++					}
++				]
++			}
++		],
++		"tool_choice": "auto"
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("deepseek-v4-flash", raw, false)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	if got := gjson.GetBytes(out, "tools.#").Int(); got != 1 {
++		t.Fatalf("tools count = %d, want 1; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "tools.0.type").String(); got != "function" {
++		t.Fatalf("tools.0.type = %q, want function; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "tools.0.function.name").String(); got != "mcp__test_mcp__add_numbers" {
++		t.Fatalf("tools.0.function.name = %q, want mcp__test_mcp__add_numbers; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "tools.0.function.description").String(); got != "Add two numbers" {
++		t.Fatalf("tools.0.function.description = %q, want Add two numbers; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "tools.0.function.parameters.required.0").String(); got != "a" {
++		t.Fatalf("tools.0.function.parameters.required.0 = %q, want a; output=%s", got, out)
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_QualifiesNamespaceFunctionCallHistory(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{"type":"function_call","call_id":"call_get_me","name":"get_me","namespace":"mcp__github","arguments":"{}"},
++			{"type":"function_call_output","call_id":"call_get_me","output":"ok"}
++		],
++		"tools": [
++			{
++				"type":"namespace",
++				"name":"mcp__github",
++				"tools":[{"type":"function","name":"get_me","parameters":{"type":"object"}}]
++			}
++		]
++	}`)
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("deepseek-v4-flash", raw, false)
++
++	gotHistoryName := gjson.GetBytes(out, "messages.0.tool_calls.0.function.name").String()
++	gotDeclaredName := gjson.GetBytes(out, "tools.0.function.name").String()
++	if gotHistoryName != "mcp__github__get_me" {
++		t.Fatalf("history function name = %q, want mcp__github__get_me; output=%s", gotHistoryName, out)
++	}
++	if gotHistoryName != gotDeclaredName {
++		t.Fatalf("history function name = %q, declared function name = %q; output=%s", gotHistoryName, gotDeclaredName, out)
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_FlattensNamespaceCustomTools(t *testing.T) {
++	tests := []struct {
++		name string
++		raw  []byte
++	}{
++		{
++			name: "top-level tools",
++			raw: []byte(`{
++				"tools":[{
++					"type":"namespace",
++					"name":"terminal",
++					"tools":[{"type":"custom","name":"exec","description":"Run a command"}]
++				}]
++			}`),
++		},
++		{
++			name: "additional tools",
++			raw: []byte(`{
++				"input":[{
++					"type":"additional_tools",
++					"tools":[{
++						"type":"namespace",
++						"name":"terminal",
++						"tools":[{"type":"custom","name":"exec","description":"Run a command"}]
++					}]
++				}]
++			}`),
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("gpt-5.4", tt.raw, false)
++
++			if got := gjson.GetBytes(out, "tools.#").Int(); got != 1 {
++				t.Fatalf("tools count = %d, want 1; output=%s", got, out)
++			}
++			if got := gjson.GetBytes(out, "tools.0.function.name").String(); got != "terminal__exec" {
++				t.Fatalf("tool name = %q, want terminal__exec; output=%s", got, out)
++			}
++			if got := gjson.GetBytes(out, "tools.0.function.description").String(); got != "Run a command" {
++				t.Fatalf("tool description = %q, want Run a command; output=%s", got, out)
++			}
++			if got := gjson.GetBytes(out, "tools.0.function.parameters.type").String(); got != "object" {
++				t.Fatalf("parameters type = %q, want object; output=%s", got, out)
++			}
++			if got := gjson.GetBytes(out, "tools.0.function.parameters.properties.input.type").String(); got != "string" {
++				t.Fatalf("input type = %q, want string; output=%s", got, out)
++			}
++			if got := gjson.GetBytes(out, "tools.0.function.parameters.required.0").String(); got != "input" {
++				t.Fatalf("required parameter = %q, want input; output=%s", got, out)
++			}
++		})
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesStructuredToolChoice(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{"role":"user","content":"Run command."}
++		],
++		"tools": [
++			{
++				"type": "function",
++				"name": "run_command",
++				"parameters": {"type": "object"}
++			}
++		],
++		"tool_choice": {
++			"type": "function",
++			"function": {
++				"name": "run_command"
++			}
++		}
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("gpt-5.4", raw, false)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	if got := gjson.GetBytes(out, "tool_choice.type").String(); got != "function" {
++		t.Fatalf("tool_choice.type = %q, want function; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "tool_choice.function.name").String(); got != "run_command" {
++		t.Fatalf("tool_choice.function.name = %q, want run_command; output=%s", got, out)
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_OmitsToolSettingsWithoutTools(t *testing.T) {
++	tests := []struct {
++		name string
++		raw  []byte
++	}{
++		{
++			name: "empty tools",
++			raw: []byte(`{
++				"input": [{"role":"user","content":"say ok"}],
++				"tools": [],
++				"tool_choice": "auto",
++				"parallel_tool_calls": false
++			}`),
++		},
++		{
++			name: "unconvertible tools",
++			raw: []byte(`{
++				"tools": [{"type":"unsupported"}],
++				"tool_choice": "auto",
++				"parallel_tool_calls": false
++			}`),
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("grok-4.5", tt.raw, false)
++
++			for _, field := range []string{"tools", "tool_choice", "parallel_tool_calls"} {
++				if got := gjson.GetBytes(out, field); got.Exists() {
++					t.Fatalf("%s should be omitted without tools; output=%s", field, out)
++				}
++			}
++		})
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesParallelToolCallsWithTools(t *testing.T) {
++	raw := []byte(`{
++		"tools": [
++			{
++				"type": "function",
++				"name": "run_command",
++				"parameters": {"type": "object"}
++			}
++		],
++		"parallel_tool_calls": false
++	}`)
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("grok-4.5", raw, false)
++
++	if got := gjson.GetBytes(out, "parallel_tool_calls"); !got.Exists() || got.Bool() {
++		t.Fatalf("parallel_tool_calls = %v, want false; output=%s", got.Value(), out)
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesInputImageDetail(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{
++				"role": "user",
++				"content": [
++					{
++						"type": "input_image",
++						"image_url": "https://example.com/image.png",
++						"detail": "high"
++					}
++				]
++			}
++		]
++	}`)
++	t.Logf("input json:\n%s", prettyJSONForTest(raw))
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("gpt-5.4", raw, false)
++	t.Logf("output json:\n%s", prettyJSONForTest(out))
++
++	if got := gjson.GetBytes(out, "messages.0.content.0.image_url.url").String(); got != "https://example.com/image.png" {
++		t.Fatalf("messages.0.content.0.image_url.url = %q, want https://example.com/image.png; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "messages.0.content.0.image_url.detail").String(); got != "high" {
++		t.Fatalf("messages.0.content.0.image_url.detail = %q, want high; output=%s", got, out)
++	}
++}
+diff --git a/service/relayconvert/internal/cpa_responses/response.go b/service/relayconvert/internal/cpa_responses/response.go
+new file mode 100644
+index 0000000..9bfda09
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/response.go
+@@ -0,0 +1,894 @@
++package cparesponses
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"sort"
++	"strings"
++	"sync/atomic"
++	"time"
++
++	translatorcommon "github.com/QuantumNous/new-api/service/relayconvert/internal/cpa_common"
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++type oaiToResponsesStateReasoning struct {
++	ReasoningID   string
++	ReasoningData string
++	OutputIndex   int
++}
++type oaiToResponsesState struct {
++	Seq               int
++	ResponseID        string
++	Created           int64
++	Started           bool
++	CompletionPending bool
++	CompletedEmitted  bool
++	ReasoningID       string
++	ReasoningIndex    int
++	// aggregation buffers for response.output
++	// Per-output message text buffers by index
++	MsgTextBuf   map[int]*strings.Builder
++	ReasoningBuf strings.Builder
++	Reasonings   []oaiToResponsesStateReasoning
++	FuncArgsBuf  map[string]*strings.Builder
++	FuncNames    map[string]string
++	FuncCallIDs  map[string]string
++	FuncOutputIx map[string]int
++	FuncArgsSent map[string]int
++	MsgOutputIx  map[int]int
++	NextOutputIx int
++	// message item state per output index
++	MsgItemAdded    map[int]bool // whether response.output_item.added emitted for message
++	MsgContentAdded map[int]bool // whether response.content_part.added emitted for message
++	MsgItemDone     map[int]bool // whether message done events were emitted
++	// function item state
++	FuncItemAdded  map[string]bool
++	FuncItemCustom map[string]bool
++	FuncArgsDone   map[string]bool
++	FuncItemDone   map[string]bool
++	// names of freeform ("custom") tools from the original request; calls to
++	// these are emitted as custom_tool_call items instead of function_call
++	CustomToolNames map[string]struct{}
++	// usage aggregation
++	PromptTokens     int64
++	CachedTokens     int64
++	CompletionTokens int64
++	TotalTokens      int64
++	ReasoningTokens  int64
++	UsageSeen        bool
++}
++
++// responseIDCounter provides a process-wide unique counter for synthesized response identifiers.
++var responseIDCounter uint64
++
++func emitRespEvent(event string, payload []byte) []byte {
++	return translatorcommon.SSEEventData(event, payload)
++}
++
++func buildResponsesCompletedEvent(st *oaiToResponsesState, requestRawJSON []byte, nextSeq func() int) []byte {
++	completed := []byte(`{"type":"response.completed","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"completed","background":false,"error":null}}`)
++	completed, _ = sjson.SetBytes(completed, "sequence_number", nextSeq())
++	completed, _ = sjson.SetBytes(completed, "response.id", st.ResponseID)
++	completed, _ = sjson.SetBytes(completed, "response.created_at", st.Created)
++	// Inject original request fields into response as per docs/response.completed.json
++	if requestRawJSON != nil {
++		req := gjson.ParseBytes(requestRawJSON)
++		if v := req.Get("instructions"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.instructions", v.String())
++		}
++		if v := req.Get("max_output_tokens"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.max_output_tokens", v.Int())
++		}
++		if v := req.Get("max_tool_calls"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.max_tool_calls", v.Int())
++		}
++		if v := req.Get("model"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.model", v.String())
++		}
++		if v := req.Get("parallel_tool_calls"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.parallel_tool_calls", v.Bool())
++		}
++		if v := req.Get("previous_response_id"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.previous_response_id", v.String())
++		}
++		if v := req.Get("prompt_cache_key"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.prompt_cache_key", v.String())
++		}
++		if v := req.Get("reasoning"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.reasoning", v.Value())
++		}
++		if v := req.Get("safety_identifier"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.safety_identifier", v.String())
++		}
++		if v := req.Get("service_tier"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.service_tier", v.String())
++		}
++		if v := req.Get("store"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.store", v.Bool())
++		}
++		if v := req.Get("temperature"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.temperature", v.Float())
++		}
++		if v := req.Get("text"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.text", v.Value())
++		}
++		if v := req.Get("tool_choice"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.tool_choice", v.Value())
++		}
++		if v := req.Get("tools"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.tools", v.Value())
++		}
++		if v := req.Get("top_logprobs"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.top_logprobs", v.Int())
++		}
++		if v := req.Get("top_p"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.top_p", v.Float())
++		}
++		if v := req.Get("truncation"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.truncation", v.String())
++		}
++		if v := req.Get("user"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.user", v.Value())
++		}
++		if v := req.Get("metadata"); v.Exists() {
++			completed, _ = sjson.SetBytes(completed, "response.metadata", v.Value())
++		}
++	}
++
++	outputsWrapper := []byte(`{"arr":[]}`)
++	type completedOutputItem struct {
++		index int
++		raw   []byte
++	}
++	outputItems := make([]completedOutputItem, 0, len(st.Reasonings)+len(st.MsgItemAdded)+len(st.FuncArgsBuf))
++	if len(st.Reasonings) > 0 {
++		for _, r := range st.Reasonings {
++			item := []byte(`{"id":"","type":"reasoning","summary":[{"type":"summary_text","text":""}]}`)
++			item, _ = sjson.SetBytes(item, "id", r.ReasoningID)
++			item, _ = sjson.SetBytes(item, "summary.0.text", r.ReasoningData)
++			outputItems = append(outputItems, completedOutputItem{index: r.OutputIndex, raw: item})
++		}
++	}
++	if len(st.MsgItemAdded) > 0 {
++		for i := range st.MsgItemAdded {
++			txt := ""
++			if b := st.MsgTextBuf[i]; b != nil {
++				txt = b.String()
++			}
++			item := []byte(`{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}`)
++			item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("msg_%s_%d", st.ResponseID, i))
++			item, _ = sjson.SetBytes(item, "content.0.text", txt)
++			outputItems = append(outputItems, completedOutputItem{index: st.MsgOutputIx[i], raw: item})
++		}
++	}
++	if len(st.FuncArgsBuf) > 0 {
++		for key := range st.FuncArgsBuf {
++			args := ""
++			if b := st.FuncArgsBuf[key]; b != nil {
++				args = b.String()
++			}
++			callID := st.FuncCallIDs[key]
++			name := st.FuncNames[key]
++			if st.FuncItemCustom[key] {
++				item := []byte(`{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}`)
++				item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("ctc_%s", callID))
++				item, _ = sjson.SetBytes(item, "input", unwrapCustomToolInput(args))
++				item, _ = sjson.SetBytes(item, "call_id", callID)
++				item, _ = sjson.SetBytes(item, "name", name)
++				outputItems = append(outputItems, completedOutputItem{index: st.FuncOutputIx[key], raw: item})
++				continue
++			}
++			item := []byte(`{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`)
++			item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("fc_%s", callID))
++			item, _ = sjson.SetBytes(item, "arguments", args)
++			item, _ = sjson.SetBytes(item, "call_id", callID)
++			item = applyResponsesFunctionCallNamespaceFields(item, requestRawJSON, name, "")
++			outputItems = append(outputItems, completedOutputItem{index: st.FuncOutputIx[key], raw: item})
++		}
++	}
++	sort.Slice(outputItems, func(i, j int) bool { return outputItems[i].index < outputItems[j].index })
++	for _, item := range outputItems {
++		outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, "arr.-1", item.raw)
++	}
++	if gjson.GetBytes(outputsWrapper, "arr.#").Int() > 0 {
++		completed, _ = sjson.SetRawBytes(completed, "response.output", []byte(gjson.GetBytes(outputsWrapper, "arr").Raw))
++	}
++	if st.UsageSeen {
++		completed, _ = sjson.SetBytes(completed, "response.usage.input_tokens", st.PromptTokens)
++		completed, _ = sjson.SetBytes(completed, "response.usage.input_tokens_details.cached_tokens", st.CachedTokens)
++		completed, _ = sjson.SetBytes(completed, "response.usage.output_tokens", st.CompletionTokens)
++		if st.ReasoningTokens > 0 {
++			completed, _ = sjson.SetBytes(completed, "response.usage.output_tokens_details.reasoning_tokens", st.ReasoningTokens)
++		}
++		total := st.TotalTokens
++		if total == 0 {
++			total = st.PromptTokens + st.CompletionTokens
++		}
++		completed, _ = sjson.SetBytes(completed, "response.usage.total_tokens", total)
++	}
++	return emitRespEvent("response.completed", completed)
++}
++
++// ConvertOpenAIChatCompletionsResponseToOpenAIResponses converts OpenAI Chat Completions streaming chunks
++// to OpenAI Responses SSE events (response.*).
++func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
++	if *param == nil {
++		*param = &oaiToResponsesState{
++			FuncArgsBuf:     make(map[string]*strings.Builder),
++			FuncNames:       make(map[string]string),
++			FuncCallIDs:     make(map[string]string),
++			FuncOutputIx:    make(map[string]int),
++			FuncArgsSent:    make(map[string]int),
++			MsgOutputIx:     make(map[int]int),
++			MsgTextBuf:      make(map[int]*strings.Builder),
++			MsgItemAdded:    make(map[int]bool),
++			MsgContentAdded: make(map[int]bool),
++			MsgItemDone:     make(map[int]bool),
++			FuncItemAdded:   make(map[string]bool),
++			FuncItemCustom:  make(map[string]bool),
++			FuncArgsDone:    make(map[string]bool),
++			FuncItemDone:    make(map[string]bool),
++			Reasonings:      make([]oaiToResponsesStateReasoning, 0),
++		}
++	}
++	st := (*param).(*oaiToResponsesState)
++
++	if bytes.HasPrefix(rawJSON, []byte("data:")) {
++		rawJSON = bytes.TrimSpace(rawJSON[5:])
++	}
++
++	rawJSON = bytes.TrimSpace(rawJSON)
++	if len(rawJSON) == 0 {
++		return [][]byte{}
++	}
++	requestForNamespace := pickRequestJSON(originalRequestRawJSON, requestRawJSON)
++	if bytes.Equal(rawJSON, []byte("[DONE]")) {
++		if st.CompletionPending && !st.CompletedEmitted {
++			st.CompletedEmitted = true
++			return [][]byte{buildResponsesCompletedEvent(st, requestForNamespace, func() int { st.Seq++; return st.Seq })}
++		}
++		return [][]byte{}
++	}
++
++	root := gjson.ParseBytes(rawJSON)
++	obj := root.Get("object")
++	if obj.Exists() && obj.String() != "" && obj.String() != "chat.completion.chunk" {
++		return [][]byte{}
++	}
++	if !root.Get("choices").Exists() || !root.Get("choices").IsArray() {
++		return [][]byte{}
++	}
++
++	if usage := root.Get("usage"); usage.Exists() {
++		if v := usage.Get("prompt_tokens"); v.Exists() {
++			st.PromptTokens = v.Int()
++			st.UsageSeen = true
++		}
++		if v := usage.Get("prompt_tokens_details.cached_tokens"); v.Exists() {
++			st.CachedTokens = v.Int()
++			st.UsageSeen = true
++		}
++		if v := usage.Get("completion_tokens"); v.Exists() {
++			st.CompletionTokens = v.Int()
++			st.UsageSeen = true
++		} else if v := usage.Get("output_tokens"); v.Exists() {
++			st.CompletionTokens = v.Int()
++			st.UsageSeen = true
++		}
++		if v := usage.Get("output_tokens_details.reasoning_tokens"); v.Exists() {
++			st.ReasoningTokens = v.Int()
++			st.UsageSeen = true
++		} else if v := usage.Get("completion_tokens_details.reasoning_tokens"); v.Exists() {
++			st.ReasoningTokens = v.Int()
++			st.UsageSeen = true
++		}
++		if v := usage.Get("total_tokens"); v.Exists() {
++			st.TotalTokens = v.Int()
++			st.UsageSeen = true
++		}
++	}
++
++	nextSeq := func() int { st.Seq++; return st.Seq }
++	allocOutputIndex := func() int {
++		ix := st.NextOutputIx
++		st.NextOutputIx++
++		return ix
++	}
++	toolStateKey := func(outputIndex, toolIndex int) string { return fmt.Sprintf("%d:%d", outputIndex, toolIndex) }
++	var out [][]byte
++	emitToolItem := func(key string, force bool) {
++		if st.FuncItemAdded[key] {
++			return
++		}
++		callID := st.FuncCallIDs[key]
++		name := st.FuncNames[key]
++		if !force && (callID == "" || name == "") {
++			return
++		}
++		if name == "" {
++			if customToolName, ok := responsesSingleCustomToolName(requestForNamespace); ok {
++				name = customToolName
++				st.FuncNames[key] = customToolName
++			}
++		}
++		if callID == "" {
++			callID = fmt.Sprintf("call_%s_%s", st.ResponseID, strings.ReplaceAll(key, ":", "_"))
++			st.FuncCallIDs[key] = callID
++		}
++
++		outputIndex := st.FuncOutputIx[key]
++		_, isCustomTool := st.CustomToolNames[name]
++		st.FuncItemCustom[key] = isCustomTool
++		if isCustomTool {
++			o := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"in_progress","input":"","call_id":"","name":""}}`)
++			o, _ = sjson.SetBytes(o, "sequence_number", nextSeq())
++			o, _ = sjson.SetBytes(o, "output_index", outputIndex)
++			o, _ = sjson.SetBytes(o, "item.id", fmt.Sprintf("ctc_%s", callID))
++			o, _ = sjson.SetBytes(o, "item.call_id", callID)
++			o, _ = sjson.SetBytes(o, "item.name", name)
++			out = append(out, emitRespEvent("response.output_item.added", o))
++		} else {
++			o := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}`)
++			o, _ = sjson.SetBytes(o, "sequence_number", nextSeq())
++			o, _ = sjson.SetBytes(o, "output_index", outputIndex)
++			o, _ = sjson.SetBytes(o, "item.id", fmt.Sprintf("fc_%s", callID))
++			o, _ = sjson.SetBytes(o, "item.call_id", callID)
++			o = applyResponsesFunctionCallNamespaceFields(o, requestForNamespace, name, "item")
++			out = append(out, emitRespEvent("response.output_item.added", o))
++		}
++		st.FuncItemAdded[key] = true
++	}
++	emitPendingFunctionArgs := func(key string) {
++		if !st.FuncItemAdded[key] || st.FuncItemCustom[key] {
++			return
++		}
++		argsBuf := st.FuncArgsBuf[key]
++		if argsBuf == nil || argsBuf.Len() <= st.FuncArgsSent[key] {
++			return
++		}
++		args := argsBuf.String()
++		delta := args[st.FuncArgsSent[key]:]
++		callID := st.FuncCallIDs[key]
++		ad := []byte(`{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`)
++		ad, _ = sjson.SetBytes(ad, "sequence_number", nextSeq())
++		ad, _ = sjson.SetBytes(ad, "item_id", fmt.Sprintf("fc_%s", callID))
++		ad, _ = sjson.SetBytes(ad, "output_index", st.FuncOutputIx[key])
++		ad, _ = sjson.SetBytes(ad, "delta", delta)
++		out = append(out, emitRespEvent("response.function_call_arguments.delta", ad))
++		st.FuncArgsSent[key] = len(args)
++	}
++
++	if !st.Started {
++		st.ResponseID = root.Get("id").String()
++		st.Created = root.Get("created").Int()
++		// reset aggregation state for a new streaming response
++		st.MsgTextBuf = make(map[int]*strings.Builder)
++		st.ReasoningBuf.Reset()
++		st.ReasoningID = ""
++		st.ReasoningIndex = 0
++		st.FuncArgsBuf = make(map[string]*strings.Builder)
++		st.FuncNames = make(map[string]string)
++		st.FuncCallIDs = make(map[string]string)
++		st.FuncOutputIx = make(map[string]int)
++		st.FuncArgsSent = make(map[string]int)
++		st.MsgOutputIx = make(map[int]int)
++		st.NextOutputIx = 0
++		st.MsgItemAdded = make(map[int]bool)
++		st.MsgContentAdded = make(map[int]bool)
++		st.MsgItemDone = make(map[int]bool)
++		st.FuncItemAdded = make(map[string]bool)
++		st.FuncItemCustom = make(map[string]bool)
++		st.FuncArgsDone = make(map[string]bool)
++		st.FuncItemDone = make(map[string]bool)
++		st.CustomToolNames = responsesCustomToolNames(requestForNamespace)
++		st.PromptTokens = 0
++		st.CachedTokens = 0
++		st.CompletionTokens = 0
++		st.TotalTokens = 0
++		st.ReasoningTokens = 0
++		st.UsageSeen = false
++		st.CompletionPending = false
++		st.CompletedEmitted = false
++		// response.created
++		created := []byte(`{"type":"response.created","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"in_progress","background":false,"error":null,"output":[]}}`)
++		created, _ = sjson.SetBytes(created, "sequence_number", nextSeq())
++		created, _ = sjson.SetBytes(created, "response.id", st.ResponseID)
++		created, _ = sjson.SetBytes(created, "response.created_at", st.Created)
++		out = append(out, emitRespEvent("response.created", created))
++
++		inprog := []byte(`{"type":"response.in_progress","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"in_progress"}}`)
++		inprog, _ = sjson.SetBytes(inprog, "sequence_number", nextSeq())
++		inprog, _ = sjson.SetBytes(inprog, "response.id", st.ResponseID)
++		inprog, _ = sjson.SetBytes(inprog, "response.created_at", st.Created)
++		out = append(out, emitRespEvent("response.in_progress", inprog))
++		st.Started = true
++	}
++
++	stopReasoning := func(text string) {
++		// Emit reasoning done events
++		textDone := []byte(`{"type":"response.reasoning_summary_text.done","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"text":""}`)
++		textDone, _ = sjson.SetBytes(textDone, "sequence_number", nextSeq())
++		textDone, _ = sjson.SetBytes(textDone, "item_id", st.ReasoningID)
++		textDone, _ = sjson.SetBytes(textDone, "output_index", st.ReasoningIndex)
++		textDone, _ = sjson.SetBytes(textDone, "text", text)
++		out = append(out, emitRespEvent("response.reasoning_summary_text.done", textDone))
++		partDone := []byte(`{"type":"response.reasoning_summary_part.done","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}`)
++		partDone, _ = sjson.SetBytes(partDone, "sequence_number", nextSeq())
++		partDone, _ = sjson.SetBytes(partDone, "item_id", st.ReasoningID)
++		partDone, _ = sjson.SetBytes(partDone, "output_index", st.ReasoningIndex)
++		partDone, _ = sjson.SetBytes(partDone, "part.text", text)
++		out = append(out, emitRespEvent("response.reasoning_summary_part.done", partDone))
++		outputItemDone := []byte(`{"type":"response.output_item.done","item":{"id":"","type":"reasoning","encrypted_content":"","summary":[{"type":"summary_text","text":""}]},"output_index":0,"sequence_number":0}`)
++		outputItemDone, _ = sjson.SetBytes(outputItemDone, "sequence_number", nextSeq())
++		outputItemDone, _ = sjson.SetBytes(outputItemDone, "item.id", st.ReasoningID)
++		outputItemDone, _ = sjson.SetBytes(outputItemDone, "output_index", st.ReasoningIndex)
++		outputItemDone, _ = sjson.SetBytes(outputItemDone, "item.summary.0.text", text)
++		out = append(out, emitRespEvent("response.output_item.done", outputItemDone))
++
++		st.Reasonings = append(st.Reasonings, oaiToResponsesStateReasoning{ReasoningID: st.ReasoningID, ReasoningData: text, OutputIndex: st.ReasoningIndex})
++		st.ReasoningID = ""
++	}
++
++	// choices[].delta content / tool_calls / reasoning_content
++	if choices := root.Get("choices"); choices.Exists() && choices.IsArray() {
++		choices.ForEach(func(_, choice gjson.Result) bool {
++			idx := int(choice.Get("index").Int())
++			delta := choice.Get("delta")
++			if delta.Exists() {
++				if c := delta.Get("content"); c.Exists() && c.String() != "" {
++					// Ensure the message item and its first content part are announced before any text deltas
++					if st.ReasoningID != "" {
++						stopReasoning(st.ReasoningBuf.String())
++						st.ReasoningBuf.Reset()
++					}
++					if _, exists := st.MsgOutputIx[idx]; !exists {
++						st.MsgOutputIx[idx] = allocOutputIndex()
++					}
++					msgOutputIndex := st.MsgOutputIx[idx]
++					if !st.MsgItemAdded[idx] {
++						item := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"in_progress","content":[],"role":"assistant"}}`)
++						item, _ = sjson.SetBytes(item, "sequence_number", nextSeq())
++						item, _ = sjson.SetBytes(item, "output_index", msgOutputIndex)
++						item, _ = sjson.SetBytes(item, "item.id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
++						out = append(out, emitRespEvent("response.output_item.added", item))
++						st.MsgItemAdded[idx] = true
++					}
++					if !st.MsgContentAdded[idx] {
++						part := []byte(`{"type":"response.content_part.added","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}`)
++						part, _ = sjson.SetBytes(part, "sequence_number", nextSeq())
++						part, _ = sjson.SetBytes(part, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
++						part, _ = sjson.SetBytes(part, "output_index", msgOutputIndex)
++						part, _ = sjson.SetBytes(part, "content_index", 0)
++						out = append(out, emitRespEvent("response.content_part.added", part))
++						st.MsgContentAdded[idx] = true
++					}
++
++					msg := []byte(`{"type":"response.output_text.delta","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"delta":"","logprobs":[]}`)
++					msg, _ = sjson.SetBytes(msg, "sequence_number", nextSeq())
++					msg, _ = sjson.SetBytes(msg, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
++					msg, _ = sjson.SetBytes(msg, "output_index", msgOutputIndex)
++					msg, _ = sjson.SetBytes(msg, "content_index", 0)
++					msg, _ = sjson.SetBytes(msg, "delta", c.String())
++					out = append(out, emitRespEvent("response.output_text.delta", msg))
++					// aggregate for response.output
++					if st.MsgTextBuf[idx] == nil {
++						st.MsgTextBuf[idx] = &strings.Builder{}
++					}
++					st.MsgTextBuf[idx].WriteString(c.String())
++				}
++
++				// reasoning_content (OpenAI reasoning incremental text)
++				rc := delta.Get("reasoning_content")
++				if !rc.Exists() || rc.String() == "" {
++					rc = delta.Get("reasoning")
++				}
++				if rc.Exists() && rc.String() != "" {
++					// On first appearance, add reasoning item and part
++					if st.ReasoningID == "" {
++						st.ReasoningID = fmt.Sprintf("rs_%s_%d", st.ResponseID, idx)
++						st.ReasoningIndex = allocOutputIndex()
++						item := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"reasoning","status":"in_progress","summary":[]}}`)
++						item, _ = sjson.SetBytes(item, "sequence_number", nextSeq())
++						item, _ = sjson.SetBytes(item, "output_index", st.ReasoningIndex)
++						item, _ = sjson.SetBytes(item, "item.id", st.ReasoningID)
++						out = append(out, emitRespEvent("response.output_item.added", item))
++						part := []byte(`{"type":"response.reasoning_summary_part.added","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}`)
++						part, _ = sjson.SetBytes(part, "sequence_number", nextSeq())
++						part, _ = sjson.SetBytes(part, "item_id", st.ReasoningID)
++						part, _ = sjson.SetBytes(part, "output_index", st.ReasoningIndex)
++						out = append(out, emitRespEvent("response.reasoning_summary_part.added", part))
++					}
++					// Append incremental text to reasoning buffer
++					st.ReasoningBuf.WriteString(rc.String())
++					msg := []byte(`{"type":"response.reasoning_summary_text.delta","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"delta":""}`)
++					msg, _ = sjson.SetBytes(msg, "sequence_number", nextSeq())
++					msg, _ = sjson.SetBytes(msg, "item_id", st.ReasoningID)
++					msg, _ = sjson.SetBytes(msg, "output_index", st.ReasoningIndex)
++					msg, _ = sjson.SetBytes(msg, "delta", rc.String())
++					out = append(out, emitRespEvent("response.reasoning_summary_text.delta", msg))
++				}
++
++				// tool calls
++				if tcs := delta.Get("tool_calls"); tcs.Exists() && tcs.IsArray() {
++					if st.ReasoningID != "" {
++						stopReasoning(st.ReasoningBuf.String())
++						st.ReasoningBuf.Reset()
++					}
++					// Before emitting any function events, if a message is open for this index,
++					// close its text/content to match Codex expected ordering.
++					if st.MsgItemAdded[idx] && !st.MsgItemDone[idx] {
++						msgOutputIndex := st.MsgOutputIx[idx]
++						fullText := ""
++						if b := st.MsgTextBuf[idx]; b != nil {
++							fullText = b.String()
++						}
++						done := []byte(`{"type":"response.output_text.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"text":"","logprobs":[]}`)
++						done, _ = sjson.SetBytes(done, "sequence_number", nextSeq())
++						done, _ = sjson.SetBytes(done, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
++						done, _ = sjson.SetBytes(done, "output_index", msgOutputIndex)
++						done, _ = sjson.SetBytes(done, "content_index", 0)
++						done, _ = sjson.SetBytes(done, "text", fullText)
++						out = append(out, emitRespEvent("response.output_text.done", done))
++
++						partDone := []byte(`{"type":"response.content_part.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}`)
++						partDone, _ = sjson.SetBytes(partDone, "sequence_number", nextSeq())
++						partDone, _ = sjson.SetBytes(partDone, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
++						partDone, _ = sjson.SetBytes(partDone, "output_index", msgOutputIndex)
++						partDone, _ = sjson.SetBytes(partDone, "content_index", 0)
++						partDone, _ = sjson.SetBytes(partDone, "part.text", fullText)
++						out = append(out, emitRespEvent("response.content_part.done", partDone))
++
++						itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}}`)
++						itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
++						itemDone, _ = sjson.SetBytes(itemDone, "output_index", msgOutputIndex)
++						itemDone, _ = sjson.SetBytes(itemDone, "item.id", fmt.Sprintf("msg_%s_%d", st.ResponseID, idx))
++						itemDone, _ = sjson.SetBytes(itemDone, "item.content.0.text", fullText)
++						out = append(out, emitRespEvent("response.output_item.done", itemDone))
++						st.MsgItemDone[idx] = true
++					}
++
++					tcs.ForEach(func(_, tc gjson.Result) bool {
++						toolIndex := int(tc.Get("index").Int())
++						key := toolStateKey(idx, toolIndex)
++						if st.FuncArgsBuf[key] == nil {
++							st.FuncArgsBuf[key] = &strings.Builder{}
++							st.FuncOutputIx[key] = allocOutputIndex()
++						}
++						if newCallID := tc.Get("id").String(); newCallID != "" && st.FuncCallIDs[key] == "" {
++							st.FuncCallIDs[key] = newCallID
++						}
++						nameChunk := tc.Get("function.name").String()
++						if nameChunk != "" && !st.FuncItemAdded[key] {
++							st.FuncNames[key] = nameChunk
++						}
++
++						if args := tc.Get("function.arguments"); args.Exists() && args.String() != "" {
++							st.FuncArgsBuf[key].WriteString(args.String())
++						}
++						emitToolItem(key, false)
++						emitPendingFunctionArgs(key)
++						return true
++					})
++				}
++			}
++
++			// finish_reason triggers item-level finalization. response.completed is
++			// deferred until the terminal [DONE] marker so late usage-only chunks can
++			// still populate response.usage.
++			if fr := choice.Get("finish_reason"); fr.Exists() && fr.String() != "" {
++				// Emit message done events for all indices that started a message
++				if len(st.MsgItemAdded) > 0 {
++					// sort indices for deterministic order
++					idxs := make([]int, 0, len(st.MsgItemAdded))
++					for i := range st.MsgItemAdded {
++						idxs = append(idxs, i)
++					}
++					sort.Slice(idxs, func(i, j int) bool { return st.MsgOutputIx[idxs[i]] < st.MsgOutputIx[idxs[j]] })
++					for _, i := range idxs {
++						if st.MsgItemAdded[i] && !st.MsgItemDone[i] {
++							msgOutputIndex := st.MsgOutputIx[i]
++							fullText := ""
++							if b := st.MsgTextBuf[i]; b != nil {
++								fullText = b.String()
++							}
++							done := []byte(`{"type":"response.output_text.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"text":"","logprobs":[]}`)
++							done, _ = sjson.SetBytes(done, "sequence_number", nextSeq())
++							done, _ = sjson.SetBytes(done, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, i))
++							done, _ = sjson.SetBytes(done, "output_index", msgOutputIndex)
++							done, _ = sjson.SetBytes(done, "content_index", 0)
++							done, _ = sjson.SetBytes(done, "text", fullText)
++							out = append(out, emitRespEvent("response.output_text.done", done))
++
++							partDone := []byte(`{"type":"response.content_part.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}`)
++							partDone, _ = sjson.SetBytes(partDone, "sequence_number", nextSeq())
++							partDone, _ = sjson.SetBytes(partDone, "item_id", fmt.Sprintf("msg_%s_%d", st.ResponseID, i))
++							partDone, _ = sjson.SetBytes(partDone, "output_index", msgOutputIndex)
++							partDone, _ = sjson.SetBytes(partDone, "content_index", 0)
++							partDone, _ = sjson.SetBytes(partDone, "part.text", fullText)
++							out = append(out, emitRespEvent("response.content_part.done", partDone))
++
++							itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}}`)
++							itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
++							itemDone, _ = sjson.SetBytes(itemDone, "output_index", msgOutputIndex)
++							itemDone, _ = sjson.SetBytes(itemDone, "item.id", fmt.Sprintf("msg_%s_%d", st.ResponseID, i))
++							itemDone, _ = sjson.SetBytes(itemDone, "item.content.0.text", fullText)
++							out = append(out, emitRespEvent("response.output_item.done", itemDone))
++							st.MsgItemDone[i] = true
++						}
++					}
++				}
++
++				if st.ReasoningID != "" {
++					stopReasoning(st.ReasoningBuf.String())
++					st.ReasoningBuf.Reset()
++				}
++
++				// Emit function call done events for any active function calls
++				if len(st.FuncArgsBuf) > 0 {
++					keys := make([]string, 0, len(st.FuncArgsBuf))
++					for key := range st.FuncArgsBuf {
++						keys = append(keys, key)
++					}
++					sort.Slice(keys, func(i, j int) bool {
++						left := st.FuncOutputIx[keys[i]]
++						right := st.FuncOutputIx[keys[j]]
++						return left < right || (left == right && keys[i] < keys[j])
++					})
++					for _, key := range keys {
++						emitToolItem(key, true)
++						emitPendingFunctionArgs(key)
++						callID := st.FuncCallIDs[key]
++						if callID == "" || st.FuncItemDone[key] {
++							continue
++						}
++						outputIndex := st.FuncOutputIx[key]
++						args := "{}"
++						if b := st.FuncArgsBuf[key]; b != nil && b.Len() > 0 {
++							args = b.String()
++						}
++						if st.FuncItemCustom[key] {
++							input := unwrapCustomToolInput(args)
++							inputDone := []byte(`{"type":"response.custom_tool_call_input.done","sequence_number":0,"item_id":"","output_index":0,"input":""}`)
++							inputDone, _ = sjson.SetBytes(inputDone, "sequence_number", nextSeq())
++							inputDone, _ = sjson.SetBytes(inputDone, "item_id", fmt.Sprintf("ctc_%s", callID))
++							inputDone, _ = sjson.SetBytes(inputDone, "output_index", outputIndex)
++							inputDone, _ = sjson.SetBytes(inputDone, "input", input)
++							out = append(out, emitRespEvent("response.custom_tool_call_input.done", inputDone))
++
++							itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}}`)
++							itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
++							itemDone, _ = sjson.SetBytes(itemDone, "output_index", outputIndex)
++							itemDone, _ = sjson.SetBytes(itemDone, "item.id", fmt.Sprintf("ctc_%s", callID))
++							itemDone, _ = sjson.SetBytes(itemDone, "item.input", input)
++							itemDone, _ = sjson.SetBytes(itemDone, "item.call_id", callID)
++							itemDone, _ = sjson.SetBytes(itemDone, "item.name", st.FuncNames[key])
++							out = append(out, emitRespEvent("response.output_item.done", itemDone))
++							st.FuncItemDone[key] = true
++							st.FuncArgsDone[key] = true
++							continue
++						}
++						fcDone := []byte(`{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}`)
++						fcDone, _ = sjson.SetBytes(fcDone, "sequence_number", nextSeq())
++						fcDone, _ = sjson.SetBytes(fcDone, "item_id", fmt.Sprintf("fc_%s", callID))
++						fcDone, _ = sjson.SetBytes(fcDone, "output_index", outputIndex)
++						fcDone, _ = sjson.SetBytes(fcDone, "arguments", args)
++						out = append(out, emitRespEvent("response.function_call_arguments.done", fcDone))
++
++						itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}`)
++						itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
++						itemDone, _ = sjson.SetBytes(itemDone, "output_index", outputIndex)
++						itemDone, _ = sjson.SetBytes(itemDone, "item.id", fmt.Sprintf("fc_%s", callID))
++						itemDone, _ = sjson.SetBytes(itemDone, "item.arguments", args)
++						itemDone, _ = sjson.SetBytes(itemDone, "item.call_id", callID)
++						itemDone = applyResponsesFunctionCallNamespaceFields(itemDone, requestForNamespace, st.FuncNames[key], "item")
++						out = append(out, emitRespEvent("response.output_item.done", itemDone))
++						st.FuncItemDone[key] = true
++						st.FuncArgsDone[key] = true
++					}
++				}
++				st.CompletionPending = true
++			}
++
++			return true
++		})
++	}
++
++	return out
++}
++
++// ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream builds a single Responses JSON
++// from a non-streaming OpenAI Chat Completions response.
++func ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
++	root := gjson.ParseBytes(rawJSON)
++	requestForNamespace := pickRequestJSON(originalRequestRawJSON, requestRawJSON)
++
++	// Basic response scaffold
++	resp := []byte(`{"id":"","object":"response","created_at":0,"status":"completed","background":false,"error":null,"incomplete_details":null}`)
++
++	// id: use provider id if present, otherwise synthesize
++	id := root.Get("id").String()
++	if id == "" {
++		id = fmt.Sprintf("resp_%x_%d", time.Now().UnixNano(), atomic.AddUint64(&responseIDCounter, 1))
++	}
++	resp, _ = sjson.SetBytes(resp, "id", id)
++
++	// created_at: map from chat.completion created
++	created := root.Get("created").Int()
++	if created == 0 {
++		created = time.Now().Unix()
++	}
++	resp, _ = sjson.SetBytes(resp, "created_at", created)
++
++	// Echo request fields when available (aligns with streaming path behavior)
++	if len(requestRawJSON) > 0 {
++		req := gjson.ParseBytes(requestRawJSON)
++		if v := req.Get("instructions"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "instructions", v.String())
++		}
++		if v := req.Get("max_output_tokens"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "max_output_tokens", v.Int())
++		} else {
++			// Also support max_tokens from chat completion style
++			if v = req.Get("max_tokens"); v.Exists() {
++				resp, _ = sjson.SetBytes(resp, "max_output_tokens", v.Int())
++			}
++		}
++		if v := req.Get("max_tool_calls"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "max_tool_calls", v.Int())
++		}
++		if v := req.Get("model"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "model", v.String())
++		} else if v = root.Get("model"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "model", v.String())
++		}
++		if v := req.Get("parallel_tool_calls"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "parallel_tool_calls", v.Bool())
++		}
++		if v := req.Get("previous_response_id"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "previous_response_id", v.String())
++		}
++		if v := req.Get("prompt_cache_key"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "prompt_cache_key", v.String())
++		}
++		if v := req.Get("reasoning"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "reasoning", v.Value())
++		}
++		if v := req.Get("safety_identifier"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "safety_identifier", v.String())
++		}
++		if v := req.Get("service_tier"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "service_tier", v.String())
++		}
++		if v := req.Get("store"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "store", v.Bool())
++		}
++		if v := req.Get("temperature"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "temperature", v.Float())
++		}
++		if v := req.Get("text"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "text", v.Value())
++		}
++		if v := req.Get("tool_choice"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "tool_choice", v.Value())
++		}
++		if v := req.Get("tools"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "tools", v.Value())
++		}
++		if v := req.Get("top_logprobs"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "top_logprobs", v.Int())
++		}
++		if v := req.Get("top_p"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "top_p", v.Float())
++		}
++		if v := req.Get("truncation"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "truncation", v.String())
++		}
++		if v := req.Get("user"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "user", v.Value())
++		}
++		if v := req.Get("metadata"); v.Exists() {
++			resp, _ = sjson.SetBytes(resp, "metadata", v.Value())
++		}
++	} else if v := root.Get("model"); v.Exists() {
++		// Fallback model from response
++		resp, _ = sjson.SetBytes(resp, "model", v.String())
++	}
++
++	// Build output list from choices[...]
++	outputsWrapper := []byte(`{"arr":[]}`)
++	// Detect and capture reasoning content if present
++	rcText := gjson.GetBytes(rawJSON, "choices.0.message.reasoning_content").String()
++	includeReasoning := rcText != ""
++	if !includeReasoning && len(requestRawJSON) > 0 {
++		includeReasoning = gjson.GetBytes(requestRawJSON, "reasoning").Exists()
++	}
++	if includeReasoning {
++		rid := id
++		if strings.HasPrefix(rid, "resp_") {
++			rid = strings.TrimPrefix(rid, "resp_")
++		}
++		// Prefer summary_text from reasoning_content; encrypted_content is optional
++		reasoningItem := []byte(`{"id":"","type":"reasoning","encrypted_content":"","summary":[]}`)
++		reasoningItem, _ = sjson.SetBytes(reasoningItem, "id", fmt.Sprintf("rs_%s", rid))
++		if rcText != "" {
++			reasoningItem, _ = sjson.SetBytes(reasoningItem, "summary.0.type", "summary_text")
++			reasoningItem, _ = sjson.SetBytes(reasoningItem, "summary.0.text", rcText)
++		}
++		outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, "arr.-1", reasoningItem)
++	}
++
++	if choices := root.Get("choices"); choices.Exists() && choices.IsArray() {
++		choices.ForEach(func(_, choice gjson.Result) bool {
++			msg := choice.Get("message")
++			if msg.Exists() {
++				// Text message part
++				if c := msg.Get("content"); c.Exists() && c.String() != "" {
++					item := []byte(`{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}`)
++					item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("msg_%s_%d", id, int(choice.Get("index").Int())))
++					item, _ = sjson.SetBytes(item, "content.0.text", c.String())
++					outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, "arr.-1", item)
++				}
++
++				// Function/tool calls
++				if tcs := msg.Get("tool_calls"); tcs.Exists() && tcs.IsArray() {
++					customToolNames := responsesCustomToolNames(requestForNamespace)
++					tcs.ForEach(func(tcIndex, tc gjson.Result) bool {
++						callID := tc.Get("id").String()
++						if callID == "" {
++							// Providers may omit tool_call ids; synthesize one so the
++							// function_call item stays usable for Codex round-trips.
++							callID = fmt.Sprintf("call_%s_%d_%d", id, choice.Get("index").Int(), tcIndex.Int())
++						}
++						name := tc.Get("function.name").String()
++						args := tc.Get("function.arguments").String()
++						if _, isCustomTool := customToolNames[name]; isCustomTool {
++							item := []byte(`{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}`)
++							item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("ctc_%s", callID))
++							item, _ = sjson.SetBytes(item, "input", unwrapCustomToolInput(args))
++							item, _ = sjson.SetBytes(item, "call_id", callID)
++							item, _ = sjson.SetBytes(item, "name", name)
++							outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, "arr.-1", item)
++							return true
++						}
++						item := []byte(`{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`)
++						item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("fc_%s", callID))
++						item, _ = sjson.SetBytes(item, "arguments", args)
++						item, _ = sjson.SetBytes(item, "call_id", callID)
++						item = applyResponsesFunctionCallNamespaceFields(item, requestForNamespace, name, "")
++						outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, "arr.-1", item)
++						return true
++					})
++				}
++			}
++			return true
++		})
++	}
++	if gjson.GetBytes(outputsWrapper, "arr.#").Int() > 0 {
++		resp, _ = sjson.SetRawBytes(resp, "output", []byte(gjson.GetBytes(outputsWrapper, "arr").Raw))
++	}
++
++	// usage mapping
++	if usage := root.Get("usage"); usage.Exists() {
++		// Map common tokens
++		if usage.Get("prompt_tokens").Exists() || usage.Get("completion_tokens").Exists() || usage.Get("total_tokens").Exists() {
++			resp, _ = sjson.SetBytes(resp, "usage.input_tokens", usage.Get("prompt_tokens").Int())
++			if d := usage.Get("prompt_tokens_details.cached_tokens"); d.Exists() {
++				resp, _ = sjson.SetBytes(resp, "usage.input_tokens_details.cached_tokens", d.Int())
++			}
++			resp, _ = sjson.SetBytes(resp, "usage.output_tokens", usage.Get("completion_tokens").Int())
++			// Reasoning tokens not available in Chat Completions; set only if present under output_tokens_details
++			if d := usage.Get("output_tokens_details.reasoning_tokens"); d.Exists() {
++				resp, _ = sjson.SetBytes(resp, "usage.output_tokens_details.reasoning_tokens", d.Int())
++			}
++			resp, _ = sjson.SetBytes(resp, "usage.total_tokens", usage.Get("total_tokens").Int())
++		} else {
++			// Fallback to raw usage object if structure differs
++			resp, _ = sjson.SetBytes(resp, "usage", usage.Value())
++		}
++	}
++
++	return resp
++}
+diff --git a/service/relayconvert/internal/cpa_responses/response_test.go b/service/relayconvert/internal/cpa_responses/response_test.go
+new file mode 100644
+index 0000000..66859bf
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/response_test.go
+@@ -0,0 +1,961 @@
++package cparesponses
++
++import (
++	"context"
++	"strings"
++	"testing"
++
++	"github.com/tidwall/gjson"
++)
++
++func parseOpenAIResponsesSSEEvent(t *testing.T, chunk []byte) (string, gjson.Result) {
++	t.Helper()
++
++	lines := strings.Split(string(chunk), "\n")
++	if len(lines) < 2 {
++		t.Fatalf("unexpected SSE chunk: %q", chunk)
++	}
++
++	event := strings.TrimSpace(strings.TrimPrefix(lines[0], "event:"))
++	dataLine := strings.TrimSpace(strings.TrimPrefix(lines[1], "data:"))
++	if !gjson.Valid(dataLine) {
++		t.Fatalf("invalid SSE data JSON: %q", dataLine)
++	}
++	return event, gjson.Parse(dataLine)
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ResponseCompletedWaitsForDone(t *testing.T) {
++	t.Parallel()
++
++	request := []byte(`{"model":"gpt-5.4","tool_choice":"auto","parallel_tool_calls":true}`)
++
++	tests := []struct {
++		name           string
++		in             []string
++		doneInputIndex int // Index in tt.in where the terminal [DONE] chunk arrives and response.completed must be emitted.
++		hasUsage       bool
++		inputTokens    int64
++		outputTokens   int64
++		totalTokens    int64
++	}{
++		{
++			// A provider may send finish_reason first and only attach usage in a later chunk (e.g. Vertex AI),
++			// so response.completed must wait for [DONE] to include that usage.
++			name: "late usage after finish reason",
++			in: []string{
++				`data: {"id":"resp_late_usage","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_late_usage","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
++				`data: {"id":"resp_late_usage","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"filePath\":\"C:\\\\repo\\\\README.md\"}"}}]},"finish_reason":"tool_calls"}]}`,
++				`data: {"id":"resp_late_usage","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}`,
++				`data: [DONE]`,
++			},
++			doneInputIndex: 3,
++			hasUsage:       true,
++			inputTokens:    11,
++			outputTokens:   7,
++			totalTokens:    18,
++		},
++		{
++			// When usage arrives on the same chunk as finish_reason, we still expect a
++			// single response.completed event and it should remain deferred until [DONE].
++			name: "usage on finish reason chunk",
++			in: []string{
++				`data: {"id":"resp_usage_same_chunk","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_usage_same_chunk","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
++				`data: {"id":"resp_usage_same_chunk","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"filePath\":\"C:\\\\repo\\\\README.md\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":13,"completion_tokens":5,"total_tokens":18}}`,
++				`data: [DONE]`,
++			},
++			doneInputIndex: 2,
++			hasUsage:       true,
++			inputTokens:    13,
++			outputTokens:   5,
++			totalTokens:    18,
++		},
++		{
++			// An OpenAI-compatible streams from a buggy server might never send usage, so response.completed should
++			// still wait for [DONE] but omit the usage object entirely.
++			name: "no usage chunk",
++			in: []string{
++				`data: {"id":"resp_no_usage","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_no_usage","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
++				`data: {"id":"resp_no_usage","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"filePath\":\"C:\\\\repo\\\\README.md\"}"}}]},"finish_reason":"tool_calls"}]}`,
++				`data: [DONE]`,
++			},
++			doneInputIndex: 2,
++			hasUsage:       false,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			completedCount := 0
++			completedInputIndex := -1
++			var completedData gjson.Result
++
++			// Reuse converter state across input lines to simulate one streaming response.
++			var param any
++
++			for i, line := range tt.in {
++				// One upstream chunk can emit multiple downstream SSE events.
++				for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", request, request, []byte(line), &param) {
++					event, data := parseOpenAIResponsesSSEEvent(t, chunk)
++					if event != "response.completed" {
++						continue
++					}
++
++					completedCount++
++					completedInputIndex = i
++					completedData = data
++					if i < tt.doneInputIndex {
++						t.Fatalf("unexpected early response.completed on input index %d", i)
++					}
++				}
++			}
++
++			if completedCount != 1 {
++				t.Fatalf("expected exactly 1 response.completed event, got %d", completedCount)
++			}
++			if completedInputIndex != tt.doneInputIndex {
++				t.Fatalf("expected response.completed on terminal [DONE] chunk at input index %d, got %d", tt.doneInputIndex, completedInputIndex)
++			}
++
++			// Missing upstream usage should stay omitted in the final completed event.
++			if !tt.hasUsage {
++				if completedData.Get("response.usage").Exists() {
++					t.Fatalf("expected response.completed to omit usage when none was provided, got %s", completedData.Get("response.usage").Raw)
++				}
++				return
++			}
++
++			// When usage is present, the final response.completed event must preserve the usage values.
++			if got := completedData.Get("response.usage.input_tokens").Int(); got != tt.inputTokens {
++				t.Fatalf("unexpected response.usage.input_tokens: got %d want %d", got, tt.inputTokens)
++			}
++			if got := completedData.Get("response.usage.output_tokens").Int(); got != tt.outputTokens {
++				t.Fatalf("unexpected response.usage.output_tokens: got %d want %d", got, tt.outputTokens)
++			}
++			if got := completedData.Get("response.usage.total_tokens").Int(); got != tt.totalTokens {
++				t.Fatalf("unexpected response.usage.total_tokens: got %d want %d", got, tt.totalTokens)
++			}
++		})
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultipleToolCallsRemainSeparate(t *testing.T) {
++	in := []string{
++		`data: {"id":"resp_test","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_read","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_test","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"filePath\":\"C:\\\\repo\",\"limit\":400,\"offset\":1}"}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_test","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":1,"id":"call_glob","type":"function","function":{"name":"glob","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_test","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":1,"function":{"arguments":"{\"path\":\"C:\\\\repo\",\"pattern\":\"*.{yml,yaml}\"}"}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_test","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":10,"total_tokens":20,"prompt_tokens":10}}`,
++		`data: [DONE]`,
++	}
++
++	request := []byte(`{"model":"gpt-5.4","tool_choice":"auto","parallel_tool_calls":true}`)
++
++	var param any
++	var out [][]byte
++	for _, line := range in {
++		out = append(out, ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", request, request, []byte(line), &param)...)
++	}
++
++	addedNames := map[string]string{}
++	doneArgs := map[string]string{}
++	doneNames := map[string]string{}
++	outputItems := map[string]gjson.Result{}
++
++	for _, chunk := range out {
++		ev, data := parseOpenAIResponsesSSEEvent(t, chunk)
++		switch ev {
++		case "response.output_item.added":
++			if data.Get("item.type").String() != "function_call" {
++				continue
++			}
++			addedNames[data.Get("item.call_id").String()] = data.Get("item.name").String()
++		case "response.output_item.done":
++			if data.Get("item.type").String() != "function_call" {
++				continue
++			}
++			callID := data.Get("item.call_id").String()
++			doneArgs[callID] = data.Get("item.arguments").String()
++			doneNames[callID] = data.Get("item.name").String()
++		case "response.completed":
++			output := data.Get("response.output")
++			for _, item := range output.Array() {
++				if item.Get("type").String() == "function_call" {
++					outputItems[item.Get("call_id").String()] = item
 +				}
 +			}
 +		}
 +	}
-+	return descriptors
-+}
 +
-+func collectResponsesToolDescriptor(descriptors map[string]responsesToolDescriptor, tool map[string]any, namespace string) {
-+	toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
-+	if toolType == "namespace" {
-+		children, err := responsesNamespaceToolsFromValue(tool["tools"])
-+		if err != nil {
-+			return
-+		}
-+		namespaceName := strings.TrimSpace(common.Interface2String(tool["name"]))
-+		for _, child := range children {
-+			collectResponsesToolDescriptor(descriptors, child, namespaceName)
-+		}
-+		return
++	if len(addedNames) != 2 {
++		t.Fatalf("expected 2 function_call added events, got %d", len(addedNames))
 +	}
-+	if toolType != "" && toolType != "function" && toolType != dto.CustomType {
-+		return
++	if len(doneArgs) != 2 {
++		t.Fatalf("expected 2 function_call done events, got %d", len(doneArgs))
 +	}
-+	name := responsesNamespaceToolName(tool)
-+	qualifiedName := qualifyResponsesNamespaceName(namespace, name)
-+	if qualifiedName == "" {
-+		return
-+	}
-+	descriptors[qualifiedName] = responsesToolDescriptor{
-+		Name:      name,
-+		Namespace: strings.TrimSpace(namespace),
-+		Custom:    toolType == dto.CustomType,
-+	}
-+}
 +
-+func responsesNamespaceToolsFromValue(value any) ([]map[string]any, error) {
-+	if value == nil {
-+		return nil, nil
++	if addedNames["call_read"] != "read" {
++		t.Fatalf("unexpected added name for call_read: %q", addedNames["call_read"])
 +	}
-+	var raw []byte
-+	var err error
-+	if message, ok := value.(json.RawMessage); ok {
-+		raw = message
-+	} else {
-+		raw, err = common.Marshal(value)
-+		if err != nil {
-+			return nil, err
-+		}
++	if addedNames["call_glob"] != "glob" {
++		t.Fatalf("unexpected added name for call_glob: %q", addedNames["call_glob"])
 +	}
-+	var tools []map[string]any
-+	if err := common.Unmarshal(raw, &tools); err != nil {
-+		return nil, err
-+	}
-+	return tools, nil
-+}
 +
-+func responsesNamespaceToolName(tool map[string]any) string {
-+	if name := strings.TrimSpace(common.Interface2String(tool["name"])); name != "" {
-+		return name
++	if !gjson.Valid(doneArgs["call_read"]) {
++		t.Fatalf("invalid JSON args for call_read: %q", doneArgs["call_read"])
 +	}
-+	if function, ok := tool["function"].(map[string]any); ok {
-+		return strings.TrimSpace(common.Interface2String(function["name"]))
++	if !gjson.Valid(doneArgs["call_glob"]) {
++		t.Fatalf("invalid JSON args for call_glob: %q", doneArgs["call_glob"])
 +	}
-+	return ""
-+}
++	if strings.Contains(doneArgs["call_read"], "}{") {
++		t.Fatalf("call_read args were concatenated: %q", doneArgs["call_read"])
++	}
++	if strings.Contains(doneArgs["call_glob"], "}{") {
++		t.Fatalf("call_glob args were concatenated: %q", doneArgs["call_glob"])
++	}
 +
-+func qualifyResponsesNamespaceName(namespace, name string) string {
-+	namespace = strings.TrimSpace(namespace)
-+	name = strings.TrimSpace(name)
-+	if namespace == "" || name == "" || strings.HasPrefix(name, "mcp__") || strings.HasPrefix(name, namespace+"__") {
-+		return name
++	if doneNames["call_read"] != "read" {
++		t.Fatalf("unexpected done name for call_read: %q", doneNames["call_read"])
 +	}
-+	if strings.HasSuffix(namespace, "__") {
-+		return namespace + name
++	if doneNames["call_glob"] != "glob" {
++		t.Fatalf("unexpected done name for call_glob: %q", doneNames["call_glob"])
 +	}
-+	return namespace + "__" + name
-+}
 +
-+func restoreResponsesToolOutput(output *dto.ResponsesOutput, descriptors map[string]responsesToolDescriptor) {
-+	if output == nil {
-+		return
++	if got := gjson.Get(doneArgs["call_read"], "filePath").String(); got != `C:\repo` {
++		t.Fatalf("unexpected filePath for call_read: %q", got)
 +	}
-+	descriptor, ok := descriptors[strings.TrimSpace(output.Name)]
-+	if !ok {
-+		return
++	if got := gjson.Get(doneArgs["call_glob"], "path").String(); got != `C:\repo` {
++		t.Fatalf("unexpected path for call_glob: %q", got)
 +	}
-+	if descriptor.Custom {
-+		output.Type = "custom_tool_call"
-+		output.Input = unwrapResponsesCustomInput(output.Arguments)
-+		output.Arguments = nil
-+		return
++	if got := gjson.Get(doneArgs["call_glob"], "pattern").String(); got != "*.{yml,yaml}" {
++		t.Fatalf("unexpected pattern for call_glob: %q", got)
 +	}
-+	output.Name = descriptor.Name
-+	output.Namespace = descriptor.Namespace
-+}
 +
-+func RestoreResponsesToolOutputs(resp *dto.OpenAIResponsesResponse, req *dto.OpenAIResponsesRequest) {
-+	if resp == nil || req == nil {
-+		return
++	if len(outputItems) != 2 {
++		t.Fatalf("expected 2 function_call items in response.output, got %d", len(outputItems))
 +	}
-+	descriptors := responsesToolDescriptors(req)
-+	for index := range resp.Output {
-+		restoreResponsesToolOutput(&resp.Output[index], descriptors)
++	if outputItems["call_read"].Get("name").String() != "read" {
++		t.Fatalf("unexpected response.output name for call_read: %q", outputItems["call_read"].Get("name").String())
++	}
++	if outputItems["call_glob"].Get("name").String() != "glob" {
++		t.Fatalf("unexpected response.output name for call_glob: %q", outputItems["call_glob"].Get("name").String())
 +	}
 +}
 +
-+func unwrapResponsesCustomInput(arguments json.RawMessage) json.RawMessage {
-+	if len(arguments) == 0 {
-+		return json.RawMessage(`""`)
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultiChoiceToolCallsUseDistinctOutputIndexes(t *testing.T) {
++	in := []string{
++		`data: {"id":"resp_multi_choice","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_choice0","type":"function","function":{"name":"glob","arguments":""}}]},"finish_reason":null},{"index":1,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_choice1","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_multi_choice","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"C:\\\\repo\",\"pattern\":\"*.go\"}"}}]},"finish_reason":null},{"index":1,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"filePath\":\"C:\\\\repo\\\\README.md\",\"limit\":20,\"offset\":1}"}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_multi_choice","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":"tool_calls"},{"index":1,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":10,"total_tokens":20,"prompt_tokens":10}}`,
++		`data: [DONE]`,
 +	}
-+	argumentString := dto.ResponsesArgumentsString(arguments)
-+	var wrapped map[string]any
-+	if err := common.Unmarshal([]byte(argumentString), &wrapped); err == nil {
-+		if input, ok := wrapped["input"]; ok {
-+			if raw, err := common.Marshal(input); err == nil {
-+				return raw
-+			}
-+		}
-+	}
-+	if raw, err := common.Marshal(argumentString); err == nil {
-+		return raw
-+	}
-+	return json.RawMessage(`""`)
-+}
-diff --git a/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go b/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
-index a5034a0..4590974 100644
---- a/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
-+++ b/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
-@@ -1,6 +1,7 @@
- package oaichat
- 
- import (
-+	"encoding/json"
- 	"testing"
- 
- 	"github.com/QuantumNous/new-api/dto"
-@@ -41,6 +42,88 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
- 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(resp.Output[1].Arguments))
- }
- 
-+func TestRestoreResponsesToolOutputsRestoresNamespaceAndCustomTools(t *testing.T) {
-+	req := &dto.OpenAIResponsesRequest{
-+		Tools: mustResponsesRawMessage(t, []map[string]any{
-+			{
-+				"type":  "namespace",
-+				"name":  "mcp__github",
-+				"tools": []map[string]any{{"type": "function", "name": "get_me"}},
-+			},
-+		}),
-+		Input: mustResponsesRawMessage(t, []map[string]any{
-+			{
-+				"type": "additional_tools",
-+				"tools": []map[string]any{
-+					{
-+						"type":  "namespace",
-+						"name":  "terminal",
-+						"tools": []map[string]any{{"type": "custom", "name": "exec"}},
-+					},
-+				},
-+			},
-+		}),
-+	}
-+	resp := &dto.OpenAIResponsesResponse{Output: []dto.ResponsesOutput{
-+		{Type: "function_call", Name: "mcp__github__get_me", Arguments: []byte(`"{}"`)},
-+		{Type: "function_call", Name: "terminal__exec", Arguments: []byte(`"{\"input\":\"pwd\"}"`)},
-+	}}
 +
-+	RestoreResponsesToolOutputs(resp, req)
-+	require.Len(t, resp.Output, 2)
-+	assert.Equal(t, "get_me", resp.Output[0].Name)
-+	assert.Equal(t, "mcp__github", resp.Output[0].Namespace)
-+	assert.Equal(t, "custom_tool_call", resp.Output[1].Type)
-+	assert.Equal(t, "terminal__exec", resp.Output[1].Name)
-+	assert.JSONEq(t, `"pwd"`, string(resp.Output[1].Input))
-+	assert.Empty(t, resp.Output[1].Arguments)
-+}
++	request := []byte(`{"model":"gpt-5.4","tool_choice":"auto","parallel_tool_calls":true}`)
 +
-+func TestChatToResponsesStreamRestoresNamespaceToolCall(t *testing.T) {
-+	req := &dto.OpenAIResponsesRequest{Tools: mustResponsesRawMessage(t, []map[string]any{
-+		{
-+			"type":  "namespace",
-+			"name":  "mcp__github",
-+			"tools": []map[string]any{{"type": "function", "name": "get_me"}},
-+		},
-+	})}
-+	state := NewChatToResponsesStreamState("resp_1", "deepseek-v4-flash")
-+	state.SetOriginalResponsesRequest(req)
-+	toolIndex := 0
-+	chunk := &dto.ChatCompletionsStreamResponse{Choices: []dto.ChatCompletionsStreamResponseChoice{
-+		{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{
-+			{Index: &toolIndex, ID: "call_1", Type: "function", Function: dto.FunctionResponse{Name: "mcp__github__get_me", Arguments: `{}`}},
-+		}}},
-+	}}
++	var param any
++	var out [][]byte
++	for _, line := range in {
++		out = append(out, ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", request, request, []byte(line), &param)...)
++	}
 +
-+	events, err := ChatCompletionsStreamChunkToResponsesEvents(chunk, state)
-+	require.NoError(t, err)
-+	var added *dto.ResponsesOutput
-+	for _, event := range events {
-+		if event.Type == responsesEventOutputItemAdded {
-+			added = event.Payload.Item
-+		}
++	type fcEvent struct {
++		outputIndex int64
++		name        string
++		arguments   string
 +	}
-+	require.NotNil(t, added)
-+	assert.Equal(t, "get_me", added.Name)
-+	assert.Equal(t, "mcp__github", added.Namespace)
 +
-+	finalEvents := FinalizeChatCompletionsStreamToResponses(state)
-+	require.NotEmpty(t, finalEvents)
-+	completed := finalEvents[len(finalEvents)-1].Payload.Response
-+	require.NotNil(t, completed)
-+	require.Len(t, completed.Output, 1)
-+	assert.Equal(t, "get_me", completed.Output[0].Name)
-+	assert.Equal(t, "mcp__github", completed.Output[0].Namespace)
-+}
++	added := map[string]fcEvent{}
++	done := map[string]fcEvent{}
 +
-+func mustResponsesRawMessage(t *testing.T, value any) json.RawMessage {
-+	t.Helper()
-+	raw, err := json.Marshal(value)
-+	require.NoError(t, err)
-+	return raw
-+}
-+
- func TestChatCompletionsResponseToResponsesMapsIncompleteFinishReasons(t *testing.T) {
- 	tests := []struct {
- 		name         string
-diff --git a/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go b/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
-index 75c602d..cfb26ea 100644
---- a/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
-+++ b/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
-@@ -1,6 +1,7 @@
- package oaichat
- 
- import (
-+	"encoding/json"
- 	"fmt"
- 	"sort"
- 	"strings"
-@@ -35,6 +36,7 @@ type ChatToResponsesStreamState struct {
- 	outputOrder       []chatToResponsesOutputRef
- 	text              strings.Builder
- 	reasoning         strings.Builder
-+	toolDescriptors   map[string]responsesToolDescriptor
- }
- 
- type chatToResponsesStreamTool struct {
-@@ -42,6 +44,8 @@ type chatToResponsesStreamTool struct {
- 	OutputIndex int
- 	ID          string
- 	Name        string
-+	Namespace   string
-+	Custom      bool
- 	Arguments   strings.Builder
- 	Done        bool
- }
-@@ -61,9 +65,17 @@ func NewChatToResponsesStreamState(id string, model string) *ChatToResponsesStre
- 		textOutputIndex: -1,
- 		reasoningIndex:  -1,
- 		toolsByIndex:    make(map[int]*chatToResponsesStreamTool),
-+		toolDescriptors: make(map[string]responsesToolDescriptor),
- 	}
- }
- 
-+func (s *ChatToResponsesStreamState) SetOriginalResponsesRequest(req *dto.OpenAIResponsesRequest) {
-+	if s == nil || req == nil || len(s.toolDescriptors) > 0 {
-+		return
-+	}
-+	s.toolDescriptors = responsesToolDescriptors(req)
-+}
-+
- func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStreamResponse, state *ChatToResponsesStreamState) ([]ChatToResponsesStreamEvent, error) {
- 	if chunk == nil || state == nil {
- 		return nil, nil
-@@ -199,44 +211,70 @@ func (s *ChatToResponsesStreamState) appendToolCallDelta(toolCall dto.ToolCallRe
- 	tool := s.toolsByIndex[chatIndex]
- 	events := make([]ChatToResponsesStreamEvent, 0, 2)
- 	if tool == nil {
-+		qualifiedName := strings.TrimSpace(toolCall.Function.Name)
-+		descriptor, hasDescriptor := s.toolDescriptors[qualifiedName]
- 		tool = &chatToResponsesStreamTool{
- 			ChatIndex:   chatIndex,
- 			OutputIndex: s.nextIndex("tool", chatIndex),
- 			ID:          strings.TrimSpace(toolCall.ID),
--			Name:        strings.TrimSpace(toolCall.Function.Name),
-+			Name:        qualifiedName,
-+		}
-+		if hasDescriptor {
-+			tool.Custom = descriptor.Custom
-+			if !descriptor.Custom {
-+				tool.Name = descriptor.Name
-+				tool.Namespace = descriptor.Namespace
-+			}
- 		}
- 		if tool.ID == "" {
- 			tool.ID = fmt.Sprintf("%s_call_%d", s.ID, chatIndex)
- 		}
- 		s.toolsByIndex[chatIndex] = tool
-+		item := &dto.ResponsesOutput{
-+			Type:      responsesOutputTypeFunctionCall,
-+			ID:        tool.ID,
-+			Status:    "in_progress",
-+			CallId:    tool.ID,
-+			Name:      tool.Name,
-+			Namespace: tool.Namespace,
-+			Arguments: []byte(`""`),
-+		}
-+		if tool.Custom {
-+			item.Type = "custom_tool_call"
-+			item.Input = []byte(`""`)
-+			item.Arguments = nil
-+		}
- 		events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
- 			Type:        responsesEventOutputItemAdded,
- 			OutputIndex: intPtr(tool.OutputIndex),
- 			ItemID:      tool.ID,
--			Item: &dto.ResponsesOutput{
--				Type:      responsesOutputTypeFunctionCall,
--				ID:        tool.ID,
--				Status:    "in_progress",
--				CallId:    tool.ID,
--				Name:      tool.Name,
--				Arguments: []byte(`""`),
--			},
-+			Item:        item,
- 		}))
- 	}
- 	if strings.TrimSpace(toolCall.ID) != "" {
- 		tool.ID = strings.TrimSpace(toolCall.ID)
- 	}
- 	if strings.TrimSpace(toolCall.Function.Name) != "" {
--		tool.Name = strings.TrimSpace(toolCall.Function.Name)
-+		qualifiedName := strings.TrimSpace(toolCall.Function.Name)
-+		tool.Name = qualifiedName
-+		if descriptor, ok := s.toolDescriptors[qualifiedName]; ok {
-+			tool.Custom = descriptor.Custom
-+			if !descriptor.Custom {
-+				tool.Name = descriptor.Name
-+				tool.Namespace = descriptor.Namespace
-+			}
-+		}
- 	}
- 	if toolCall.Function.Arguments != "" {
- 		tool.Arguments.WriteString(toolCall.Function.Arguments)
--		events = append(events, responsesStreamEvent(responsesEventFunctionArgsDelta, dto.ResponsesStreamResponse{
--			Type:        responsesEventFunctionArgsDelta,
--			OutputIndex: intPtr(tool.OutputIndex),
--			ItemID:      tool.ID,
--			Delta:       toolCall.Function.Arguments,
--		}))
-+		if !tool.Custom {
-+			events = append(events, responsesStreamEvent(responsesEventFunctionArgsDelta, dto.ResponsesStreamResponse{
-+				Type:        responsesEventFunctionArgsDelta,
-+				OutputIndex: intPtr(tool.OutputIndex),
-+				ItemID:      tool.ID,
-+				Delta:       toolCall.Function.Arguments,
-+			}))
-+		}
- 	}
- 	return events, nil
- }
-@@ -281,11 +319,20 @@ func (s *ChatToResponsesStreamState) doneDeltaEvents() []ChatToResponsesStreamEv
- 			continue
- 		}
- 		tool.Done = true
--		events = append(events, responsesStreamEvent(responsesEventFunctionArgsDone, dto.ResponsesStreamResponse{
--			Type:        responsesEventFunctionArgsDone,
--			OutputIndex: intPtr(tool.OutputIndex),
--			ItemID:      tool.ID,
--		}))
-+		if tool.Custom {
-+			events = append(events, responsesStreamEvent("response.custom_tool_call_input.done", dto.ResponsesStreamResponse{
-+				Type:        "response.custom_tool_call_input.done",
-+				OutputIndex: intPtr(tool.OutputIndex),
-+				ItemID:      tool.ID,
-+				Input:       responsesCustomInputString(tool.Arguments.String()),
-+			}))
-+		} else {
-+			events = append(events, responsesStreamEvent(responsesEventFunctionArgsDone, dto.ResponsesStreamResponse{
-+				Type:        responsesEventFunctionArgsDone,
-+				OutputIndex: intPtr(tool.OutputIndex),
-+				ItemID:      tool.ID,
-+			}))
-+		}
- 		events = append(events, responsesStreamEvent(responsesEventOutputItemDone, dto.ResponsesStreamResponse{
- 			Type:        responsesEventOutputItemDone,
- 			OutputIndex: intPtr(tool.OutputIndex),
-@@ -406,12 +453,28 @@ func (s *ChatToResponsesStreamState) reasoningOutput(status string) *dto.Respons
- }
- 
- func (s *ChatToResponsesStreamState) toolOutput(tool *chatToResponsesStreamTool, status string) *dto.ResponsesOutput {
--	return &dto.ResponsesOutput{
-+	output := &dto.ResponsesOutput{
- 		Type:      responsesOutputTypeFunctionCall,
- 		ID:        tool.ID,
- 		Status:    status,
- 		CallId:    tool.ID,
- 		Name:      tool.Name,
-+		Namespace: tool.Namespace,
- 		Arguments: chatArgumentsRawMessage(tool.Arguments.String()),
- 	}
-+	if tool.Custom {
-+		output.Type = "custom_tool_call"
-+		output.Input = unwrapResponsesCustomInput(output.Arguments)
-+		output.Arguments = nil
-+	}
-+	return output
-+}
-+
-+func responsesCustomInputString(arguments string) string {
-+	raw := unwrapResponsesCustomInput(chatArgumentsRawMessage(arguments))
-+	var input string
-+	if err := json.Unmarshal(raw, &input); err == nil {
-+		return input
-+	}
-+	return string(raw)
- }
-diff --git a/service/relayconvert/internal/oai_responses/to_oai_chat_req.go b/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
-index 7779364..56cdcbb 100644
---- a/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
-+++ b/service/relayconvert/internal/oai_responses/to_oai_chat_req.go
-@@ -15,6 +15,7 @@ const (
- 	responsesInputTypeFunctionCallOutput = "function_call_output"
- 	responsesInputTypeCustomToolCall     = "custom_tool_call"
- 	responsesInputTypeCustomToolOutput   = "custom_tool_call_output"
-+	responsesInputTypeAdditionalTools    = "additional_tools"
- )
- 
- const (
-@@ -40,7 +41,7 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
- 		return nil, err
- 	}
- 
--	tools, err := responsesRequestToolsToChat(req.Tools)
-+	tools, err := responsesRequestToolsToChat(req)
- 	if err != nil {
- 		return nil, err
- 	}
-@@ -49,6 +50,9 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
- 	if err != nil {
- 		return nil, err
- 	}
-+	if len(tools) == 0 {
-+		toolChoice = nil
-+	}
- 
- 	responseFormat, err := responsesRequestTextToChatResponseFormat(req.Text)
- 	if err != nil {
-@@ -81,7 +85,7 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
- 	if req.ServiceTier != "" {
- 		out.ServiceTier, _ = common.Marshal(req.ServiceTier)
- 	}
--	if len(req.ParallelToolCalls) > 0 && common.GetJsonType(req.ParallelToolCalls) == "boolean" {
-+	if len(tools) > 0 && len(req.ParallelToolCalls) > 0 && common.GetJsonType(req.ParallelToolCalls) == "boolean" {
- 		var parallelToolCalls bool
- 		if err := common.Unmarshal(req.ParallelToolCalls, &parallelToolCalls); err == nil {
- 			out.ParallelTooCalls = &parallelToolCalls
-@@ -166,6 +170,8 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
- func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, error) {
- 	itemType := strings.TrimSpace(common.Interface2String(item["type"]))
- 	switch itemType {
-+	case responsesInputTypeAdditionalTools:
-+		return messages, nil
- 	case responsesInputTypeFunctionCall:
- 		toolCall, err := responsesFunctionCallItemToChatToolCall(item)
- 		if err != nil {
-@@ -178,7 +184,7 @@ func responsesInputItemToChatMessages(item map[string]any, messages []dto.Messag
- 			return nil, err
- 		}
- 		return appendToolCallToLastAssistant(messages, toolCall), nil
--	case responsesInputTypeFunctionCallOutput:
-+	case responsesInputTypeFunctionCallOutput, responsesInputTypeCustomToolOutput:
- 		callID := strings.TrimSpace(common.Interface2String(item["call_id"]))
- 		content := responseToolOutputToChatContent(item["output"])
- 		return append(messages, dto.Message{Role: "tool", ToolCallId: callID, Content: content}), nil
-@@ -279,6 +285,7 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
- 	if name == "" {
- 		return dto.ToolCallRequest{}, errors.New("function_call item is missing name")
- 	}
-+	name = qualifyResponsesNamespaceToolName(common.Interface2String(item["namespace"]), name)
- 	return dto.ToolCallRequest{
- 		ID:   responsesCallID(item),
- 		Type: "function",
-@@ -290,17 +297,21 @@ func responsesFunctionCallItemToChatToolCall(item map[string]any) (dto.ToolCallR
- }
- 
- func responsesCustomToolCallItemToChatToolCall(item map[string]any) (dto.ToolCallRequest, error) {
--	raw, err := common.Marshal(item)
-+	name := strings.TrimSpace(common.Interface2String(item["name"]))
-+	if name == "" {
-+		return dto.ToolCallRequest{}, errors.New("custom_tool_call item is missing name")
-+	}
-+	name = qualifyResponsesNamespaceToolName(common.Interface2String(item["namespace"]), name)
-+	wrappedInput, err := common.Marshal(map[string]any{"input": item["input"]})
- 	if err != nil {
- 		return dto.ToolCallRequest{}, err
- 	}
- 	return dto.ToolCallRequest{
--		ID:     responsesCallID(item),
--		Type:   dto.CustomType,
--		Custom: raw,
-+		ID:   responsesCallID(item),
-+		Type: "function",
- 		Function: dto.FunctionRequest{
--			Name:      strings.TrimSpace(common.Interface2String(item["name"])),
--			Arguments: responsesArgumentsString(item["input"]),
-+			Name:      name,
-+			Arguments: string(wrappedInput),
- 		},
- 	}, nil
- }
-@@ -318,43 +329,164 @@ func appendToolCallToLastAssistant(messages []dto.Message, toolCall dto.ToolCall
- 	return messages
- }
- 
--func responsesRequestToolsToChat(raw json.RawMessage) ([]dto.ToolCallRequest, error) {
--	if !rawJSONPresent(raw) {
-+func responsesRequestToolsToChat(req *dto.OpenAIResponsesRequest) ([]dto.ToolCallRequest, error) {
-+	if req == nil {
- 		return nil, nil
- 	}
- 
--	var tools []map[string]any
--	if err := common.Unmarshal(raw, &tools); err != nil {
--		return nil, fmt.Errorf("invalid tools: %w", err)
--	}
--
--	out := make([]dto.ToolCallRequest, 0, len(tools))
--	for _, tool := range tools {
--		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
--		if toolType == "function" {
--			out = append(out, dto.ToolCallRequest{
--				Type: "function",
--				Function: dto.FunctionRequest{
--					Name:        strings.TrimSpace(common.Interface2String(tool["name"])),
--					Description: common.Interface2String(tool["description"]),
--					Parameters:  tool["parameters"],
--				},
--			})
--			continue
-+	toolGroups := make([][]map[string]any, 0, 2)
-+	if rawJSONPresent(req.Tools) {
-+		var tools []map[string]any
-+		if err := common.Unmarshal(req.Tools, &tools); err != nil {
-+			return nil, fmt.Errorf("invalid tools: %w", err)
-+		}
-+		toolGroups = append(toolGroups, tools)
-+	}
-+	if rawJSONPresent(req.Input) && common.GetJsonType(req.Input) == "array" {
-+		var inputItems []map[string]any
-+		if err := common.Unmarshal(req.Input, &inputItems); err != nil {
-+			return nil, fmt.Errorf("invalid input: %w", err)
-+		}
-+		for _, item := range inputItems {
-+			if strings.TrimSpace(common.Interface2String(item["type"])) != responsesInputTypeAdditionalTools {
++	for _, chunk := range out {
++		ev, data := parseOpenAIResponsesSSEEvent(t, chunk)
++		switch ev {
++		case "response.output_item.added":
++			if data.Get("item.type").String() != "function_call" {
 +				continue
 +			}
-+			tools, err := responsesToolsFromValue(item["tools"])
-+			if err != nil {
-+				return nil, fmt.Errorf("invalid additional_tools: %w", err)
++			callID := data.Get("item.call_id").String()
++			added[callID] = fcEvent{
++				outputIndex: data.Get("output_index").Int(),
++				name:        data.Get("item.name").String(),
 +			}
-+			toolGroups = append(toolGroups, tools)
- 		}
++		case "response.output_item.done":
++			if data.Get("item.type").String() != "function_call" {
++				continue
++			}
++			callID := data.Get("item.call_id").String()
++			done[callID] = fcEvent{
++				outputIndex: data.Get("output_index").Int(),
++				name:        data.Get("item.name").String(),
++				arguments:   data.Get("item.arguments").String(),
++			}
++		}
 +	}
- 
--		rawTool, err := common.Marshal(tool)
--		if err != nil {
--			return nil, err
-+	out := make([]dto.ToolCallRequest, 0)
-+	for _, tools := range toolGroups {
-+		for _, tool := range tools {
-+			if err := appendResponsesToolToChat(&out, tool, ""); err != nil {
-+				return nil, err
++
++	if len(added) != 2 {
++		t.Fatalf("expected 2 function_call added events, got %d", len(added))
++	}
++	if len(done) != 2 {
++		t.Fatalf("expected 2 function_call done events, got %d", len(done))
++	}
++
++	if added["call_choice0"].name != "glob" {
++		t.Fatalf("unexpected added name for call_choice0: %q", added["call_choice0"].name)
++	}
++	if added["call_choice1"].name != "read" {
++		t.Fatalf("unexpected added name for call_choice1: %q", added["call_choice1"].name)
++	}
++	if added["call_choice0"].outputIndex == added["call_choice1"].outputIndex {
++		t.Fatalf("expected distinct output indexes for different choices, both got %d", added["call_choice0"].outputIndex)
++	}
++
++	if !gjson.Valid(done["call_choice0"].arguments) {
++		t.Fatalf("invalid JSON args for call_choice0: %q", done["call_choice0"].arguments)
++	}
++	if !gjson.Valid(done["call_choice1"].arguments) {
++		t.Fatalf("invalid JSON args for call_choice1: %q", done["call_choice1"].arguments)
++	}
++	if done["call_choice0"].outputIndex == done["call_choice1"].outputIndex {
++		t.Fatalf("expected distinct done output indexes for different choices, both got %d", done["call_choice0"].outputIndex)
++	}
++	if done["call_choice0"].name != "glob" {
++		t.Fatalf("unexpected done name for call_choice0: %q", done["call_choice0"].name)
++	}
++	if done["call_choice1"].name != "read" {
++		t.Fatalf("unexpected done name for call_choice1: %q", done["call_choice1"].name)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MixedMessageAndToolUseDistinctOutputIndexes(t *testing.T) {
++	in := []string{
++		`data: {"id":"resp_mixed","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":"hello","reasoning_content":null,"tool_calls":null},"finish_reason":null},{"index":1,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_choice1","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_mixed","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":"stop"},{"index":1,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"filePath\":\"C:\\\\repo\\\\README.md\",\"limit\":20,\"offset\":1}"}}]},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":10,"total_tokens":20,"prompt_tokens":10}}`,
++		`data: [DONE]`,
++	}
++
++	request := []byte(`{"model":"gpt-5.4","tool_choice":"auto","parallel_tool_calls":true}`)
++
++	var param any
++	var out [][]byte
++	for _, line := range in {
++		out = append(out, ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", request, request, []byte(line), &param)...)
++	}
++
++	var messageOutputIndex int64 = -1
++	var toolOutputIndex int64 = -1
++
++	for _, chunk := range out {
++		ev, data := parseOpenAIResponsesSSEEvent(t, chunk)
++		if ev != "response.output_item.added" {
++			continue
++		}
++		switch data.Get("item.type").String() {
++		case "message":
++			if data.Get("item.id").String() == "msg_resp_mixed_0" {
++				messageOutputIndex = data.Get("output_index").Int()
 +			}
- 		}
--		out = append(out, dto.ToolCallRequest{
--			Type:   toolType,
--			Custom: rawTool,
--		})
- 	}
- 	return out, nil
- }
- 
-+func appendResponsesToolToChat(out *[]dto.ToolCallRequest, tool map[string]any, namespace string) error {
-+	toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
++		case "function_call":
++			if data.Get("item.call_id").String() == "call_choice1" {
++				toolOutputIndex = data.Get("output_index").Int()
++			}
++		}
++	}
++
++	if messageOutputIndex < 0 {
++		t.Fatal("did not find message output index")
++	}
++	if toolOutputIndex < 0 {
++		t.Fatal("did not find tool output index")
++	}
++	if messageOutputIndex == toolOutputIndex {
++		t.Fatalf("expected distinct output indexes for message and tool call, both got %d", messageOutputIndex)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_CompletedOmitsTopLevelOutputText(t *testing.T) {
++	in := []string{
++		`data: {"id":"resp_output_text","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":"hello ","reasoning_content":null,"tool_calls":null},"finish_reason":null}]}`,
++		`data: {"id":"resp_output_text","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":"world","reasoning_content":null,"tool_calls":null},"finish_reason":"stop"}],"usage":{"completion_tokens":2,"total_tokens":4,"prompt_tokens":2}}`,
++		`data: [DONE]`,
++	}
++
++	request := []byte(`{"model":"gpt-5.4"}`)
++
++	var param any
++	var completed gjson.Result
++	for _, line := range in {
++		for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", request, request, []byte(line), &param) {
++			ev, data := parseOpenAIResponsesSSEEvent(t, chunk)
++			if ev == "response.completed" {
++				completed = data
++			}
++		}
++	}
++
++	if !completed.Exists() {
++		t.Fatal("expected response.completed event")
++	}
++	if completed.Get("response.output_text").Exists() {
++		t.Fatalf("response.output_text should be omitted to match native Responses output: %s", completed.Get("response.output_text").Raw)
++	}
++	if got := completed.Get("response.output.0.content.0.text").String(); got != "hello world" {
++		t.Fatalf("response.output text = %q, want %q", got, "hello world")
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ToolCallCompletedOmitsTopLevelOutputText(t *testing.T) {
++	in := []string{
++		`data: {"id":"resp_tool_output_text","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":"I will call the weather tool.","reasoning_content":null,"tool_calls":null},"finish_reason":null}]}`,
++		`data: {"id":"resp_tool_output_text","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_weather","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_tool_output_text","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"location\":\"北京\",\"unit\":\"celsius\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":10,"total_tokens":20,"prompt_tokens":10}}`,
++		`data: [DONE]`,
++	}
++
++	request := []byte(`{"model":"gpt-5.4","tool_choice":"auto","parallel_tool_calls":true}`)
++
++	var param any
++	var completed gjson.Result
++	for _, line := range in {
++		for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", request, request, []byte(line), &param) {
++			ev, data := parseOpenAIResponsesSSEEvent(t, chunk)
++			if ev == "response.completed" {
++				completed = data
++			}
++		}
++	}
++
++	if !completed.Exists() {
++		t.Fatal("expected response.completed event")
++	}
++	if completed.Get("response.output_text").Exists() {
++		t.Fatalf("response.output_text should be omitted to match native Responses output: %s", completed.Get("response.output_text").Raw)
++	}
++	if got := completed.Get("response.output.0.content.0.text").String(); got != "I will call the weather tool." {
++		t.Fatalf("response output text = %q, want %q", got, "I will call the weather tool.")
++	}
++	if got := completed.Get("response.output.1.arguments").String(); !strings.Contains(got, "北京") {
++		t.Fatalf("response function call arguments = %q, want Beijing argument", got)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_FunctionCallDoneAndCompletedOutputStayAscending(t *testing.T) {
++	in := []string{
++		`data: {"id":"resp_order","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_glob","type":"function","function":{"name":"glob","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_order","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"C:\\\\repo\",\"pattern\":\"*.go\"}"}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_order","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":1,"id":"call_read","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_order","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":1,"function":{"arguments":"{\"filePath\":\"C:\\\\repo\\\\README.md\",\"limit\":20,\"offset\":1}"}}]},"finish_reason":null}]}`,
++		`data: {"id":"resp_order","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":10,"total_tokens":20,"prompt_tokens":10}}`,
++		`data: [DONE]`,
++	}
++
++	request := []byte(`{"model":"gpt-5.4","tool_choice":"auto","parallel_tool_calls":true}`)
++
++	var param any
++	var out [][]byte
++	for _, line := range in {
++		out = append(out, ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", request, request, []byte(line), &param)...)
++	}
++
++	var doneIndexes []int64
++	var completedOrder []string
++
++	for _, chunk := range out {
++		ev, data := parseOpenAIResponsesSSEEvent(t, chunk)
++		switch ev {
++		case "response.output_item.done":
++			if data.Get("item.type").String() == "function_call" {
++				doneIndexes = append(doneIndexes, data.Get("output_index").Int())
++			}
++		case "response.completed":
++			for _, item := range data.Get("response.output").Array() {
++				if item.Get("type").String() == "function_call" {
++					completedOrder = append(completedOrder, item.Get("call_id").String())
++				}
++			}
++		}
++	}
++
++	if len(doneIndexes) != 2 {
++		t.Fatalf("expected 2 function_call done indexes, got %d", len(doneIndexes))
++	}
++	if doneIndexes[0] >= doneIndexes[1] {
++		t.Fatalf("expected ascending done output indexes, got %v", doneIndexes)
++	}
++	if len(completedOrder) != 2 {
++		t.Fatalf("expected 2 function_call items in completed output, got %d", len(completedOrder))
++	}
++	if completedOrder[0] != "call_glob" || completedOrder[1] != "call_read" {
++		t.Fatalf("unexpected completed function_call order: %v", completedOrder)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream_OmitsTopLevelOutputText(t *testing.T) {
++	request := []byte(`{"model":"gpt-5.4"}`)
++	raw := []byte(`{"id":"chatcmpl_output_text","object":"chat.completion","created":1773896263,"model":"model","choices":[{"index":0,"message":{"role":"assistant","content":"ping"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`)
++
++	resp := ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(context.Background(), "model", request, request, raw, nil)
++	data := gjson.ParseBytes(resp)
++
++	if data.Get("output_text").Exists() {
++		t.Fatalf("output_text should be omitted to match native Responses output: %s", resp)
++	}
++	if got := data.Get("output.0.content.0.text").String(); got != "ping" {
++		t.Fatalf("output text = %q, want %q; response=%s", got, "ping", resp)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_RestoresNamespaceFunctionCall(t *testing.T) {
++	originalRequest := []byte(`{
++		"model":"deepseek-v4-flash",
++		"tools":[
++			{
++				"type":"namespace",
++				"name":"mcp__test_mcp__",
++				"tools":[{"type":"function","name":"add_numbers","parameters":{"type":"object","properties":{}}}]
++			}
++		]
++	}`)
++	chunks := []string{
++		`data: {"id":"chatcmpl_namespace_stream","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_ns","type":"function","function":{"name":"mcp__test_mcp__add_numbers","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"chatcmpl_namespace_stream","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"a\":3,\"b\":5}"}}]},"finish_reason":"tool_calls"}]}`,
++		`data: [DONE]`,
++	}
++
++	var param any
++	var added gjson.Result
++	var done gjson.Result
++	var completed gjson.Result
++	for _, line := range chunks {
++		for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", originalRequest, nil, []byte(line), &param) {
++			event, data := parseOpenAIResponsesSSEEvent(t, chunk)
++			switch event {
++			case "response.output_item.added":
++				if data.Get("item.type").String() == "function_call" {
++					added = data
++				}
++			case "response.output_item.done":
++				if data.Get("item.type").String() == "function_call" {
++					done = data
++				}
++			case "response.completed":
++				completed = data
++			}
++		}
++	}
++
++	for _, tc := range []struct {
++		label string
++		got   gjson.Result
++	}{
++		{"added", added},
++		{"done", done},
++	} {
++		if !tc.got.Exists() {
++			t.Fatalf("expected function_call %s event", tc.label)
++		}
++		if got := tc.got.Get("item.name").String(); got != "add_numbers" {
++			t.Fatalf("%s item.name = %q, want add_numbers", tc.label, got)
++		}
++		if got := tc.got.Get("item.namespace").String(); got != "mcp__test_mcp__" {
++			t.Fatalf("%s item.namespace = %q, want mcp__test_mcp__", tc.label, got)
++		}
++	}
++	if !completed.Exists() {
++		t.Fatal("expected response.completed event")
++	}
++	if got := completed.Get("response.output.0.name").String(); got != "add_numbers" {
++		t.Fatalf("completed output name = %q, want add_numbers", got)
++	}
++	if got := completed.Get("response.output.0.namespace").String(); got != "mcp__test_mcp__" {
++		t.Fatalf("completed output namespace = %q, want mcp__test_mcp__", got)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream_RestoresNamespaceFunctionCall(t *testing.T) {
++	originalRequest := []byte(`{
++		"model":"deepseek-v4-flash",
++		"tools":[
++			{
++				"type":"namespace",
++				"name":"mcp__test_mcp__",
++				"tools":[{"type":"function","name":"add_numbers","parameters":{"type":"object","properties":{}}}]
++			}
++		]
++	}`)
++	raw := []byte(`{"id":"chatcmpl_namespace_nonstream","object":"chat.completion","created":1773896263,"model":"model","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_ns","type":"function","function":{"name":"mcp__test_mcp__add_numbers","arguments":"{\"a\":3,\"b\":5}"}}]},"finish_reason":"tool_calls"}]}`)
++
++	resp := ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(context.Background(), "model", originalRequest, nil, raw, nil)
++	data := gjson.ParseBytes(resp)
++
++	if got := data.Get("output.0.name").String(); got != "add_numbers" {
++		t.Fatalf("non-stream output name = %q, want add_numbers; response=%s", got, resp)
++	}
++	if got := data.Get("output.0.namespace").String(); got != "mcp__test_mcp__" {
++		t.Fatalf("non-stream output namespace = %q, want mcp__test_mcp__; response=%s", got, resp)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_CustomToolNameArrivesLate(t *testing.T) {
++	originalRequest := []byte(`{
++		"model":"gpt-5.4",
++		"tools":[{"type":"custom","name":"exec"}]
++	}`)
++	chunks := []string{
++		`data: {"id":"chatcmpl_custom_late_name","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_exec","type":"function","function":{"arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"chatcmpl_custom_late_name","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"exec","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"chatcmpl_custom_late_name","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"input\":\"pwd\"}"}}]},"finish_reason":"tool_calls"}]}`,
++		`data: [DONE]`,
++	}
++
++	var param any
++	var added gjson.Result
++	var inputDone gjson.Result
++	var itemDone gjson.Result
++	var completed gjson.Result
++	for _, line := range chunks {
++		for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", originalRequest, nil, []byte(line), &param) {
++			event, data := parseOpenAIResponsesSSEEvent(t, chunk)
++			switch event {
++			case "response.output_item.added":
++				if data.Get("item.call_id").String() == "call_exec" {
++					added = data
++				}
++			case "response.custom_tool_call_input.done":
++				inputDone = data
++			case "response.output_item.done":
++				if data.Get("item.call_id").String() == "call_exec" {
++					itemDone = data
++				}
++			case "response.completed":
++				completed = data
++			case "response.function_call_arguments.delta", "response.function_call_arguments.done":
++				t.Fatalf("unexpected function call event %q: %s", event, chunk)
++			}
++		}
++	}
++
++	for _, tc := range []struct {
++		label string
++		got   gjson.Result
++		path  string
++	}{
++		{"added", added, "item"},
++		{"done", itemDone, "item"},
++		{"completed", completed, "response.output.0"},
++	} {
++		if !tc.got.Exists() {
++			t.Fatalf("expected %s event", tc.label)
++		}
++		if got := tc.got.Get(tc.path + ".type").String(); got != "custom_tool_call" {
++			t.Fatalf("%s type = %q, want custom_tool_call", tc.label, got)
++		}
++		if got := tc.got.Get(tc.path + ".id").String(); got != "ctc_call_exec" {
++			t.Fatalf("%s id = %q, want ctc_call_exec", tc.label, got)
++		}
++		if got := tc.got.Get(tc.path + ".name").String(); got != "exec" {
++			t.Fatalf("%s name = %q, want exec", tc.label, got)
++		}
++	}
++	if got := inputDone.Get("item_id").String(); got != "ctc_call_exec" {
++		t.Fatalf("custom input done item_id = %q, want ctc_call_exec", got)
++	}
++	if got := inputDone.Get("input").String(); got != "pwd" {
++		t.Fatalf("custom input done input = %q, want pwd", got)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_CustomToolNameAndIDAreMissing(t *testing.T) {
++	originalRequest := []byte(`{"model":"gpt-5.4","tools":[{"type":"custom","name":"exec"}]}`)
++	chunks := []string{
++		`data: {"id":"chatcmpl_custom_missing_fields","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"{\"input\":\"pwd\"}"}}]},"finish_reason":"tool_calls"}]}`,
++		`data: [DONE]`,
++	}
++
++	var param any
++	var added gjson.Result
++	var done gjson.Result
++	var completed gjson.Result
++	for _, line := range chunks {
++		for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", originalRequest, nil, []byte(line), &param) {
++			event, data := parseOpenAIResponsesSSEEvent(t, chunk)
++			switch event {
++			case "response.output_item.added":
++				added = data
++			case "response.output_item.done":
++				done = data
++			case "response.completed":
++				completed = data
++			}
++		}
++	}
++
++	wantCallID := "call_chatcmpl_custom_missing_fields_0_0"
++	for _, tc := range []struct {
++		label string
++		got   gjson.Result
++		path  string
++	}{
++		{"added", added, "item"},
++		{"done", done, "item"},
++		{"completed", completed, "response.output.0"},
++	} {
++		if got := tc.got.Get(tc.path + ".type").String(); got != "custom_tool_call" {
++			t.Fatalf("%s type = %q, want custom_tool_call", tc.label, got)
++		}
++		if got := tc.got.Get(tc.path + ".id").String(); got != "ctc_"+wantCallID {
++			t.Fatalf("%s id = %q, want %q", tc.label, got, "ctc_"+wantCallID)
++		}
++		if got := tc.got.Get(tc.path + ".call_id").String(); got != wantCallID {
++			t.Fatalf("%s call_id = %q, want %q", tc.label, got, wantCallID)
++		}
++		if got := tc.got.Get(tc.path + ".name").String(); got != "exec" {
++			t.Fatalf("%s name = %q, want exec", tc.label, got)
++		}
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ToolCallIDMayArriveLateOrBeMissing(t *testing.T) {
++	tests := []struct {
++		name       string
++		chunks     []string
++		wantCallID string
++	}{
++		{
++			name: "late id",
++			chunks: []string{
++				`data: {"id":"chatcmpl_late_id","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"read","arguments":"{\"file"}}]},"finish_reason":null}]}`,
++				`data: {"id":"chatcmpl_late_id","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_late","function":{"arguments":"Path\":\"README.md\"}"}}]},"finish_reason":"tool_calls"}]}`,
++			},
++			wantCallID: "call_late",
++		},
++		{
++			name: "missing id",
++			chunks: []string{
++				`data: {"id":"chatcmpl_missing_id","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"read","arguments":"{\"filePath\":\"README.md\"}"}}]},"finish_reason":"tool_calls"}]}`,
++			},
++			wantCallID: "call_chatcmpl_missing_id_0_0",
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			var param any
++			var events []string
++			var added gjson.Result
++			var argsDelta gjson.Result
++			var argsDone gjson.Result
++			var itemDone gjson.Result
++			for _, line := range append(tt.chunks, `data: [DONE]`) {
++				for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", nil, nil, []byte(line), &param) {
++					event, data := parseOpenAIResponsesSSEEvent(t, chunk)
++					events = append(events, event)
++					switch event {
++					case "response.output_item.added":
++						added = data
++					case "response.function_call_arguments.delta":
++						argsDelta = data
++					case "response.function_call_arguments.done":
++						argsDone = data
++					case "response.output_item.done":
++						itemDone = data
++					}
++				}
++			}
++
++			wantItemID := "fc_" + tt.wantCallID
++			if got := added.Get("item.id").String(); got != wantItemID {
++				t.Fatalf("added item id = %q, want %q; events=%v", got, wantItemID, events)
++			}
++			if got := added.Get("item.call_id").String(); got != tt.wantCallID {
++				t.Fatalf("added call id = %q, want %q", got, tt.wantCallID)
++			}
++			if got := argsDelta.Get("item_id").String(); got != wantItemID {
++				t.Fatalf("arguments delta item id = %q, want %q", got, wantItemID)
++			}
++			if got := argsDelta.Get("delta").String(); got != `{"filePath":"README.md"}` {
++				t.Fatalf("arguments delta = %q, want full buffered arguments", got)
++			}
++			if got := argsDone.Get("item_id").String(); got != wantItemID {
++				t.Fatalf("arguments done item id = %q, want %q", got, wantItemID)
++			}
++			if got := itemDone.Get("item.id").String(); got != wantItemID {
++				t.Fatalf("item done id = %q, want %q", got, wantItemID)
++			}
++		})
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_RestoresAdditionalNamespaceFunctionCall(t *testing.T) {
++	originalRequest := []byte(`{
++		"model":"gpt-5.4",
++		"input":[{
++			"type":"additional_tools",
++			"tools":[{
++				"type":"namespace",
++				"name":"collaboration",
++				"tools":[{"type":"function","name":"send_message","parameters":{"type":"object","properties":{}}}]
++			}]
++		}]
++	}`)
++	chunks := []string{
++		`data: {"id":"chatcmpl_additional_namespace_stream","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_send","type":"function","function":{"name":"collaboration__send_message","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"chatcmpl_additional_namespace_stream","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"target\":\"worker\",\"message\":\"ping\"}"}}]},"finish_reason":"tool_calls"}]}`,
++		`data: [DONE]`,
++	}
++
++	var param any
++	var added gjson.Result
++	var done gjson.Result
++	var completed gjson.Result
++	for _, line := range chunks {
++		for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", originalRequest, nil, []byte(line), &param) {
++			event, data := parseOpenAIResponsesSSEEvent(t, chunk)
++			switch event {
++			case "response.output_item.added":
++				added = data
++			case "response.output_item.done":
++				done = data
++			case "response.completed":
++				completed = data
++			}
++		}
++	}
++
++	for _, tc := range []struct {
++		label string
++		got   gjson.Result
++		path  string
++	}{
++		{"added", added, "item"},
++		{"done", done, "item"},
++		{"completed", completed, "response.output.0"},
++	} {
++		if got := tc.got.Get(tc.path + ".name").String(); got != "send_message" {
++			t.Fatalf("%s name = %q, want send_message", tc.label, got)
++		}
++		if got := tc.got.Get(tc.path + ".namespace").String(); got != "collaboration" {
++			t.Fatalf("%s namespace = %q, want collaboration", tc.label, got)
++		}
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream_RestoresAdditionalNamespaceFunctionCall(t *testing.T) {
++	originalRequest := []byte(`{
++		"model":"gpt-5.4",
++		"input":[{
++			"type":"additional_tools",
++			"tools":[{
++				"type":"namespace",
++				"name":"collaboration",
++				"tools":[{"type":"function","name":"send_message","parameters":{"type":"object","properties":{}}}]
++			}]
++		}]
++	}`)
++	raw := []byte(`{"id":"chatcmpl_additional_namespace_nonstream","object":"chat.completion","created":1773896263,"model":"model","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_send","type":"function","function":{"name":"collaboration__send_message","arguments":"{\"target\":\"worker\",\"message\":\"ping\"}"}}]},"finish_reason":"tool_calls"}]}`)
++
++	resp := ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(context.Background(), "model", originalRequest, nil, raw, nil)
++	data := gjson.ParseBytes(resp)
++	if got := data.Get("output.0.name").String(); got != "send_message" {
++		t.Fatalf("non-stream output name = %q, want send_message; response=%s", got, resp)
++	}
++	if got := data.Get("output.0.namespace").String(); got != "collaboration" {
++		t.Fatalf("non-stream output namespace = %q, want collaboration; response=%s", got, resp)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_RestoresAdditionalNamespaceCustomToolCall(t *testing.T) {
++	originalRequest := []byte(`{
++		"model":"gpt-5.4",
++		"input":[{
++			"type":"additional_tools",
++			"tools":[{
++				"type":"namespace",
++				"name":"terminal",
++				"tools":[{"type":"custom","name":"exec"}]
++			}]
++		}]
++	}`)
++	chunks := []string{
++		`data: {"id":"chatcmpl_additional_namespace_custom_stream","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_exec","type":"function","function":{"name":"terminal__exec","arguments":""}}]},"finish_reason":null}]}`,
++		`data: {"id":"chatcmpl_additional_namespace_custom_stream","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"input\":\"pwd\"}"}}]},"finish_reason":"tool_calls"}]}`,
++		`data: [DONE]`,
++	}
++
++	var param any
++	var added gjson.Result
++	var inputDone gjson.Result
++	var done gjson.Result
++	var completed gjson.Result
++	for _, line := range chunks {
++		for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", originalRequest, nil, []byte(line), &param) {
++			event, data := parseOpenAIResponsesSSEEvent(t, chunk)
++			switch event {
++			case "response.output_item.added":
++				added = data
++			case "response.custom_tool_call_input.done":
++				inputDone = data
++			case "response.output_item.done":
++				done = data
++			case "response.completed":
++				completed = data
++			case "response.function_call_arguments.delta", "response.function_call_arguments.done":
++				t.Fatalf("unexpected function call event %q: %s", event, chunk)
++			}
++		}
++	}
++
++	for _, tc := range []struct {
++		label string
++		got   gjson.Result
++		path  string
++	}{
++		{"added", added, "item"},
++		{"done", done, "item"},
++		{"completed", completed, "response.output.0"},
++	} {
++		if !tc.got.Exists() {
++			t.Fatalf("expected %s event", tc.label)
++		}
++		if got := tc.got.Get(tc.path + ".type").String(); got != "custom_tool_call" {
++			t.Fatalf("%s type = %q, want custom_tool_call", tc.label, got)
++		}
++		if got := tc.got.Get(tc.path + ".name").String(); got != "terminal__exec" {
++			t.Fatalf("%s name = %q, want terminal__exec", tc.label, got)
++		}
++	}
++	if got := inputDone.Get("input").String(); got != "pwd" {
++		t.Fatalf("custom input = %q, want pwd", got)
++	}
++	if got := done.Get("item.input").String(); got != "pwd" {
++		t.Fatalf("done input = %q, want pwd", got)
++	}
++	if got := completed.Get("response.output.0.input").String(); got != "pwd" {
++		t.Fatalf("completed input = %q, want pwd", got)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream_RestoresAdditionalNamespaceCustomToolCall(t *testing.T) {
++	originalRequest := []byte(`{
++		"model":"gpt-5.4",
++		"input":[{
++			"type":"additional_tools",
++			"tools":[{
++				"type":"namespace",
++				"name":"terminal",
++				"tools":[{"type":"custom","name":"exec"}]
++			}]
++		}]
++	}`)
++	raw := []byte(`{"id":"chatcmpl_additional_namespace_custom_nonstream","object":"chat.completion","created":1773896263,"model":"model","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_exec","type":"function","function":{"name":"terminal__exec","arguments":"{\"input\":\"pwd\"}"}}]},"finish_reason":"tool_calls"}]}`)
++
++	resp := ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(context.Background(), "model", originalRequest, nil, raw, nil)
++	data := gjson.ParseBytes(resp)
++	if got := data.Get("output.0.type").String(); got != "custom_tool_call" {
++		t.Fatalf("output type = %q, want custom_tool_call; response=%s", got, resp)
++	}
++	if got := data.Get("output.0.name").String(); got != "terminal__exec" {
++		t.Fatalf("output name = %q, want terminal__exec; response=%s", got, resp)
++	}
++	if got := data.Get("output.0.input").String(); got != "pwd" {
++		t.Fatalf("output input = %q, want pwd; response=%s", got, resp)
++	}
++}
+diff --git a/service/relayconvert/internal/cpa_responses/tools.go b/service/relayconvert/internal/cpa_responses/tools.go
+new file mode 100644
+index 0000000..68d7191
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/tools.go
+@@ -0,0 +1,331 @@
++package cparesponses
++
++import (
++	"strings"
++
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++func convertResponsesToolToOpenAIChatTools(tool gjson.Result) [][]byte {
++	toolType := strings.TrimSpace(tool.Get("type").String())
 +	switch toolType {
 +	case "", "function":
-+		name := qualifyResponsesNamespaceToolName(namespace, responsesToolName(tool))
-+		if name == "" {
-+			return nil
++		if tJSON, ok := convertResponsesFunctionToolToOpenAIChat(tool, ""); ok {
++			return [][]byte{tJSON}
 +		}
-+		*out = append(*out, dto.ToolCallRequest{
-+			Type: "function",
-+			Function: dto.FunctionRequest{
-+				Name:        name,
-+				Description: responsesToolDescription(tool),
-+				Parameters:  responsesToolParameters(tool),
-+			},
-+		})
-+	case dto.CustomType:
-+		name := qualifyResponsesNamespaceToolName(namespace, responsesToolName(tool))
-+		if name == "" {
-+			return nil
-+		}
-+		*out = append(*out, dto.ToolCallRequest{
-+			Type: "function",
-+			Function: dto.FunctionRequest{
-+				Name:        name,
-+				Description: responsesToolDescription(tool),
-+				Parameters: map[string]any{
-+					"type": "object",
-+					"properties": map[string]any{
-+						"input": map[string]any{"type": "string"},
-+					},
-+					"required": []string{"input"},
-+				},
-+			},
-+		})
 +	case "namespace":
-+		children, err := responsesToolsFromValue(tool["tools"])
-+		if err != nil {
-+			return fmt.Errorf("invalid namespace tools: %w", err)
-+		}
-+		namespaceName := strings.TrimSpace(common.Interface2String(tool["name"]))
-+		for _, child := range children {
-+			if err := appendResponsesToolToChat(out, child, namespaceName); err != nil {
-+				return err
-+			}
++		return convertResponsesNamespaceToolToOpenAIChat(tool)
++	case "custom":
++		if tJSON, ok := convertResponsesCustomToolToOpenAIChat(tool, ""); ok {
++			return [][]byte{tJSON}
 +		}
 +	default:
-+		// Chat Completions providers only accept function tools. Responses-only
-+		// built-ins such as web_search stay client-side and must not be forwarded.
 +		return nil
 +	}
 +	return nil
 +}
 +
-+func responsesToolsFromValue(value any) ([]map[string]any, error) {
-+	if value == nil {
-+		return nil, nil
++// convertResponsesCustomToolToOpenAIChat maps a Responses freeform ("custom")
++// tool onto a Chat Completions function tool with a single freeform "input"
++// string, mirroring the function-based shape Codex uses for apply_patch.
++func convertResponsesCustomToolToOpenAIChat(tool gjson.Result, overrideName string) ([]byte, bool) {
++	name := strings.TrimSpace(overrideName)
++	if name == "" {
++		name = responsesToolName(tool)
 +	}
-+	raw, err := common.Marshal(value)
-+	if err != nil {
-+		return nil, err
++	if name == "" {
++		return nil, false
 +	}
-+	var tools []map[string]any
-+	if err := common.Unmarshal(raw, &tools); err != nil {
-+		return nil, err
++	chatTool := []byte(`{"type":"function","function":{"name":"","description":"","parameters":{"type":"object","properties":{"input":{"type":"string"}},"required":["input"]}}}`)
++	chatTool, _ = sjson.SetBytes(chatTool, "function.name", name)
++	if description := responsesToolDescription(tool); description != "" {
++		chatTool, _ = sjson.SetBytes(chatTool, "function.description", description)
 +	}
-+	return tools, nil
++	return chatTool, true
 +}
 +
-+func responsesToolName(tool map[string]any) string {
-+	if name := strings.TrimSpace(common.Interface2String(tool["name"])); name != "" {
++func convertResponsesNamespaceToolToOpenAIChat(tool gjson.Result) [][]byte {
++	namespaceName := strings.TrimSpace(tool.Get("name").String())
++	children := tool.Get("tools")
++	if !children.Exists() || !children.IsArray() {
++		return nil
++	}
++
++	var out [][]byte
++	children.ForEach(func(_, child gjson.Result) bool {
++		childName := responsesToolName(child)
++		qualifiedName := qualifyResponsesNamespaceToolName(namespaceName, childName)
++		switch strings.TrimSpace(child.Get("type").String()) {
++		case "", "function":
++			if tJSON, ok := convertResponsesFunctionToolToOpenAIChat(child, qualifiedName); ok {
++				out = append(out, tJSON)
++			}
++		case "custom":
++			if tJSON, ok := convertResponsesCustomToolToOpenAIChat(child, qualifiedName); ok {
++				out = append(out, tJSON)
++			}
++		}
++		return true
++	})
++	return out
++}
++
++func convertResponsesFunctionToolToOpenAIChat(tool gjson.Result, overrideName string) ([]byte, bool) {
++	name := strings.TrimSpace(overrideName)
++	if name == "" {
++		name = responsesToolName(tool)
++	}
++	if name == "" {
++		return nil, false
++	}
++
++	chatTool := []byte(`{"type":"function","function":{"name":"","description":"","parameters":{}}}`)
++	chatTool, _ = sjson.SetBytes(chatTool, "function.name", name)
++	if description := responsesToolDescription(tool); description != "" {
++		chatTool, _ = sjson.SetBytes(chatTool, "function.description", description)
++	}
++	if parameters := responsesToolParameters(tool); parameters.Exists() {
++		chatTool, _ = sjson.SetRawBytes(chatTool, "function.parameters", []byte(parameters.Raw))
++	}
++	return chatTool, true
++}
++
++func responsesToolName(tool gjson.Result) string {
++	if name := strings.TrimSpace(tool.Get("name").String()); name != "" {
 +		return name
 +	}
-+	if function, ok := tool["function"].(map[string]any); ok {
-+		return strings.TrimSpace(common.Interface2String(function["name"]))
-+	}
-+	return ""
++	return strings.TrimSpace(tool.Get("function.name").String())
 +}
 +
-+func responsesToolDescription(tool map[string]any) string {
-+	if description := common.Interface2String(tool["description"]); description != "" {
++func responsesToolDescription(tool gjson.Result) string {
++	if description := tool.Get("description").String(); description != "" {
 +		return description
 +	}
-+	if function, ok := tool["function"].(map[string]any); ok {
-+		return common.Interface2String(function["description"])
-+	}
-+	return ""
++	return tool.Get("function.description").String()
 +}
 +
-+func responsesToolParameters(tool map[string]any) any {
-+	for _, key := range []string{"parameters", "parametersJsonSchema", "input_schema"} {
-+		if parameters, ok := tool[key]; ok {
++func responsesToolParameters(tool gjson.Result) gjson.Result {
++	for _, path := range []string{
++		"parameters",
++		"parametersJsonSchema",
++		"input_schema",
++		"function.parameters",
++		"function.parametersJsonSchema",
++	} {
++		if parameters := tool.Get(path); parameters.Exists() {
 +			return parameters
 +		}
 +	}
-+	if function, ok := tool["function"].(map[string]any); ok {
-+		for _, key := range []string{"parameters", "parametersJsonSchema"} {
-+			if parameters, ok := function[key]; ok {
-+				return parameters
++	return gjson.Result{}
++}
++
++// responsesToolOutputText flattens a tool output value that may be a plain
++// string or an array of content parts ({"type":"input_text","text":...}) into
++// a single text payload for a Chat Completions tool message.
++func responsesToolOutputText(output gjson.Result) string {
++	if output.Type == gjson.String {
++		return output.String()
++	}
++	if output.IsArray() {
++		var b strings.Builder
++		output.ForEach(func(_, part gjson.Result) bool {
++			if part.Type == gjson.String {
++				b.WriteString(part.String())
++				return true
 +			}
++			if text := part.Get("text"); text.Exists() {
++				b.WriteString(text.String())
++			}
++			return true
++		})
++		return b.String()
++	}
++	if output.Exists() {
++		return output.Raw
++	}
++	return ""
++}
++
++// responsesCustomToolNames collects the names of freeform ("custom") tools
++// declared in the original Responses request, both in the top-level "tools"
++// field and in Codex Desktop "additional_tools" input items. Namespace child
++// names use the qualified Chat Completions form.
++func responsesCustomToolNames(requestRawJSON []byte) map[string]struct{} {
++	names := make(map[string]struct{})
++	var collect func(gjson.Result, string)
++	collect = func(tools gjson.Result, namespaceName string) {
++		if !tools.Exists() || !tools.IsArray() {
++			return
 +		}
++		tools.ForEach(func(_, tool gjson.Result) bool {
++			switch strings.TrimSpace(tool.Get("type").String()) {
++			case "custom":
++				name := responsesToolName(tool)
++				if namespaceName != "" {
++					name = qualifyResponsesNamespaceToolName(namespaceName, name)
++				}
++				if name != "" {
++					names[name] = struct{}{}
++				}
++			case "namespace":
++				collect(tool.Get("tools"), strings.TrimSpace(tool.Get("name").String()))
++			}
++			return true
++		})
 +	}
-+	return map[string]any{}
++	root := gjson.ParseBytes(requestRawJSON)
++	collect(root.Get("tools"), "")
++	if input := root.Get("input"); input.Exists() && input.IsArray() {
++		input.ForEach(func(_, item gjson.Result) bool {
++			if item.Get("type").String() == "additional_tools" {
++				collect(item.Get("tools"), "")
++			}
++			return true
++		})
++	}
++	return names
 +}
 +
-+func qualifyResponsesNamespaceToolName(namespace, name string) string {
-+	namespace = strings.TrimSpace(namespace)
-+	name = strings.TrimSpace(name)
-+	if namespace == "" || name == "" || strings.HasPrefix(name, "mcp__") || strings.HasPrefix(name, namespace+"__") {
-+		return name
-+	}
-+	if strings.HasSuffix(namespace, "__") {
-+		return namespace + name
-+	}
-+	return namespace + "__" + name
-+}
-+
- func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
- 	if !rawJSONPresent(raw) {
- 		return nil, nil
-@@ -373,6 +505,7 @@ func responsesRequestToolChoiceToChat(raw json.RawMessage) (any, error) {
- 	}
- 	if common.Interface2String(choice["type"]) == "function" {
- 		name := strings.TrimSpace(common.Interface2String(choice["name"]))
-+		name = qualifyResponsesNamespaceToolName(common.Interface2String(choice["namespace"]), name)
- 		if name != "" {
- 			return map[string]any{
- 				"type": "function",
-diff --git a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
-index 6924c82..367ed12 100644
---- a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
-+++ b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
-@@ -55,6 +55,107 @@ func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *t
- 	assert.Equal(t, "abc", gjson.GetBytes(got.Metadata, "trace").String())
- }
- 
-+func TestResponsesRequestToChatCompletionsRequestFlattensNamespaceTools(t *testing.T) {
-+	req := &dto.OpenAIResponsesRequest{
-+		Model: "deepseek-v4-flash",
-+		Tools: mustRawMessage(t, []map[string]any{
-+			{"type": "web_search"},
-+			{
-+				"type": "namespace",
-+				"name": "mcp__github",
-+				"tools": []map[string]any{
-+					{"type": "function", "name": "get_me", "description": "Get current user", "parameters": map[string]any{"type": "object"}},
-+					{"type": "custom", "name": "raw_query", "description": "Run a raw query"},
-+				},
-+			},
-+		}),
-+		Input: mustRawMessage(t, []map[string]any{
-+			{"role": "user", "content": []map[string]any{{"type": "input_text", "text": "check"}}},
-+			{
-+				"type": "additional_tools",
-+				"tools": []map[string]any{
-+					{
-+						"type":  "namespace",
-+						"name":  "collaboration",
-+						"tools": []map[string]any{{"type": "function", "name": "send_message", "parameters": map[string]any{"type": "object"}}},
-+					},
-+				},
-+			},
-+		}),
++func responsesSingleCustomToolName(requestRawJSON []byte) (string, bool) {
++	customToolNames := responsesCustomToolNames(requestRawJSON)
++	if len(customToolNames) != 1 {
++		return "", false
 +	}
 +
-+	got, err := ResponsesRequestToChatCompletionsRequest(req)
-+	require.NoError(t, err)
-+	require.Len(t, got.Messages, 1, "additional_tools must not become an empty user message")
-+	require.Len(t, got.Tools, 3)
-+	assert.Equal(t, "mcp__github__get_me", got.Tools[0].Function.Name)
-+	assert.Equal(t, "mcp__github__raw_query", got.Tools[1].Function.Name)
-+	assert.Equal(t, "collaboration__send_message", got.Tools[2].Function.Name)
-+
-+	customParameters, ok := got.Tools[1].Function.Parameters.(map[string]any)
-+	require.True(t, ok)
-+	assert.Equal(t, "object", customParameters["type"])
-+	assert.Equal(t, []string{"input"}, customParameters["required"])
-+}
-+
-+func TestResponsesRequestToChatCompletionsRequestDropsResponsesOnlyTools(t *testing.T) {
-+	parallelToolCalls := true
-+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
-+		Model:             "deepseek-v4-flash",
-+		Input:             mustRawMessage(t, "search for current information"),
-+		Tools:             mustRawMessage(t, []map[string]any{
-+			{"type": "web_search"},
-+			{"type": "computer"},
-+			{"type": "local_shell"},
-+		}),
-+		ToolChoice:        mustRawMessage(t, "auto"),
-+		ParallelToolCalls: mustRawMessage(t, parallelToolCalls),
-+	})
-+	require.NoError(t, err)
-+	assert.Empty(t, got.Tools)
-+	assert.Nil(t, got.ToolChoice)
-+	assert.Nil(t, got.ParallelTooCalls)
-+}
-+
-+func TestResponsesRequestToChatCompletionsRequestQualifiesNamespaceHistory(t *testing.T) {
-+	req := &dto.OpenAIResponsesRequest{
-+		Model: "deepseek-v4-flash",
-+		Input: mustRawMessage(t, []map[string]any{
-+			{"type": "function_call", "call_id": "call_1", "name": "get_me", "namespace": "mcp__github", "arguments": `{}`},
-+			{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
-+			{"type": "custom_tool_call", "call_id": "call_2", "name": "exec", "namespace": "terminal", "input": "pwd"},
-+			{"type": "custom_tool_call_output", "call_id": "call_2", "output": "C:/work"},
-+		}),
-+	}
-+
-+	got, err := ResponsesRequestToChatCompletionsRequest(req)
-+	require.NoError(t, err)
-+	require.Len(t, got.Messages, 4)
-+	firstCalls := got.Messages[0].ParseToolCalls()
-+	require.Len(t, firstCalls, 1)
-+	assert.Equal(t, "mcp__github__get_me", firstCalls[0].Function.Name)
-+	assert.Equal(t, "tool", got.Messages[1].Role)
-+	secondCalls := got.Messages[2].ParseToolCalls()
-+	require.Len(t, secondCalls, 1)
-+	assert.Equal(t, "terminal__exec", secondCalls[0].Function.Name)
-+	assert.JSONEq(t, `{"input":"pwd"}`, secondCalls[0].Function.Arguments)
-+	assert.Equal(t, "tool", got.Messages[3].Role)
-+}
-+
-+func TestResponsesRequestToChatCompletionsRequestQualifiesNamespaceToolChoice(t *testing.T) {
-+	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
-+		Model:      "deepseek-v4-flash",
-+		Input:      mustRawMessage(t, "use a tool"),
-+		ToolChoice: mustRawMessage(t, map[string]any{"type": "function", "name": "get_me", "namespace": "mcp__github"}),
-+	})
-+	require.NoError(t, err)
-+	choice, ok := got.ToolChoice.(map[string]any)
-+	require.True(t, ok)
-+	function, ok := choice["function"].(map[string]any)
-+	require.True(t, ok)
-+	assert.Equal(t, "mcp__github__get_me", function["name"])
-+}
-+
- func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
- 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
- 		Model: "gpt-test",
-@@ -199,7 +300,7 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t
- 	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
- }
- 
--func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
-+func TestResponsesRequestToChatCompletionsRequestCustomToolCallUsesFunctionWrapper(t *testing.T) {
- 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
- 		Model: "gpt-test",
- 		Input: mustRawMessage(t, []map[string]any{
-@@ -216,12 +317,11 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape
- 	require.Len(t, got.Messages, 1)
- 	toolCalls := got.Messages[0].ParseToolCalls()
- 	require.Len(t, toolCalls, 1)
--	assert.Equal(t, dto.CustomType, toolCalls[0].Type)
-+	assert.Equal(t, "function", toolCalls[0].Type)
- 	assert.Equal(t, "call_custom", toolCalls[0].ID)
- 	assert.Equal(t, "apply_patch", toolCalls[0].Function.Name)
--	assert.Equal(t, "patch body", toolCalls[0].Function.Arguments)
--	assert.Equal(t, "custom_tool_call", gjson.GetBytes(toolCalls[0].Custom, "type").String())
--	assert.Equal(t, "patch body", gjson.GetBytes(toolCalls[0].Custom, "input").String())
-+	assert.JSONEq(t, `{"input":"patch body"}`, toolCalls[0].Function.Arguments)
-+	assert.Empty(t, toolCalls[0].Custom)
- }
- 
- func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {
-diff --git a/service/relayconvert/response_compat.go b/service/relayconvert/response_compat.go
-index b42bed4..b796b16 100644
---- a/service/relayconvert/response_compat.go
-+++ b/service/relayconvert/response_compat.go
-@@ -84,6 +84,10 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id
- 	return oaichat.ChatCompletionsResponseToResponsesResponse(resp, id)
- }
- 
-+func RestoreResponsesToolOutputs(resp *dto.OpenAIResponsesResponse, req *dto.OpenAIResponsesRequest) {
-+	oaichat.RestoreResponsesToolOutputs(resp, req)
-+}
-+
- func ResponsesStatusFromChatFinishReason(finishReason string) (string, *dto.IncompleteDetails) {
- 	return oaichat.ResponsesStatusFromChatFinishReason(finishReason)
- }
-@@ -96,6 +100,10 @@ func NewChatToResponsesStreamState(id string, model string) *ChatToResponsesStre
- 	return oaichat.NewChatToResponsesStreamState(id, model)
- }
- 
-+func SetChatToResponsesOriginalRequest(state *ChatToResponsesStreamState, req *dto.OpenAIResponsesRequest) {
-+	state.SetOriginalResponsesRequest(req)
-+}
-+
- func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStreamResponse, state *ChatToResponsesStreamState) ([]ChatToResponsesStreamEvent, error) {
- 	return oaichat.ChatCompletionsStreamChunkToResponsesEvents(chunk, state)
- }
-diff --git a/service/relayconvert/response_registry.go b/service/relayconvert/response_registry.go
-index 43ef9d3..b99b5b2 100644
---- a/service/relayconvert/response_registry.go
-+++ b/service/relayconvert/response_registry.go
-@@ -786,7 +786,7 @@ func usageFromClaudeResponse(resp *dto.ClaudeResponse) *dto.Usage {
- 	return nil
- }
- 
--func convertOAIChatResponseToOAIResponses(_ *gin.Context, _ *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
-+func convertOAIChatResponseToOAIResponses(_ *gin.Context, info *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
- 	chatResponse, err := asOAIChatResponse(response)
- 	if err != nil {
- 		return nil, nil, err
-@@ -795,7 +795,16 @@ func convertOAIChatResponseToOAIResponses(_ *gin.Context, _ *relaycommon.RelayIn
- 	if id == "" {
- 		id = fmt.Sprintf("resp_%s", common.GetUUID())
- 	}
--	return ChatCompletionsResponseToResponsesResponse(chatResponse, id)
-+	responsesResponse, usage, err := ChatCompletionsResponseToResponsesResponse(chatResponse, id)
-+	if err != nil {
-+		return nil, nil, err
-+	}
-+	if info != nil {
-+		if originalRequest, ok := info.Request.(*dto.OpenAIResponsesRequest); ok {
-+			RestoreResponsesToolOutputs(responsesResponse, originalRequest)
++	toolCount := 0
++	collect := func(tools gjson.Result) {
++		if !tools.Exists() || !tools.IsArray() {
++			return
 +		}
++		tools.ForEach(func(_, tool gjson.Result) bool {
++			toolCount += len(convertResponsesToolToOpenAIChatTools(tool))
++			return true
++		})
 +	}
-+	return responsesResponse, usage, nil
- }
- 
- func convertOAIResponsesResponseToOAIChat(_ *gin.Context, _ *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
-@@ -822,7 +831,7 @@ func newOAIChatToOAIResponsesStreamState(options ResponseStreamOptions) any {
- 	return state
- }
- 
--func convertOAIChatStreamResponseToOAIResponses(_ *gin.Context, _ *relaycommon.RelayInfo, response any, state any) ([]any, *dto.Usage, error) {
-+func convertOAIChatStreamResponseToOAIResponses(_ *gin.Context, info *relaycommon.RelayInfo, response any, state any) ([]any, *dto.Usage, error) {
- 	chatResponse, err := asOAIChatStreamResponse(response)
- 	if err != nil {
- 		return nil, nil, err
-@@ -831,6 +840,11 @@ func convertOAIChatStreamResponseToOAIResponses(_ *gin.Context, _ *relaycommon.R
- 	if !ok || streamState == nil {
- 		return nil, nil, errors.New("OAI chat to OAI responses stream state is required")
- 	}
-+	if info != nil {
-+		if originalRequest, ok := info.Request.(*dto.OpenAIResponsesRequest); ok {
-+			SetChatToResponsesOriginalRequest(streamState, originalRequest)
++
++	root := gjson.ParseBytes(requestRawJSON)
++	collect(root.Get("tools"))
++	if input := root.Get("input"); input.Exists() && input.IsArray() {
++		input.ForEach(func(_, item gjson.Result) bool {
++			if item.Get("type").String() == "additional_tools" {
++				collect(item.Get("tools"))
++			}
++			return true
++		})
++	}
++	for name := range customToolNames {
++		return name, toolCount == 1
++	}
++	return "", false
++}
++
++// unwrapCustomToolInput extracts the freeform input from the {"input": "..."}
++// function-call arguments produced for a converted custom tool; it falls back
++// to the raw arguments when the wrapper is absent.
++func unwrapCustomToolInput(arguments string) string {
++	if v := gjson.Get(arguments, "input"); v.Exists() {
++		if v.Type == gjson.String {
++			return v.String()
 +		}
++		return v.Raw
 +	}
- 	events, err := ChatCompletionsStreamChunkToResponsesEvents(chatResponse, streamState)
- 	if err != nil {
- 		return nil, nil, err
++	return arguments
++}
++
++func qualifyResponsesNamespaceToolName(namespaceName, childName string) string {
++	childName = strings.TrimSpace(childName)
++	if childName == "" || namespaceName == "" || strings.HasPrefix(childName, "mcp__") {
++		return childName
++	}
++	if strings.HasPrefix(childName, namespaceName) {
++		return childName
++	}
++	if strings.HasSuffix(namespaceName, "__") {
++		return namespaceName + childName
++	}
++	return namespaceName + "__" + childName
++}
++
++func splitResponsesQualifiedFunctionCallFromRequest(requestRawJSON []byte, qualifiedName string) (name, namespace string) {
++	qualifiedName = strings.TrimSpace(qualifiedName)
++	if qualifiedName == "" {
++		return "", ""
++	}
++
++	var bestNamespace string
++	var bestChild string
++	collect := func(tools gjson.Result) {
++		if !tools.Exists() || !tools.IsArray() {
++			return
++		}
++		tools.ForEach(func(_, tool gjson.Result) bool {
++			if strings.TrimSpace(tool.Get("type").String()) != "namespace" {
++				return true
++			}
++			namespaceName := strings.TrimSpace(tool.Get("name").String())
++			if namespaceName == "" {
++				return true
++			}
++			children := tool.Get("tools")
++			if !children.Exists() || !children.IsArray() {
++				return true
++			}
++			children.ForEach(func(_, child gjson.Result) bool {
++				childName := responsesToolName(child)
++				if childName == "" {
++					return true
++				}
++				if qualifyResponsesNamespaceToolName(namespaceName, childName) == qualifiedName {
++					bestNamespace = namespaceName
++					bestChild = childName
++				}
++				return true
++			})
++			return true
++		})
++	}
++
++	root := gjson.ParseBytes(requestRawJSON)
++	collect(root.Get("tools"))
++	if input := root.Get("input"); input.Exists() && input.IsArray() {
++		input.ForEach(func(_, item gjson.Result) bool {
++			if item.Get("type").String() == "additional_tools" {
++				collect(item.Get("tools"))
++			}
++			return true
++		})
++	}
++
++	if bestNamespace == "" || bestChild == "" {
++		return qualifiedName, ""
++	}
++	return bestChild, bestNamespace
++}
++
++func pickRequestJSON(originalRequestRawJSON, requestRawJSON []byte) []byte {
++	if len(originalRequestRawJSON) > 0 && gjson.ValidBytes(originalRequestRawJSON) {
++		return originalRequestRawJSON
++	}
++	if len(requestRawJSON) > 0 && gjson.ValidBytes(requestRawJSON) {
++		return requestRawJSON
++	}
++	return nil
++}
++
++func applyResponsesFunctionCallNamespaceFields(item []byte, requestRawJSON []byte, qualifiedName string, itemPath string) []byte {
++	name, namespace := splitResponsesQualifiedFunctionCallFromRequest(requestRawJSON, qualifiedName)
++	namePath := "name"
++	namespacePath := "namespace"
++	if itemPath != "" {
++		namePath = itemPath + ".name"
++		namespacePath = itemPath + ".namespace"
++	}
++	item, _ = sjson.SetBytes(item, namePath, name)
++	if namespace != "" {
++		item, _ = sjson.SetBytes(item, namespacePath, namespace)
++	} else {
++		item, _ = sjson.DeleteBytes(item, namespacePath)
++	}
++	return item
++}
+diff --git a/service/relayconvert/request_compat.go b/service/relayconvert/request_compat.go
+index f2f77ae..0ba2d2b 100644
+--- a/service/relayconvert/request_compat.go
++++ b/service/relayconvert/request_compat.go
+@@ -40,6 +40,10 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
+ 	return oairesponses.ResponsesRequestToChatCompletionsRequest(req)
+ }
+ 
++func ValidateResponsesRequestForChat(req *dto.OpenAIResponsesRequest) error {
++	return oairesponses.ValidateRequestChatUnsupportedFields(req)
++}
++
+ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIResponsesRequest) (*dto.ClaudeRequest, error) {
+ 	return oairesponses.OpenAIResponsesRequestToClaudeMessages(c, req)
+ }

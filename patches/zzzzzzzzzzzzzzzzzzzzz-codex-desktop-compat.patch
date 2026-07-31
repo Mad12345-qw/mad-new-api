@@ -3,7 +3,7 @@ new file mode 100644
 index 00000000..13351378
 --- /dev/null
 +++ b/controller/codex_compat.go
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,327 @@
 +package controller
 +
 +import (
@@ -143,6 +143,7 @@ index 00000000..13351378
 +		return
 +	}
 +	normalizeCodexDeveloperMessages(chatReq)
++	normalizeCodexGLMToolChoice(chatReq)
 +	if lo.FromPtrOr(chatReq.Stream, false) {
 +		chatReq.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
 +	}
@@ -190,6 +191,23 @@ index 00000000..13351378
 +		if strings.EqualFold(role, "developer") {
 +			request.Messages[index].Role = "system"
 +		}
++	}
++}
++
++func normalizeCodexGLMToolChoice(request *dto.GeneralOpenAIRequest) {
++	if request == nil || !strings.EqualFold(strings.TrimSpace(request.Model), "glm-5-2") || lo.FromPtrOr(request.Stream, false) {
++		return
++	}
++	choice, ok := request.ToolChoice.(string)
++	if !ok {
++		return
++	}
++	switch strings.ToLower(strings.TrimSpace(choice)) {
++	case "auto":
++		request.ToolChoice = nil
++	case "none":
++		request.ToolChoice = nil
++		request.Tools = nil
 +	}
 +}
 +
@@ -318,7 +336,7 @@ new file mode 100644
 index 00000000..f2815005
 --- /dev/null
 +++ b/controller/codex_compat_test.go
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,272 @@
 +package controller
 +
 +import (
@@ -463,6 +481,31 @@ index 00000000..f2815005
 +	CodexResponses(c)
 +
 +	require.Equal(t, http.StatusOK, recorder.Code)
++}
++
++func TestNormalizeCodexGLMToolChoiceForNonStreamingRequests(t *testing.T) {
++	streamFalse := false
++	tools := []dto.ToolCallRequest{{Type: "function"}}
++
++	autoRequest := &dto.GeneralOpenAIRequest{Model: "glm-5-2", Stream: &streamFalse, Tools: tools, ToolChoice: "auto"}
++	normalizeCodexGLMToolChoice(autoRequest)
++	require.Nil(t, autoRequest.ToolChoice)
++	require.Len(t, autoRequest.Tools, 1)
++
++	noneRequest := &dto.GeneralOpenAIRequest{Model: "glm-5-2", Stream: &streamFalse, Tools: tools, ToolChoice: "none"}
++	normalizeCodexGLMToolChoice(noneRequest)
++	require.Nil(t, noneRequest.ToolChoice)
++	require.Empty(t, noneRequest.Tools)
++
++	streamTrue := true
++	streamRequest := &dto.GeneralOpenAIRequest{Model: "glm-5-2", Stream: &streamTrue, Tools: tools, ToolChoice: "auto"}
++	normalizeCodexGLMToolChoice(streamRequest)
++	require.Equal(t, "auto", streamRequest.ToolChoice)
++
++	otherRequest := &dto.GeneralOpenAIRequest{Model: "gpt-5.5", Stream: &streamFalse, Tools: tools, ToolChoice: "none"}
++	normalizeCodexGLMToolChoice(otherRequest)
++	require.Equal(t, "none", otherRequest.ToolChoice)
++	require.Len(t, otherRequest.Tools, 1)
 +}
 +
 +func TestCodexResponsesConvertsChatStreamToResponsesEvents(t *testing.T) {

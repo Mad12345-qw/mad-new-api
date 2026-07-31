@@ -1,5 +1,5 @@
 diff --git a/relay/channel/task/xai/adaptor.go b/relay/channel/task/xai/adaptor.go
-index dd22198aa15d07e42dd5179be34f98366bb7aaed..f1ab78c27cb95105b59ed66da6d9d6b67208b266 100644
+index dd22198a..140673eb 100644
 --- a/relay/channel/task/xai/adaptor.go
 +++ b/relay/channel/task/xai/adaptor.go
 @@ -28,12 +28,13 @@ type imageInput struct {
@@ -39,14 +39,13 @@ index dd22198aa15d07e42dd5179be34f98366bb7aaed..f1ab78c27cb95105b59ed66da6d9d6b6
  	return map[string]float64{
  		"seconds":    float64(req.Duration),
  		"resolution": resolutionRatio,
-@@ -322,15 +324,61 @@ func normalizeRequest(input map[string]any, form *multipart.Form, fallbackModel
+@@ -322,15 +324,60 @@ func normalizeRequest(input map[string]any, form *multipart.Form, fallbackModel
  		aspectRatio = aspectRatioFromSize(size)
  	}
  
 -	imageURL := extractImageURL(firstValue(input, "image", "image_url", "imageUrl", "input_reference", "inputImage", "input_image", "images", "reference_images"))
 -	if imageURL == "" {
 -		imageURL = extractImageURL(firstValue(input, "input", "content", "messages"))
-+
 +	singleImages := extractImageURLs(firstValue(input, "image", "image_url", "imageUrl", "input_reference", "inputImage", "input_image"))
 +	referenceImages := extractImageURLs(firstValue(input, "reference_images", "referenceImages", "reference_image_urls", "referenceImageUrls"))
 +	genericImages := extractImageURLs(firstValue(input, "images"))
@@ -85,7 +84,7 @@ index dd22198aa15d07e42dd5179be34f98366bb7aaed..f1ab78c27cb95105b59ed66da6d9d6b6
 +	if len(singleImages) > 1 {
 +		if len(referenceImages) > 0 {
 +			return generationRequest{}, fmt.Errorf("image and reference_images cannot be combined")
- 		}
++		}
 +		referenceImages = singleImages
 +		singleImages = nil
 +	}
@@ -95,7 +94,7 @@ index dd22198aa15d07e42dd5179be34f98366bb7aaed..f1ab78c27cb95105b59ed66da6d9d6b6
 +	if len(referenceImages) > 0 {
 +		if !strings.EqualFold(strings.TrimSpace(modelName), "grok-imagine-video") {
 +			return generationRequest{}, fmt.Errorf("reference_images are only supported by grok-imagine-video")
-+		}
+ 		}
 +		if len(referenceImages) > 7 {
 +			return generationRequest{}, fmt.Errorf("reference_images supports at most 7 images")
 +		}
@@ -108,7 +107,7 @@ index dd22198aa15d07e42dd5179be34f98366bb7aaed..f1ab78c27cb95105b59ed66da6d9d6b6
  	}
  
  	req := generationRequest{
-@@ -340,8 +388,11 @@ func normalizeRequest(input map[string]any, form *multipart.Form, fallbackModel
+@@ -340,8 +387,11 @@ func normalizeRequest(input map[string]any, form *multipart.Form, fallbackModel
  		AspectRatio: aspectRatio,
  		Resolution:  resolution,
  	}
@@ -122,7 +121,7 @@ index dd22198aa15d07e42dd5179be34f98366bb7aaed..f1ab78c27cb95105b59ed66da6d9d6b6
  	}
  	return req, nil
  }
-@@ -430,57 +481,60 @@ func extractText(value any) string {
+@@ -430,57 +480,60 @@ func extractText(value any) string {
  	return strings.Join(texts, "\n")
  }
  
@@ -218,7 +217,7 @@ index dd22198aa15d07e42dd5179be34f98366bb7aaed..f1ab78c27cb95105b59ed66da6d9d6b6
  			}
  			contentType := header.Header.Get("Content-Type")
  			if contentType == "" || contentType == "application/octet-stream" {
-@@ -489,10 +543,28 @@ func firstMultipartImage(form *multipart.Form) (string, error) {
+@@ -489,10 +542,28 @@ func firstMultipartImage(form *multipart.Form) (string, error) {
  			if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
  				continue
  			}
@@ -249,8 +248,9 @@ index dd22198aa15d07e42dd5179be34f98366bb7aaed..f1ab78c27cb95105b59ed66da6d9d6b6
  }
  
  func normalizeResolution(value string) (string, error) {
+
 diff --git a/relay/channel/task/xai/adaptor_test.go b/relay/channel/task/xai/adaptor_test.go
-index ae0f373921d7f223fe4a33cf32a093bfc6c8b5ea..de6105c7b24a64d83fe9237b0d8057cee8224a94 100644
+index ae0f3739..1c6c9e8d 100644
 --- a/relay/channel/task/xai/adaptor_test.go
 +++ b/relay/channel/task/xai/adaptor_test.go
 @@ -48,6 +48,73 @@ func TestNormalizeOpenAIContentArrayRequest(t *testing.T) {
@@ -259,10 +259,10 @@ index ae0f373921d7f223fe4a33cf32a093bfc6c8b5ea..de6105c7b24a64d83fe9237b0d8057ce
  
 +func TestNormalizeOfficialReferenceImagesRequest(t *testing.T) {
 +	req, err := normalizeRequest(map[string]any{
-+		"model":       "grok-imagine-video",
-+		"prompt":      "Use the people and clothing from the references",
-+		"duration":    float64(10),
-+		"resolution":  "720p",
++		"model":        "grok-imagine-video",
++		"prompt":       "Use the people and clothing from the references",
++		"duration":     float64(10),
++		"resolution":   "720p",
 +		"aspect_ratio": "16:9",
 +		"reference_images": []any{
 +			map[string]any{"url": "https://example.com/person.png"},

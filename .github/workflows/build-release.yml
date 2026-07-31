@@ -2,6 +2,9 @@ name: Build Mad New API
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   schedule:
     - cron: '0 18 * * 0'
 
@@ -66,13 +69,22 @@ jobs:
         working-directory: source
         run: |
           files=(
+            controller/codex_catalog.go
             controller/codex_compat.go
             controller/codex_compat_test.go
             controller/playground.go
+            controller/relay.go
+            controller/relay_task_retry_test.go
             middleware/distributor.go
             middleware/playground_path.go
             middleware/playground_path_test.go
             relay/common/relay_info.go
+            model/main.go
+            model/task.go
+            model/task_cas_test.go
+            model/task_request_reservation.go
+            model/task_request_reservation_test.go
+            relay/channel/api_request.go
             relay/channel/task/xai/adaptor.go
             relay/channel/task/xai/adaptor_test.go
             relay/channel/task/xai/constants.go
@@ -80,6 +92,7 @@ jobs:
             relay/relay_adaptor_test.go
             relay/relay_task.go
             relay/relay_task_billing_test.go
+            router/video-router.go
             router/relay-router.go
             service/quota.go
             service/quota_audio_test.go
@@ -117,6 +130,7 @@ jobs:
         run: docker build --pull --tag mad-new-api:latest source
 
       - name: Export image
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
           docker save mad-new-api:latest | gzip -1 > mad-new-api.tar.gz
           sha256sum mad-new-api.tar.gz > mad-new-api.tar.gz.sha256
@@ -133,6 +147,7 @@ jobs:
           git -C source rev-parse HEAD > upstream-commit.txt
 
       - name: Publish stable release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

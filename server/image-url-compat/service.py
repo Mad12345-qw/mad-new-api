@@ -34,8 +34,10 @@ TIMEOUT = int(os.getenv("UPSTREAM_TIMEOUT", "650"))
 IMAGE_DOWNLOAD_TIMEOUT = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT", "180"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(64 * 1024 * 1024)))
 GEMINI_IMAGE_CONCURRENCY = int(os.getenv("GEMINI_IMAGE_CONCURRENCY", "2"))
+IMAGE2_4K_CONCURRENCY = int(os.getenv("IMAGE2_4K_CONCURRENCY", "2"))
 SIGNED_VIDEO_URL_TTL = int(os.getenv("SIGNED_VIDEO_URL_TTL", "600"))
 GEMINI_IMAGE_SLOTS = threading.BoundedSemaphore(max(1, GEMINI_IMAGE_CONCURRENCY))
+IMAGE2_4K_SLOTS = threading.BoundedSemaphore(max(1, IMAGE2_4K_CONCURRENCY))
 try:
     LIBC = ctypes.CDLL("libc.so.6")
 except OSError:
@@ -165,16 +167,23 @@ def canonical_image_path(path):
 
 @contextmanager
 def image_request_slot(request_json):
-    if not is_gemini_image_model(request_json.get("model")):
+    model = request_json.get("model")
+    if is_gemini_image_model(model):
+        slots = GEMINI_IMAGE_SLOTS
+        queue_name = "Gemini image"
+    elif is_image2_4k_model(model):
+        slots = IMAGE2_4K_SLOTS
+        queue_name = "gpt-image-2-4k"
+    else:
         yield
         return
-    acquired = GEMINI_IMAGE_SLOTS.acquire(timeout=TIMEOUT)
+    acquired = slots.acquire(timeout=TIMEOUT)
     if not acquired:
-        raise TimeoutError("Gemini image compatibility queue timed out")
+        raise TimeoutError(queue_name + " compatibility queue timed out")
     try:
         yield
     finally:
-        GEMINI_IMAGE_SLOTS.release()
+        slots.release()
 
 
 def release_process_memory():
@@ -644,11 +653,67 @@ def normalize_video_status_response(
     ).encode("utf-8"), "video-status-normalized"
 
 
-def decode_base64_image(value):
+def validate_base64_image(value):
+    if not isinstance(value, str) or not value:
+        raise ValueError("invalid base64 image")
+    estimated_size = (len(value) * 3) // 4
+    if estimated_size > MAX_IMAGE_BYTES:
+        raise ValueError("upstream image is too large")
+    prefix_length = min(len(value), 256)
+    prefix_length -= prefix_length % 4
     try:
-        return base64.b64decode(value, validate=True)
+        prefix = base64.b64decode(value[:prefix_length], validate=True)
     except (binascii.Error, ValueError) as exc:
         raise ValueError("invalid base64 image") from exc
+    if not image_extension(prefix):
+        raise ValueError("unsupported image format")
+
+
+def cache_temp_path():
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    name = secrets.token_urlsafe(32)
+    return name, CACHE_DIR / ("." + name + ".tmp")
+
+
+def finish_cached_image(name, temp_path, prefix):
+    detected = image_extension(prefix)
+    if not detected:
+        raise ValueError("unsupported image format")
+    ext, _ = detected
+    final_path = CACHE_DIR / (name + "." + ext)
+    os.chmod(temp_path, 0o640)
+    os.replace(temp_path, final_path)
+    return PUBLIC_BASE_URL.rstrip("/") + "/image-cache/" + final_path.name
+
+
+def store_base64_image(encoded):
+    validate_base64_image(encoded)
+    name, temp_path = cache_temp_path()
+    prefix = bytearray()
+    total = 0
+    chunk_size = 1024 * 1024
+    try:
+        with open(temp_path, "xb") as handle:
+            for offset in range(0, len(encoded), chunk_size):
+                chunk = encoded[offset : offset + chunk_size]
+                try:
+                    raw = base64.b64decode(chunk, validate=True)
+                except (binascii.Error, ValueError) as exc:
+                    raise ValueError("invalid base64 image") from exc
+                total += len(raw)
+                if total > MAX_IMAGE_BYTES:
+                    raise ValueError("upstream image is too large")
+                if len(prefix) < 256:
+                    prefix.extend(raw[: 256 - len(prefix)])
+                handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return finish_cached_image(name, temp_path, prefix)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def download_image(url):
@@ -663,7 +728,7 @@ def download_image(url):
         },
     )
     with urllib.request.urlopen(request, timeout=IMAGE_DOWNLOAD_TIMEOUT) as response:
-        chunks = []
+        image = bytearray()
         total = 0
         while True:
             chunk = response.read(1024 * 1024)
@@ -672,8 +737,46 @@ def download_image(url):
             total += len(chunk)
             if total > MAX_IMAGE_BYTES:
                 raise ValueError("upstream image is too large")
-            chunks.append(chunk)
-    return b"".join(chunks)
+            image.extend(chunk)
+    return image
+
+
+def download_image_to_cache(url):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 Chrome/150 Safari/537.36"
+            ),
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        },
+    )
+    name, temp_path = cache_temp_path()
+    prefix = bytearray()
+    total = 0
+    try:
+        with urllib.request.urlopen(
+            request, timeout=IMAGE_DOWNLOAD_TIMEOUT
+        ) as response, open(temp_path, "xb") as handle:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_IMAGE_BYTES:
+                    raise ValueError("upstream image is too large")
+                if len(prefix) < 256:
+                    prefix.extend(chunk[: 256 - len(prefix)])
+                handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return finish_cached_image(name, temp_path, prefix)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def store_image(raw):
@@ -710,8 +813,26 @@ def normalize_images(payload, requested_format):
         if not isinstance(item, dict):
             continue
         if isinstance(item.get("b64_json"), str):
-            raw = decode_base64_image(item["b64_json"])
+            encoded = item["b64_json"]
+            validate_base64_image(encoded)
+            if requested_format == "b64_json":
+                item.pop("url", None)
+                normalized += 1
+                continue
+            cached_url = store_base64_image(encoded)
+            if requested_format == "url":
+                item["url"] = cached_url
+                item.pop("b64_json", None)
+            else:
+                item["url"] = cached_url
+            normalized += 1
+            continue
         elif isinstance(item.get("url"), str):
+            if requested_format == "url":
+                item["url"] = download_image_to_cache(item["url"])
+                item.pop("b64_json", None)
+                normalized += 1
+                continue
             raw = download_image(item["url"])
         else:
             continue
@@ -775,10 +896,8 @@ def transform_gemini_chat_response(request_json, response_body):
         return response_body, "passthrough"
     data = []
     for _mime_type, encoded in images:
-        raw = decode_base64_image(encoded)
-        if not image_extension(raw):
-            raise ValueError("unsupported Gemini image format")
-        data.append({"b64_json": base64.b64encode(raw).decode("ascii")})
+        validate_base64_image(encoded)
+        data.append({"b64_json": encoded})
     image_payload = {"created": int(time.time()), "data": data}
     requested_format = str(request_json.get("response_format") or "").lower()
     normalize_images(image_payload, requested_format)
@@ -846,6 +965,7 @@ class Handler(BaseHTTPRequestHandler):
             "x-api-key": "X-API-Key",
             "anthropic-version": "Anthropic-Version",
             "x-goog-api-key": "X-Goog-Api-Key",
+            "idempotency-key": "Idempotency-Key",
         }
         for header in requested_headers.split(","):
             header = header.strip()
@@ -861,7 +981,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header(
             "Access-Control-Expose-Headers",
             "Content-Type, Content-Length, X-Oneapi-Request-Id, "
-            "X-Image-URL-Compat, X-Mad-Compat",
+            "X-Image-URL-Compat, X-Mad-Compat, X-MadAPI-Task-ID, "
+            "X-MadAPI-Idempotent-Replay",
         )
         self.send_header(
             "Vary",

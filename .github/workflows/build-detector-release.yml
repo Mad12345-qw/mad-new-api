@@ -33,7 +33,7 @@ jobs:
       - name: Apply functional patches without old branding
         shell: bash
         run: |
-          excluded='^(home-iframe-header-scroll|mad-adforge-nav|mad-black-gold-avatar|mad-custom-model-icons|mad-email-verification|mad-ios-app-icons|mad-recharge-promotion|mad-subscription-layout|mad-telegram-announcement|mad-telegram-system-content)\.patch$'
+          excluded='^(home-iframe-header-scroll|mad-adforge-nav|mad-black-gold-avatar|mad-custom-model-icons|mad-email-verification|mad-ios-app-icons|mad-recharge-promotion|mad-subscription-layout|mad-telegram-announcement|mad-telegram-system-content|zzzzzzzzzzzzzzzzzzzzzzzz-paid-task-idempotency|zzzzzzzzzzzzzzzzzzzzzzzzz-codex-cpa-capabilities)\.patch$'
           for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
             name=$(basename "$patch")
             if [[ "$name" =~ $excluded ]]; then

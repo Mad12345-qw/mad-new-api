@@ -13,9 +13,12 @@ This repository applies a small backend patch to the upstream New API source:
 - browser-memory attachment and media cleanup without a server upload directory
 - a versioned media compatibility service that normalizes mainstream OpenAI, New API, Gemini, and Seedance/Volc image and video request shapes into the site's verified canonical routes, while honoring image URL/Base64 responses and asynchronous video task polling
 - isolated media resource controls so large Gemini image responses cannot consume the New API container's memory budget, plus route-level handling that prevents endpoint-fallback clients from submitting the same video through multiple aliases
+- streaming 4K image cache writes and zero-copy Base64 passthrough for Gemini responses, with separate Gemini and `gpt-image-2-4k` concurrency guards while ordinary `gpt-image-2` keeps its existing concurrency
+- paid video idempotency through `Idempotency-Key`, recoverable pre-upstream task records, an authenticated request-ID lookup route, and upstream idempotency forwarding where the supplier supports it
 - native xAI video task support for channel 40, including mainstream request normalization, single-image and up-to-seven-reference-image modes, duration and resolution validation, private result proxying, and official task polling
 - an isolated Codex Desktop compatibility surface at `/codex/v1`: its catalog is synthesized from each token's current conversation-model access, while Responses requests are normalized once and delegated to New API's existing channel selection, mapping, retry, billing, and channel-type adaptors
 - the MIT-licensed CPA Responses-to-Chat translator is vendored intact behind `/codex/v1`, including its original request/response regression suite; only thin New API authentication, routing, and billing adapters surround it
+- the Codex catalog uses a build-pinned CPA capability snapshot for truthful context windows, reasoning levels, and validated image-input metadata; unknown models remain conservative and media models stay outside the Codex picker
 
 GitHub Actions applies and verifies every patch, runs backend, frontend, and image compatibility tests, builds the Docker image away from the production server, and publishes stable release artifacts. No production credentials are stored in this repository.
 

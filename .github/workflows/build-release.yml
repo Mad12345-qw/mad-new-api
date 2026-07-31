@@ -71,6 +71,11 @@ jobs:
             middleware/playground_path.go
             middleware/playground_path_test.go
             relay/common/relay_info.go
+            relay/channel/task/xai/adaptor.go
+            relay/channel/task/xai/adaptor_test.go
+            relay/channel/task/xai/constants.go
+            relay/relay_adaptor.go
+            relay/relay_adaptor_test.go
             relay/relay_task.go
             relay/relay_task_billing_test.go
             router/relay-router.go
@@ -80,12 +85,13 @@ jobs:
           unformatted=$(gofmt -l "${files[@]}")
           if [ -n "$unformatted" ]; then
             printf 'Unformatted Go files:\n%s\n' "$unformatted"
+            gofmt -d "${files[@]}"
             exit 1
           fi
 
       - name: Test backend paths
         working-directory: source
-        run: go test ./controller ./middleware ./relay/common ./relay ./router ./service
+        run: go test ./controller ./middleware ./relay/common ./relay/channel/task/xai ./relay ./router ./service
 
       - name: Verify playground frontend
         working-directory: source/web/default

@@ -204,7 +204,7 @@ index 0000000..9e08f59
 +	return json.RawMessage(`""`)
 +}
 diff --git a/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go b/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
-index a5034a0..56acdb9 100644
+index a5034a0..4590974 100644
 --- a/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
 +++ b/service/relayconvert/internal/oai_chat/to_oai_responses_resp_test.go
 @@ -1,6 +1,7 @@
@@ -223,8 +223,8 @@ index a5034a0..56acdb9 100644
 +	req := &dto.OpenAIResponsesRequest{
 +		Tools: mustResponsesRawMessage(t, []map[string]any{
 +			{
-+				"type": "namespace",
-+				"name": "mcp__github",
++				"type":  "namespace",
++				"name":  "mcp__github",
 +				"tools": []map[string]any{{"type": "function", "name": "get_me"}},
 +			},
 +		}),
@@ -233,8 +233,8 @@ index a5034a0..56acdb9 100644
 +				"type": "additional_tools",
 +				"tools": []map[string]any{
 +					{
-+						"type": "namespace",
-+						"name": "terminal",
++						"type":  "namespace",
++						"name":  "terminal",
 +						"tools": []map[string]any{{"type": "custom", "name": "exec"}},
 +					},
 +				},
@@ -259,8 +259,8 @@ index a5034a0..56acdb9 100644
 +func TestChatToResponsesStreamRestoresNamespaceToolCall(t *testing.T) {
 +	req := &dto.OpenAIResponsesRequest{Tools: mustResponsesRawMessage(t, []map[string]any{
 +		{
-+			"type": "namespace",
-+			"name": "mcp__github",
++			"type":  "namespace",
++			"name":  "mcp__github",
 +			"tools": []map[string]any{{"type": "function", "name": "get_me"}},
 +		},
 +	})}
@@ -305,7 +305,7 @@ index a5034a0..56acdb9 100644
  	tests := []struct {
  		name         string
 diff --git a/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go b/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
-index 75c602d..d562dce 100644
+index 75c602d..cfb26ea 100644
 --- a/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
 +++ b/service/relayconvert/internal/oai_chat/to_oai_responses_stream_resp.go
 @@ -1,6 +1,7 @@
@@ -422,13 +422,17 @@ index 75c602d..d562dce 100644
  	if toolCall.Function.Arguments != "" {
  		tool.Arguments.WriteString(toolCall.Function.Arguments)
 -		events = append(events, responsesStreamEvent(responsesEventFunctionArgsDelta, dto.ResponsesStreamResponse{
+-			Type:        responsesEventFunctionArgsDelta,
+-			OutputIndex: intPtr(tool.OutputIndex),
+-			ItemID:      tool.ID,
+-			Delta:       toolCall.Function.Arguments,
+-		}))
 +		if !tool.Custom {
 +			events = append(events, responsesStreamEvent(responsesEventFunctionArgsDelta, dto.ResponsesStreamResponse{
- 			Type:        responsesEventFunctionArgsDelta,
- 			OutputIndex: intPtr(tool.OutputIndex),
- 			ItemID:      tool.ID,
- 			Delta:       toolCall.Function.Arguments,
--		}))
++				Type:        responsesEventFunctionArgsDelta,
++				OutputIndex: intPtr(tool.OutputIndex),
++				ItemID:      tool.ID,
++				Delta:       toolCall.Function.Arguments,
 +			}))
 +		}
  	}
@@ -765,7 +769,7 @@ index 7779364..b26f06d 100644
  			return map[string]any{
  				"type": "function",
 diff --git a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
-index 6924c82..5494722 100644
+index 6924c82..5889a9e 100644
 --- a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
 +++ b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
 @@ -55,6 +55,87 @@ func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *t
@@ -791,8 +795,8 @@ index 6924c82..5494722 100644
 +				"type": "additional_tools",
 +				"tools": []map[string]any{
 +					{
-+						"type": "namespace",
-+						"name": "collaboration",
++						"type":  "namespace",
++						"name":  "collaboration",
 +						"tools": []map[string]any{{"type": "function", "name": "send_message", "parameters": map[string]any{"type": "object"}}},
 +					},
 +				},

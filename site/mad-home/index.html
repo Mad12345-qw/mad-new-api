@@ -396,13 +396,9 @@
 
       .endpoint {
         position: relative;
-        display: flex;
-        align-items: center;
-        gap: 16px;
         width: min(690px, 100%);
         margin: 34px auto 0;
-        min-height: 62px;
-        padding: 8px 10px 8px 18px;
+        padding: 6px 10px 6px 18px;
         border: 1px solid transparent;
         border-radius: 18px;
         corner-shape: squircle;
@@ -414,6 +410,18 @@
           0 18px 60px rgba(0, 0, 0, 0.3),
           inset 0 1px 0 rgba(255, 255, 255, 0.055);
         animation: borderFlow 9s ease-in-out infinite;
+      }
+
+      .endpoint-row {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        min-height: 50px;
+      }
+
+      .endpoint-row + .endpoint-row {
+        border-top: 1px solid rgba(200, 169, 106, 0.16);
       }
 
       .endpoint-label {
@@ -446,7 +454,7 @@
         box-shadow: 0 0 10px rgba(240, 220, 167, 0.78);
       }
 
-      .endpoint code {
+      .endpoint-row code {
         position: absolute;
         left: 50%;
         min-width: 0;
@@ -670,30 +678,44 @@
         }
 
         .endpoint {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto 66px;
-          gap: 8px 12px;
           max-width: 100%;
-          padding: 11px 12px 11px 16px;
+          padding: 4px 12px 4px 16px;
+        }
+
+        .endpoint-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 66px;
+          gap: 8px 12px;
+          min-height: 76px;
+          padding: 10px 0;
         }
 
         .endpoint-label {
-          grid-column: 1 / -1;
+          grid-column: 1;
+          grid-row: 1;
           margin-left: 0;
           text-align: left;
         }
 
-        .endpoint code {
+        .endpoint-row code {
           position: static;
+          grid-column: 1;
+          grid-row: 2;
           font-size: 11px;
+          text-align: left;
           transform: none;
         }
 
         .online {
+          grid-column: 2;
+          grid-row: 1;
+          justify-self: end;
           margin-left: 0;
         }
 
         .copy {
+          grid-column: 2;
+          grid-row: 2;
           width: 66px;
         }
 
@@ -764,10 +786,30 @@
           <p class="eyebrow"><i></i> AI 模型与 API 服务平台</p>
 
           <div class="endpoint" aria-label="API 接入地址">
-            <span class="endpoint-label">API BASE URL</span>
-            <code>https://mad.myddns.me/v1</code>
-            <span class="online">ONLINE</span>
-            <button class="copy" type="button">复制</button>
+            <div class="endpoint-row">
+              <span class="endpoint-label">API BASE URL</span>
+              <code>https://mad.myddns.me/v1</code>
+              <span class="online">ONLINE</span>
+              <button
+                class="copy"
+                type="button"
+                data-copy-value="https://mad.myddns.me/v1"
+                data-copy-message="API BASE URL 已复制"
+                aria-label="复制 API BASE URL"
+              >复制</button>
+            </div>
+            <div class="endpoint-row">
+              <span class="endpoint-label">CODEX专用 API URL</span>
+              <code>https://mad.myddns.me/codex/v1</code>
+              <span class="online">ONLINE</span>
+              <button
+                class="copy"
+                type="button"
+                data-copy-value="https://mad.myddns.me/codex/v1"
+                data-copy-message="CODEX 专用 API URL 已复制"
+                aria-label="复制 CODEX 专用 API URL"
+              >复制</button>
+            </div>
           </div>
 
           <div class="actions">
@@ -781,7 +823,7 @@
 
     <div class="toast" role="status">API 地址已复制</div>
     <script>
-      const copyButton = document.querySelector('.copy')
+      const copyButtons = document.querySelectorAll('.copy')
       const toast = document.querySelector('.toast')
       let lastReportedScrollState = null
 
@@ -815,28 +857,31 @@
         return copied
       }
 
-      copyButton.addEventListener('click', async () => {
-        const value = 'https://mad.myddns.me/v1'
-        let copied = false
+      copyButtons.forEach((copyButton) => {
+        copyButton.addEventListener('click', async () => {
+          const value = copyButton.dataset.copyValue || ''
+          const successMessage = copyButton.dataset.copyMessage || 'API 地址已复制'
+          let copied = false
 
-        if (navigator.clipboard && window.isSecureContext) {
-          try {
-            await navigator.clipboard.writeText(value)
-            copied = true
-          } catch (_) {
-            copied = false
+          if (navigator.clipboard && window.isSecureContext) {
+            try {
+              await navigator.clipboard.writeText(value)
+              copied = true
+            } catch (_) {
+              copied = false
+            }
           }
-        }
 
-        if (!copied) copied = legacyCopy(value)
+          if (!copied) copied = legacyCopy(value)
 
-        copyButton.textContent = copied ? '已复制' : '请手动复制'
-        toast.textContent = copied ? 'API 地址已复制' : value
-        toast.classList.add('show')
-        window.setTimeout(() => {
-          copyButton.textContent = '复制'
-          toast.classList.remove('show')
-        }, copied ? 1600 : 3000)
+          copyButton.textContent = copied ? '已复制' : '请手动复制'
+          toast.textContent = copied ? successMessage : value
+          toast.classList.add('show')
+          window.setTimeout(() => {
+            copyButton.textContent = '复制'
+            toast.classList.remove('show')
+          }, copied ? 1600 : 3000)
+        })
       })
 
       window.addEventListener('scroll', reportScrollState, { passive: true })

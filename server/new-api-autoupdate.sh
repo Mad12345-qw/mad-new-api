@@ -14,6 +14,9 @@ COMPAT_DIR=/opt/image-url-compat
 COMPAT_SCRIPT=$COMPAT_DIR/service.py
 COMPAT_UNIT=/etc/systemd/system/image-url-compat.service
 COMPAT_HEALTH_URL=http://127.0.0.1:3010/health
+HOME_DIR=/opt/mad-home
+HOME_STATE_FILE=/opt/new-api/mad-home-sha256.txt
+SELF_SCRIPT=/usr/local/sbin/new-api-autoupdate.sh
 
 exec 9>"$LOCK_FILE"
 flock -n 9 || exit 0
@@ -21,6 +24,68 @@ flock -n 9 || exit 0
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 cache_bust=$(date +%s)
+
+for asset in mad-home.tar.gz new-api-autoupdate.sh; do
+  curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
+    -o "$work_dir/$asset" "$RELEASE_BASE/$asset?cb=$cache_bust"
+  curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
+    -o "$work_dir/$asset.sha256" "$RELEASE_BASE/$asset.sha256?cb=$cache_bust"
+done
+
+cd "$work_dir"
+sha256sum -c mad-home.tar.gz.sha256
+sha256sum -c new-api-autoupdate.sh.sha256
+home_sha=$(awk '{print $1}' mad-home.tar.gz.sha256)
+self_sha=$(awk '{print $1}' new-api-autoupdate.sh.sha256)
+
+install_updater() {
+  current_sha=''
+  if [ -f "$SELF_SCRIPT" ]; then
+    current_sha=$(sha256sum "$SELF_SCRIPT" | awk '{print $1}')
+  fi
+  if [ "$current_sha" != "$self_sha" ]; then
+    [ ! -f "$SELF_SCRIPT" ] || cp -a "$SELF_SCRIPT" "$SELF_SCRIPT.bak"
+    install -m 0755 "$work_dir/new-api-autoupdate.sh" "$SELF_SCRIPT"
+    logger -t new-api-autoupdate "updater refreshed successfully: $self_sha"
+  fi
+}
+
+if [ ! -f "$HOME_STATE_FILE" ] || [ "$(cat "$HOME_STATE_FILE")" != "$home_sha" ]; then
+  ts=$(date +%Y%m%d-%H%M%S)
+  home_stage=/opt/mad-home-stage-$ts
+  home_backup_dir=$COMPOSE_DIR/backups/mad-home-$ts
+  rm -rf "$home_stage"
+  mkdir -p "$home_backup_dir"
+
+  if [ -d "$HOME_DIR" ]; then
+    cp -a "$HOME_DIR" "$home_stage"
+  else
+    mkdir -p "$home_stage"
+  fi
+
+  tar --no-same-owner -xzf "$work_dir/mad-home.tar.gz" -C "$home_stage"
+  test -s "$home_stage/index.html"
+  test -s "$home_stage/assets/mad-logo.svg"
+  grep -Fq 'https://mad.myddns.me/codex/v1' "$home_stage/index.html"
+
+  if [ -d "$HOME_DIR" ]; then
+    mv "$HOME_DIR" "$home_backup_dir/mad-home"
+  fi
+  if mv "$home_stage" "$HOME_DIR"; then
+    printf '%s\n' "$home_sha" > "$HOME_STATE_FILE"
+    logger -t new-api-autoupdate "homepage updated successfully: $home_sha"
+  else
+    [ ! -d "$home_backup_dir/mad-home" ] || mv "$home_backup_dir/mad-home" "$HOME_DIR"
+    logger -t new-api-autoupdate "homepage update failed; rolled back"
+    exit 2
+  fi
+fi
+
+if [ "${MAD_HOME_ONLY:-0}" = 1 ]; then
+  install_updater
+  logger -t new-api-autoupdate "homepage-only release completed: $home_sha"
+  exit 0
+fi
 
 curl -fL --retry 3 --connect-timeout 15 --max-time 900 \
   -o "$work_dir/mad-new-api.tar.gz" "$RELEASE_BASE/mad-new-api.tar.gz?cb=$cache_bust"
@@ -81,6 +146,7 @@ fi
 if [ -f "$STATE_FILE" ] \
   && [ "$(cat "$STATE_FILE")" = "$release_sha" ] \
   && docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  install_updater
   logger -t new-api-autoupdate "already current: $release_sha"
   exit 0
 fi
@@ -116,6 +182,7 @@ done
 
 if [ "$healthy" -eq 1 ]; then
   printf '%s\n' "$release_sha" > "$STATE_FILE"
+  install_updater
   logger -t new-api-autoupdate "release deployed successfully: $release_sha"
   exit 0
 fi

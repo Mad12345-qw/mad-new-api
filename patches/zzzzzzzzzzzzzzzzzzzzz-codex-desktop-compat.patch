@@ -1,6 +1,6 @@
 diff --git a/controller/codex_compat.go b/controller/codex_compat.go
 new file mode 100644
-index 00000000..84ee01bd
+index 00000000..13351378
 --- /dev/null
 +++ b/controller/codex_compat.go
 @@ -0,0 +1,299 @@
@@ -36,7 +36,7 @@ index 00000000..84ee01bd
 +
 +var (
 +	codexInternalBaseURL     = defaultCodexInternalBaseURL
-+	codexCompatibilitySlots = make(chan struct{}, codexCompatibilityLimit)
++	codexCompatibilitySlots  = make(chan struct{}, codexCompatibilityLimit)
 +	codexTextPricingProvider = codexTextPricingModels
 +	codexInternalHTTPClient  = &http.Client{
 +		Transport: &http.Transport{
@@ -246,7 +246,7 @@ index 00000000..84ee01bd
 +		"input_modalities":                     []string{"text"},
 +		"supports_image_detail_original":       false,
 +		"truncation_policy":                    map[string]any{"mode": "tokens", "limit": 10000},
-+		"supports_parallel_tool_calls":          true,
++		"supports_parallel_tool_calls":         true,
 +		"tool_mode":                            nil,
 +		"multi_agent_version":                  nil,
 +		"use_responses_lite":                   false,
@@ -272,7 +272,7 @@ index 00000000..84ee01bd
 +		"service_tiers":                        []any{},
 +		"additional_speed_tiers":               []any{},
 +		"supports_reasoning_summary_parameter": false,
-+		"supports_reasoning_summaries":          false,
++		"supports_reasoning_summaries":         false,
 +		"base_instructions":                    codexCompatibilityBaseInstructions,
 +	}
 +}

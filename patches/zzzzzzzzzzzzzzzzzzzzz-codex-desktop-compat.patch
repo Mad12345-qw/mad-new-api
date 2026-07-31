@@ -3,7 +3,7 @@ new file mode 100644
 index 00000000..13351378
 --- /dev/null
 +++ b/controller/codex_compat.go
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,309 @@
 +package controller
 +
 +import (
@@ -142,6 +142,7 @@ index 00000000..13351378
 +		codexCompatibilityError(c, http.StatusInternalServerError, fmt.Errorf("unexpected converted request type %T", converted.Value))
 +		return
 +	}
++	normalizeCodexDeveloperMessages(chatReq)
 +	if lo.FromPtrOr(chatReq.Stream, false) {
 +		chatReq.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
 +	}
@@ -180,6 +181,15 @@ index 00000000..13351378
 +	_, apiErr := openai.OaiChatToResponsesHandler(c, convertInfo, resp)
 +	if apiErr != nil {
 +		codexCompatibilityError(c, apiErr.StatusCode, apiErr)
++	}
++}
++
++func normalizeCodexDeveloperMessages(request *dto.GeneralOpenAIRequest) {
++	for index := range request.Messages {
++		role := strings.TrimSpace(request.Messages[index].Role)
++		if strings.EqualFold(role, "developer") {
++			request.Messages[index].Role = "system"
++		}
 +	}
 +}
 +
@@ -308,7 +318,7 @@ new file mode 100644
 index 00000000..f2815005
 --- /dev/null
 +++ b/controller/codex_compat_test.go
-@@ -0,0 +1,243 @@
+@@ -0,0 +1,247 @@
 +package controller
 +
 +import (
@@ -398,6 +408,10 @@ index 00000000..f2815005
 +		require.Contains(t, modelNames, request.Model)
 +		require.False(t, *request.Stream)
 +		require.NotEmpty(t, request.Messages)
++		require.Equal(t, "system", request.Messages[0].Role)
++		for _, message := range request.Messages {
++			require.NotEqual(t, "developer", message.Role)
++		}
 +
 +		w.Header().Set("Content-Type", "application/json")
 +		_, _ = io.WriteString(w, fmt.Sprintf(`{"id":"chatcmpl-test","object":"chat.completion","created":1,"model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"converted response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}`, request.Model))
@@ -406,7 +420,7 @@ index 00000000..f2815005
 +	for _, modelName := range modelNames {
 +		recorder := httptest.NewRecorder()
 +		c, _ := gin.CreateTestContext(recorder)
-+		body := fmt.Sprintf(`{"model":%q,"input":"hello","stream":false}`, modelName)
++		body := fmt.Sprintf(`{"model":%q,"instructions":"Follow the developer instructions","input":"hello","stream":false}`, modelName)
 +		c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(body))
 +		c.Request.Header.Set("Authorization", "Bearer test-token")
 +		c.Request.Header.Set("Content-Type", "application/json")

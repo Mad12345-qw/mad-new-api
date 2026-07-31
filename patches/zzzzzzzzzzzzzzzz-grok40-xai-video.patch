@@ -12,7 +12,7 @@ index 6d3d3addfa77f2912dd22fc4c2db14fb6eecb656..9e124c658f055baa5962962e20fdef47
  const (
 diff --git a/relay/channel/task/xai/adaptor.go b/relay/channel/task/xai/adaptor.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..b920e0dbd8ea1b08c19cfe18f06f53759b471917
+index 0000000000000000000000000000000000000000..dd22198aa15d07e42dd5179be34f98366bb7aaed
 --- /dev/null
 +++ b/relay/channel/task/xai/adaptor.go
 @@ -0,0 +1,547 @@
@@ -244,7 +244,7 @@ index 0000000000000000000000000000000000000000..b920e0dbd8ea1b08c19cfe18f06f5375
 +}
 +
 +func (a *TaskAdaptor) GetModelList() []string { return ModelList }
-+func (a *TaskAdaptor) GetChannelName() string  { return ChannelName }
++func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
 +
 +func normalizedRequest(c *gin.Context) (generationRequest, bool) {
 +	value, ok := c.Get(normalizedRequestKey)
@@ -734,17 +734,17 @@ index c20532d4ce782a42dc3980729da2239fb6f8215d..5bae81ea31196a09b4d365d35aca97de
  
  var ChannelName = "xai"
 diff --git a/relay/relay_adaptor.go b/relay/relay_adaptor.go
-index 90c9feed8e9600f0c4cdc04f559656fb49bc04a1..79cc80825a8f93283d8947d5e68db0589e1efd26 100644
+index 90c9feed8e9600f0c4cdc04f559656fb49bc04a1..178a04860f5f23f9f4530ffc335b6e7cb2e2cea9 100644
 --- a/relay/relay_adaptor.go
 +++ b/relay/relay_adaptor.go
-@@ -38,6 +38,7 @@ import (
- 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
- 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
- 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
-+	taskxai "github.com/QuantumNous/new-api/relay/channel/task/xai"
+@@ -41,6 +41,7 @@ import (
  	"github.com/QuantumNous/new-api/relay/channel/task/suno"
  	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
  	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
++	taskxai "github.com/QuantumNous/new-api/relay/channel/task/xai"
+ 	"github.com/QuantumNous/new-api/relay/channel/tencent"
+ 	"github.com/QuantumNous/new-api/relay/channel/vertex"
+ 	"github.com/QuantumNous/new-api/relay/channel/volcengine"
 @@ -139,6 +140,9 @@ func GetTaskPlatformForModel(platform constant.TaskPlatform, model string) const
  	if tasksora.IsApiOkSeedanceModel(model) {
  		return constant.TaskPlatformApiOkSeedance

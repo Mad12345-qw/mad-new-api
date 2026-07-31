@@ -769,7 +769,7 @@ index 7779364..b26f06d 100644
  			return map[string]any{
  				"type": "function",
 diff --git a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
-index 6924c82..5889a9e 100644
+index 6924c82..4c76bf4 100644
 --- a/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
 +++ b/service/relayconvert/internal/oai_responses/to_oai_chat_req_test.go
 @@ -55,6 +55,87 @@ func TestResponsesRequestToChatCompletionsRequestInstructionsAndScalarInput(t *t
@@ -860,6 +860,31 @@ index 6924c82..5889a9e 100644
  func TestResponsesRequestToChatCompletionsRequestMultimodalInput(t *testing.T) {
  	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
  		Model: "gpt-test",
+@@ -199,7 +280,7 @@ func TestResponsesRequestToChatCompletionsRequestToolsToolChoiceAndTextFormat(t
+ 	assert.True(t, gjson.GetBytes(got.ResponseFormat.JsonSchema, "strict").Bool())
+ }
+ 
+-func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape(t *testing.T) {
++func TestResponsesRequestToChatCompletionsRequestCustomToolCallUsesFunctionWrapper(t *testing.T) {
+ 	got, err := ResponsesRequestToChatCompletionsRequest(&dto.OpenAIResponsesRequest{
+ 		Model: "gpt-test",
+ 		Input: mustRawMessage(t, []map[string]any{
+@@ -216,12 +297,11 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallPreservesRawShape
+ 	require.Len(t, got.Messages, 1)
+ 	toolCalls := got.Messages[0].ParseToolCalls()
+ 	require.Len(t, toolCalls, 1)
+-	assert.Equal(t, dto.CustomType, toolCalls[0].Type)
++	assert.Equal(t, "function", toolCalls[0].Type)
+ 	assert.Equal(t, "call_custom", toolCalls[0].ID)
+ 	assert.Equal(t, "apply_patch", toolCalls[0].Function.Name)
+-	assert.Equal(t, "patch body", toolCalls[0].Function.Arguments)
+-	assert.Equal(t, "custom_tool_call", gjson.GetBytes(toolCalls[0].Custom, "type").String())
+-	assert.Equal(t, "patch body", gjson.GetBytes(toolCalls[0].Custom, "input").String())
++	assert.JSONEq(t, `{"input":"patch body"}`, toolCalls[0].Function.Arguments)
++	assert.Empty(t, toolCalls[0].Custom)
+ }
+ 
+ func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {
 diff --git a/service/relayconvert/response_compat.go b/service/relayconvert/response_compat.go
 index b42bed4..b796b16 100644
 --- a/service/relayconvert/response_compat.go

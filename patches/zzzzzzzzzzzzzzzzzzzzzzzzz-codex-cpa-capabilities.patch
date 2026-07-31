@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..2fa482666acec0f195241266d0cd1a553695e48f
 --- /dev/null
 +++ b/controller/codex_catalog.go
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,260 @@
 +package controller
 +
 +import (

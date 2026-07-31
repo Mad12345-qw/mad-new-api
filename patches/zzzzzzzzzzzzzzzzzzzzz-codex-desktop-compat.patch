@@ -552,10 +552,9 @@ diff --git a/router/relay-router.go b/router/relay-router.go
 index 412ef4b9..5afbbbd5 100644
 --- a/router/relay-router.go
 +++ b/router/relay-router.go
-@@ -16,6 +16,17 @@ func SetRelayRouter(router *gin.Engine) {
+@@ -16,5 +16,16 @@ func SetRelayRouter(router *gin.Engine) {
  	router.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
  	router.Use(middleware.StatsMiddleware())
- 
 +	// Codex Desktop needs a richer catalog than the standard OpenAI model list.
 +	// Requests are normalized once, then delegated to the existing chat route so
 +	// channel selection and protocol conversion continue to follow channel type.

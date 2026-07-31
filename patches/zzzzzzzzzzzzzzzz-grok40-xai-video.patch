@@ -798,7 +798,7 @@ index 90ed0044cd42971b41a9c509a21378448d2ae007..bbabf8f0f0dcba960c88202a2fe659c3
 +	require.True(t, ok)
 +}
 diff --git a/relay/relay_task.go b/relay/relay_task.go
-index 529e0e4198322958cda6ff2d44d8b72b2a66545a..e354f2483a84a99b96c3f1a91a56a503abde050b 100644
+index 529e0e4198322958cda6ff2d44d8b72b2a66545a..0a09ace5a4b3207e71f14a18c01d89fecb8542dc 100644
 --- a/relay/relay_task.go
 +++ b/relay/relay_task.go
 @@ -15,6 +15,7 @@ import (
@@ -809,7 +809,7 @@ index 529e0e4198322958cda6ff2d44d8b72b2a66545a..e354f2483a84a99b96c3f1a91a56a503
  	relaycommon "github.com/QuantumNous/new-api/relay/common"
  	relayconstant "github.com/QuantumNous/new-api/relay/constant"
  	"github.com/QuantumNous/new-api/relay/helper"
-@@ -146,21 +147,46 @@ func isPerSecondSeedanceModel(modelName string) bool {
+@@ -146,21 +147,52 @@ func isPerSecondSeedanceModel(modelName string) bool {
  	}
  }
  
@@ -841,7 +841,13 @@ index 529e0e4198322958cda6ff2d44d8b72b2a66545a..e354f2483a84a99b96c3f1a91a56a503
 +		return false
 +	}
 +
-+	quota, clamp := common.QuotaFromFloatChecked(float64(info.PriceData.Quota) * multiplier)
++	var quota int
++	var clamp *common.QuotaClamp
++	if taskxai.IsVideoModel(modelName) {
++		quota, clamp = common.QuotaRoundChecked(float64(info.PriceData.Quota) * multiplier)
++	} else {
++		quota, clamp = common.QuotaFromFloatChecked(float64(info.PriceData.Quota) * multiplier)
++	}
 +	info.PriceData.Quota = quota
 +	noteTaskQuotaClamp(info, clamp)
 +	return true
@@ -866,7 +872,7 @@ index 529e0e4198322958cda6ff2d44d8b72b2a66545a..e354f2483a84a99b96c3f1a91a56a503
  		return
  	}
  	if common.StringsContains(constant.TaskPricePatches, modelName) {
-@@ -435,7 +461,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
+@@ -435,7 +467,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
  
  	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
  
@@ -875,7 +881,7 @@ index 529e0e4198322958cda6ff2d44d8b72b2a66545a..e354f2483a84a99b96c3f1a91a56a503
  	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
  		respBody = realtimeResp
  		return
-@@ -472,15 +498,17 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
+@@ -472,15 +504,17 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
  	return
  }
  
@@ -896,7 +902,7 @@ index 529e0e4198322958cda6ff2d44d8b72b2a66545a..e354f2483a84a99b96c3f1a91a56a503
  		return nil
  	}
  
-@@ -596,6 +624,23 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
+@@ -596,6 +630,23 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
  }
  
  func TaskModel2Dto(task *model.Task) *dto.TaskDto {
@@ -920,7 +926,7 @@ index 529e0e4198322958cda6ff2d44d8b72b2a66545a..e354f2483a84a99b96c3f1a91a56a503
  	return &dto.TaskDto{
  		ID:         task.ID,
  		CreatedAt:  task.CreatedAt,
-@@ -609,13 +654,13 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+@@ -609,13 +660,13 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
  		Action:     task.Action,
  		Status:     string(task.Status),
  		FailReason: task.FailReason,

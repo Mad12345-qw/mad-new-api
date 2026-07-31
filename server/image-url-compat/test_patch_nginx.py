@@ -37,6 +37,25 @@ class PatchNginxTest(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(updated, original)
 
+    def test_migrates_official_video_create_route_to_new_api(self):
+        path = "/v1/videos/generations"
+        label = "video-create-v1-plural"
+        original = (
+            "server {\n"
+            + patch_nginx.route_block(path, label, upstream_port=3010)
+            + patch_nginx.INSERT_BEFORE
+            + "}\n"
+        )
+
+        updated, changed = patch_nginx.patched_config(original)
+
+        self.assertTrue(changed)
+        self.assertEqual(updated.count(f"location = {path}"), 1)
+        self.assertIn("proxy_pass http://127.0.0.1:3001;", updated)
+        self.assertNotIn(
+            patch_nginx.route_block(path, label, upstream_port=3010), updated
+        )
+
     def test_adds_edit_routes_to_existing_playground_config(self):
         original = (
             "server {\n"

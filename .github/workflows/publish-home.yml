@@ -1,0 +1,57 @@
+name: Publish Mad Home
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'site/mad-home/**'
+      - 'server/new-api-autoupdate.sh'
+      - '.github/workflows/publish-home.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'site/mad-home/**'
+      - 'server/new-api-autoupdate.sh'
+      - '.github/workflows/publish-home.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mad-new-api-build
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out homepage source
+        uses: actions/checkout@v4
+
+      - name: Package verified homepage release
+        run: |
+          sh -n server/new-api-autoupdate.sh
+          tar -C site/mad-home -czf mad-home.tar.gz .
+          cp server/new-api-autoupdate.sh new-api-autoupdate.sh
+          sha256sum mad-home.tar.gz > mad-home.tar.gz.sha256
+          sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
+          tar -tzf mad-home.tar.gz | grep -Fxq './index.html'
+          grep -Fq 'https://mad.myddns.me/codex/v1' site/mad-home/index.html
+
+      - name: Update homepage release assets
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view build-latest >/dev/null
+          gh release upload build-latest \
+            mad-home.tar.gz \
+            mad-home.tar.gz.sha256 \
+            new-api-autoupdate.sh \
+            new-api-autoupdate.sh.sha256 \
+            --clobber

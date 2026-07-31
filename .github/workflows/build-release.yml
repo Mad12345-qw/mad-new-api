@@ -66,6 +66,8 @@ jobs:
         working-directory: source
         run: |
           files=(
+            controller/codex_compat.go
+            controller/codex_compat_test.go
             controller/playground.go
             middleware/distributor.go
             middleware/playground_path.go

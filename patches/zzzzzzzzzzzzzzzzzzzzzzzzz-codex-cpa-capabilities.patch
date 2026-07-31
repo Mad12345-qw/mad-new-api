@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..2fa482666acec0f195241266d0cd1a553695e48f
 --- /dev/null
 +++ b/controller/codex_catalog.go
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,257 @@
 +package controller
 +
 +import (
@@ -32,10 +32,26 @@ index 0000000000000000000000000000000000000000..2fa482666acec0f195241266d0cd1a55
 +	Type                     string            `json:"type"`
 +	DisplayName              string            `json:"display_name"`
 +	Description              string            `json:"description"`
++	InputTokenLimit          int               `json:"inputTokenLimit"`
++	OutputTokenLimit         int               `json:"outputTokenLimit"`
 +	ContextLength            int               `json:"context_length"`
 +	MaxCompletionTokens      int               `json:"max_completion_tokens"`
 +	SupportedInputModalities []string          `json:"supportedInputModalities"`
 +	Thinking                 *codexCPAThinking `json:"thinking"`
++}
++
++func (info codexCPAModelInfo) effectiveContextLength() int {
++	if info.ContextLength > 0 {
++		return info.ContextLength
++	}
++	return info.InputTokenLimit
++}
++
++func (info codexCPAModelInfo) effectiveMaxCompletionTokens() int {
++	if info.MaxCompletionTokens > 0 {
++		return info.MaxCompletionTokens
++	}
++	return info.OutputTokenLimit
 +}
 +
 +var (
@@ -134,8 +150,8 @@ index 0000000000000000000000000000000000000000..2fa482666acec0f195241266d0cd1a55
 +	}
 +	best := 0
 +	for index := 1; index < len(matches); index++ {
-+		bestScore := matches[best].ContextLength
-+		candidateScore := matches[index].ContextLength
++		bestScore := matches[best].effectiveContextLength()
++		candidateScore := matches[index].effectiveContextLength()
 +		if matches[best].Thinking != nil {
 +			bestScore += len(matches[best].Thinking.Levels) * 1000
 +		}
@@ -217,12 +233,12 @@ index 0000000000000000000000000000000000000000..2fa482666acec0f195241266d0cd1a55
 +	if value := strings.TrimSpace(info.Description); value != "" {
 +		entry["description"] = value
 +	}
-+	if info.ContextLength > 0 {
-+		entry["context_window"] = info.ContextLength
-+		entry["max_context_window"] = info.ContextLength
++	if contextLength := info.effectiveContextLength(); contextLength > 0 {
++		entry["context_window"] = contextLength
++		entry["max_context_window"] = contextLength
 +	}
-+	if info.MaxCompletionTokens > 0 {
-+		entry["max_completion_tokens"] = info.MaxCompletionTokens
++	if maxCompletionTokens := info.effectiveMaxCompletionTokens(); maxCompletionTokens > 0 {
++		entry["max_completion_tokens"] = maxCompletionTokens
 +	}
 +	modalities := make([]string, 0, 2)
 +	supportsImage := false
@@ -274,7 +290,7 @@ diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
 index 8856688d959f667b35299dacc69a49fb73f74e9d..4c842f09e90436b9ffc8a688312a3df7e4404bcf 100644
 --- a/controller/codex_compat_test.go
 +++ b/controller/codex_compat_test.go
-@@ -74,6 +74,59 @@ func TestCodexListModelsUsesExistingTextPricingAndEndpointMetadata(t *testing.T)
+@@ -74,6 +74,60 @@ func TestCodexListModelsUsesExistingTextPricingAndEndpointMetadata(t *testing.T)
  	require.NotEmpty(t, model["model_messages"])
  }
  
@@ -299,6 +315,7 @@ index 8856688d959f667b35299dacc69a49fb73f74e9d..4c842f09e90436b9ffc8a688312a3df7
 +	model := buildCodexModel(dto.OpenAIModels{Id: "gemini-3.6-flash"}, 0)
 +
 +	require.Equal(t, 1048576, model["context_window"])
++	require.Equal(t, 65536, model["max_completion_tokens"])
 +	require.Equal(t, []string{"text", "image"}, model["input_modalities"])
 +	require.Equal(t, "medium", model["default_reasoning_level"])
 +}

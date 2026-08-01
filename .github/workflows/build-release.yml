@@ -31,14 +31,6 @@ jobs:
       - name: Check out build configuration
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install latest Codex CLI
-        run: npm install --global @openai/codex@latest
-
       - name: Run Windows PowerShell 5.1 acceptance
         if: runner.os == 'Windows'
         shell: powershell

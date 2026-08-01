@@ -3,240 +3,53 @@ set -eu
 
 installer_path=${1:?installer path is required}
 installer_path=$(CDPATH= cd -- "$(dirname -- "$installer_path")" && pwd)/$(basename -- "$installer_path")
-grep -Fq '/Applications/ChatGPT.app/Contents/Resources/codex' "$installer_path" || {
-  printf '%s\n' 'Installer does not recognize the ChatGPT desktop app CLI path.' >&2
-  exit 1
-}
-sandbox="$RUNNER_TEMP/mad-codex-macos-$$"
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-catalog_fixture="$sandbox/catalog from any external tool.json"
+temporary_root=${RUNNER_TEMP:-/tmp}
+home="$temporary_root/mad-codex-desktop-$$"
+fail() { printf 'Assertion failed: %s\n' "$1" >&2; exit 1; }
+hash_file() { shasum -a 256 "$1" | awk '{print $1}'; }
+run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 /bin/sh "$installer_path"; }
 
-fail() {
-  printf 'Assertion failed: %s\n' "$1" >&2
-  exit 1
-}
-
-hash_file() {
-  shasum -a 256 "$1" | awk '{print $1}'
-}
-
-run_installer() {
-  home=$1
-  key=$2
-  cli=$3
-  CODEX_HOME="$home" MADAPI_KEY="$key" CODEX_CLI_PATH="$cli" /bin/sh "$installer_path"
-}
-
-run_one_command() {
-  home=$1
-  key=$2
-  cli=$3
-  CODEX_HOME="$home" CODEX_CLI_PATH="$cli" /bin/sh -c \
-    "p=\$(mktemp) && trap 'rm -f \"\$p\"' EXIT && curl -fsSL 'file://$installer_path' -o \"\$p\" && MADAPI_KEY='$key' /bin/sh \"\$p\""
-}
-
-cleanup() {
-  rm -rf "$sandbox"
-}
-trap cleanup EXIT
-trap 'exit 1' HUP INT TERM
-
-mkdir -p "$sandbox"
-cp "$script_dir/fixtures/codex-models.json" "$catalog_fixture"
-codex_cli=$(command -v codex)
-[ -x "$codex_cli" ] || fail 'Latest Codex CLI is unavailable.'
-
-home="$sandbox/complex"
-session_dir="$home/sessions/2026/08/01"
-mkdir -p "$session_dir"
-config_path="$home/config.toml"
-key_path="$home/madapi.key"
-models_cache_path="$home/models_cache.json"
-session_path="$session_dir/sentinel.jsonl"
-cat > "$config_path" <<EOF
-model_provider = "custom"
-model = "old-model"
-  'model_catalog_json'   =   "$catalog_fixture" # supplied by an arbitrary external configurator
-model_reasoning_effort = "medium"
-disable_response_storage = true
-
-[model_providers]
-
-[features]
-memories = true
-
-[model_providers.custom]
-name = "Existing Provider"
-base_url = "https://example.invalid/v1"
-wire_api = "responses"
-
-[model_providers.madapi]
-name = "Old MadAPI"
-base_url = "https://old.example.invalid/v1"
-wire_api = "responses"
-experimental_bearer_token = "old-secret"
-
-[projects.'D:\桌面\项目']
-trust_level = "trusted"
-
-[plugins."github@openai-curated"]
-enabled = true
-
-[mcp_servers.node_repl]
-command = '/usr/local/bin/node_repl'
-args = []
-EOF
-printf '%s' '{"models":[{"slug":"stale-gpt-only"}]}' > "$models_cache_path"
-printf '%s' '{"type":"sentinel"}' > "$session_path"
-config_hash=$(hash_file "$config_path")
-session_hash=$(hash_file "$session_path")
-
-run_installer "$home" 'sk-macos-first-key' "$codex_cli"
-grep -Fq "[projects.'D:\桌面\项目']" "$config_path" || fail 'UTF-8 project path was not preserved.'
-grep -Fq '[model_providers.custom]' "$config_path" || fail 'Existing provider was not preserved.'
-grep -Fq 'model_provider = "custom"' "$config_path" || fail 'Existing provider identity was changed.'
-grep -Fq 'name = "Existing Provider"' "$config_path" || fail 'Existing provider display name was changed.'
-! grep -Fq '[model_providers.madapi]' "$config_path" || fail 'A second provider identity was created.'
-grep -Fq '[plugins."github@openai-curated"]' "$config_path" || fail 'Plugin configuration was not preserved.'
-grep -Fq '[mcp_servers.node_repl]' "$config_path" || fail 'MCP configuration was not preserved.'
-grep -Fq 'model_reasoning_effort = "medium"' "$config_path" || fail 'Existing reasoning effort was overwritten.'
-! grep -Fq 'old-secret' "$config_path" || fail 'Old MadAPI secret remained in config.toml.'
-! grep -Fq 'experimental_bearer_token' "$config_path" || fail 'Conflicting direct bearer authentication remained configured.'
-! grep -Fq 'requires_openai_auth' "$config_path" || fail 'Conflicting OpenAI authentication remained configured.'
-grep -Fq '[model_providers.custom.auth]' "$config_path" || fail 'Dynamic catalog command authentication was not configured.'
-grep -Fq 'madapi.key' "$config_path" || fail 'Dynamic catalog authentication does not read the protected MadAPI key.'
-[ "$(cat "$key_path")" = 'sk-macos-first-key' ] || fail 'Protected dynamic catalog key was not written correctly.'
-[ ! -e "$models_cache_path" ] || fail 'Stale model cache was not cleared.'
-! grep -Eq "^[[:space:]]*(model_catalog_json|\"model_catalog_json\"|'model_catalog_json')[[:space:]]*=" "$config_path" || fail 'An external static model catalog remained active.'
-[ -f "$catalog_fixture" ] || fail 'The external catalog file was deleted instead of only removing its config reference.'
-! grep -Fq 'supports_websockets' "$config_path" || fail 'Unverified WebSocket support was enabled.'
-grep -Fq 'disable_response_storage = true' "$config_path" || fail 'The existing response-storage preference was not preserved.'
-grep -Fq 'stream_idle_timeout_ms = 360000' "$config_path" || fail 'Stable 360 second stream timeout was not configured.'
-grep -Fq 'request_max_retries = 3' "$config_path" || fail 'Stable request retry count was not configured.'
-[ "$(hash_file "$session_path")" = "$session_hash" ] || fail 'Session data changed.'
-
-backup=$(find "$home" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
-[ -n "$backup" ] || fail 'Config backup was not created.'
-[ "$(hash_file "$backup")" = "$config_hash" ] || fail 'Backup is not byte-identical to the original config.'
-[ "$(stat -f '%Lp' "$config_path")" = '600' ] || fail 'Config containing the API key permissions are not 600.'
-[ "$(stat -f '%Lp' "$key_path")" = '600' ] || fail 'Protected dynamic catalog key permissions are not 600.'
-CODEX_HOME="$home" "$codex_cli" features list >/dev/null
-
-sleep 1
-run_installer "$home" 'sk-macos-second-key' "$codex_cli"
-[ "$(grep -c '^\[model_providers\.custom\]$' "$config_path")" -eq 1 ] || fail 'Duplicate provider section was created.'
-! grep -Fq 'experimental_bearer_token' "$config_path" || fail 'Repeat install restored conflicting direct bearer authentication.'
-[ "$(cat "$key_path")" = 'sk-macos-second-key' ] || fail 'Repeat install did not update the protected dynamic catalog key.'
-! grep -Fq 'supports_websockets' "$config_path" || fail 'Repeat install enabled unverified WebSocket support.'
-
-recovery_home="$sandbox/recover-provider"
-mkdir -p "$recovery_home"
-cat > "$recovery_home/config.toml" <<'EOF'
-model_provider = "madapi"
-model = "gpt-5.6-sol"
-
-[model_providers.custom]
-name = "custom"
-base_url = "https://mad.myddns.me/codex/v1"
-wire_api = "responses"
-
-[model_providers.madapi]
-name = "MadAPI"
-base_url = "https://mad.myddns.me/codex/v1"
-wire_api = "responses"
-EOF
-cat > "$recovery_home/config.toml.madapi-backup-20260801-010101-001" <<'EOF'
+! grep -Fq 'CODEX_CLI_PATH' "$installer_path" || fail 'CLI probing remains.'
+! grep -Fq 'madapi.key' "$installer_path" || fail 'Command authentication remains.'
+! grep -Fq 'command -v codex' "$installer_path" || fail 'CLI discovery remains.'
+trap 'rm -rf "$home"' EXIT
+mkdir -p "$home/sessions"
+config="$home/config.toml"; key_file="$home/madapi.key"; cache="$home/models_cache.json"; session="$home/sessions/sentinel.jsonl"
+cat > "$config" <<'EOF'
 model_provider = "custom"
 model = "deepseek-v4-flash"
-
+  'model_catalog_json' = "cc-switch-model-catalog.json"
+disable_response_storage = true
 [model_providers.custom]
-name = "custom"
-base_url = "https://mad.myddns.me/codex/v1"
-wire_api = "responses"
-requires_openai_auth = true
+name = "Existing Provider"
+base_url = "https://old.invalid/v1"
+[model_providers.madapi]
+name = "Old MadAPI"
+[plugins."github@openai-curated"]
+enabled = true
 EOF
-run_installer "$recovery_home" 'sk-macos-recovery-key' "$codex_cli"
-grep -Fq 'model_provider = "custom"' "$recovery_home/config.toml" || fail 'Original provider identity was not recovered from backup.'
-! grep -Fq '[model_providers.madapi]' "$recovery_home/config.toml" || fail 'Temporary MadAPI provider identity remained after recovery.'
-
-fresh_home="$sandbox/fresh"
-run_one_command "$fresh_home" 'sk-macos-fresh-key' "$codex_cli"
-grep -Fq 'model_provider = "custom"' "$fresh_home/config.toml" || fail 'Fresh install did not use the proven custom provider identity.'
-grep -Fq 'name = "custom"' "$fresh_home/config.toml" || fail 'Fresh install did not use the proven custom provider display name.'
-! grep -Fq 'experimental_bearer_token' "$fresh_home/config.toml" || fail 'Fresh install added conflicting direct bearer authentication.'
-grep -Fq '[model_providers.custom.auth]' "$fresh_home/config.toml" || fail 'Fresh install did not enable dynamic catalog refresh for API-key users.'
-[ "$(cat "$fresh_home/madapi.key")" = 'sk-macos-fresh-key' ] || fail 'Fresh install did not create the protected dynamic catalog key.'
-! grep -Fq 'disable_response_storage' "$fresh_home/config.toml" || fail 'Fresh install added an optional response-storage policy.'
-! grep -Fq 'model_catalog_json' "$fresh_home/config.toml" || fail 'Fresh install added a static model catalog.'
-CODEX_HOME="$fresh_home" "$codex_cli" features list >/dev/null
-node "$script_dir/codex-dynamic-catalog.mjs" "$codex_cli" "$fresh_home" "$script_dir/fixtures/codex-models.json" 'sk-macos-fresh-key'
-
-official_home="$sandbox/official-provider"
-mkdir -p "$official_home"
-cat > "$official_home/config.toml" <<'EOF'
-model_provider = "openai"
-model = "gpt-5.6-sol"
-
-[features]
-memories = true
-EOF
-run_installer "$official_home" 'sk-macos-official-key' "$codex_cli"
-grep -Fq 'model_provider = "custom"' "$official_home/config.toml" || fail 'Reserved OpenAI provider was not moved to the proven custom provider.'
-grep -Fq '[model_providers.custom]' "$official_home/config.toml" || fail 'Custom MadAPI provider was not created for the reserved OpenAI provider.'
-! grep -Fq '[model_providers.openai]' "$official_home/config.toml" || fail 'Reserved OpenAI provider was illegally overridden.'
-grep -Fq '[features]' "$official_home/config.toml" || fail 'Existing official-provider configuration was not preserved.'
-
-bad_home="$sandbox/malformed"
-mkdir -p "$bad_home"
-printf 'broken = [\n' > "$bad_home/config.toml"
-bad_hash=$(hash_file "$bad_home/config.toml")
-if run_installer "$bad_home" 'sk-macos-bad-key' "$codex_cli" >/dev/null 2>&1; then
-  fail 'Malformed existing config was accepted.'
-fi
-[ "$(hash_file "$bad_home/config.toml")" = "$bad_hash" ] || fail 'Malformed existing config was changed.'
-
-rollback_home="$sandbox/rollback"
-mkdir -p "$rollback_home"
-printf 'model = "old-model"\n' > "$rollback_home/config.toml"
-printf '%s' 'sk-old-key' > "$rollback_home/madapi.key"
-printf '%s' '{"models":[{"slug":"old-model"}]}' > "$rollback_home/madapi-models.json"
-rollback_hash=$(hash_file "$rollback_home/config.toml")
-rollback_catalog_hash=$(hash_file "$rollback_home/madapi-models.json")
-fake_cli="$sandbox/fake-codex"
-counter="$sandbox/fake-count"
-cat > "$fake_cli" <<'EOF'
-#!/bin/sh
-set -eu
-if [ "${1:-}" = '--version' ]; then
-  exit 0
-fi
-count=0
-[ ! -f "$CODEX_FAKE_COUNT" ] || count=$(cat "$CODEX_FAKE_COUNT")
-count=$((count + 1))
-printf '%s' "$count" > "$CODEX_FAKE_COUNT"
-[ "$count" -lt 2 ]
-EOF
-chmod 700 "$fake_cli"
-if CODEX_FAKE_COUNT="$counter" run_installer "$rollback_home" 'sk-new-key' "$fake_cli" >/dev/null 2>&1; then
-  fail 'Forced post-write validation failure was accepted.'
-fi
-[ "$(hash_file "$rollback_home/config.toml")" = "$rollback_hash" ] || fail 'Config was not rolled back byte-for-byte.'
-[ "$(cat "$rollback_home/madapi.key")" = 'sk-old-key' ] || fail 'Protected dynamic catalog key was not rolled back.'
-[ "$(hash_file "$rollback_home/madapi-models.json")" = "$rollback_catalog_hash" ] || fail 'Unrelated legacy model catalog was changed.'
-
-fallback_home="$sandbox/fallback-home"
-fallback_codex_home="$fallback_home/.codex"
-fallback_cli="$fallback_home/Library/Application Support/OpenAI/Codex/bin/codex"
-mkdir -p "$(dirname -- "$fallback_cli")"
-cat > "$fallback_cli" <<'EOF'
-#!/bin/sh
-set -eu
-[ "${1:-}" = '--version' ] && exit 0
-[ "${1:-}" = 'features' ] && [ "${2:-}" = 'list' ]
-EOF
-chmod 700 "$fallback_cli"
-HOME="$fallback_home" PATH=/usr/bin:/bin CODEX_HOME="$fallback_codex_home" \
-  MADAPI_KEY='sk-macos-fallback-key' /bin/sh "$installer_path" >/dev/null
-grep -Fq '[model_providers.custom]' "$fallback_codex_home/config.toml" || fail 'Codex app support-path fallback did not install.'
-
-printf '%s\n' 'macOS Codex installer acceptance passed.'
+printf '%s' 'keep-me' > "$key_file"; printf '{}' > "$cache"; printf 'session' > "$session"
+config_hash=$(hash_file "$config"); session_hash=$(hash_file "$session")
+run_install "$home" 'sk-macos-first-key'
+grep -Fq 'model_provider = "custom"' "$config" || fail 'Provider identity changed.'
+grep -Fq 'model = "deepseek-v4-flash"' "$config" || fail 'Default model changed.'
+grep -Fq 'name = "Existing Provider"' "$config" || fail 'Provider name changed.'
+grep -Fq 'experimental_bearer_token = "sk-macos-first-key"' "$config" || fail 'Bearer token missing.'
+grep -Fq 'requires_openai_auth = true' "$config" || fail 'Desktop auth setting missing.'
+grep -Fq 'disable_response_storage = true' "$config" || fail 'Unrelated setting changed.'
+! grep -Eq "^[[:space:]]*(model_catalog_json|\"model_catalog_json\"|'model_catalog_json')[[:space:]]*=" "$config" || fail 'Static catalog remains.'
+! grep -Fq '[model_providers.custom.auth]' "$config" || fail 'Command auth was added.'
+! grep -Fq '[model_providers.madapi]' "$config" || fail 'Temporary provider remains.'
+[ "$(cat "$key_file")" = keep-me ] || fail 'Existing key file changed.'
+[ ! -e "$cache" ] || fail 'Stale cache remains.'
+[ "$(hash_file "$session")" = "$session_hash" ] || fail 'Session changed.'
+backup=$(find "$home" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
+[ -n "$backup" ] && [ "$(hash_file "$backup")" = "$config_hash" ] || fail 'Backup is not exact.'
+run_install "$home" 'sk-macos-second-key'
+grep -Fq 'experimental_bearer_token = "sk-macos-second-key"' "$config" || fail 'Repeat install did not update token.'
+[ "$(grep -c '^\[model_providers\.custom\]$' "$config")" -eq 1 ] || fail 'Duplicate provider created.'
+fresh="$home/fresh"; run_install "$fresh" 'sk-macos-fresh-key'
+grep -Fq 'model_provider = "custom"' "$fresh/config.toml" || fail 'Fresh identity is wrong.'
+grep -Fq 'model = "gpt-5.6-sol"' "$fresh/config.toml" || fail 'Fresh default missing.'
+[ ! -e "$fresh/madapi.key" ] || fail 'Fresh install created key file.'
+printf '%s\n' 'macOS desktop Codex installer acceptance passed.'

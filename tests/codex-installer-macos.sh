@@ -3,6 +3,8 @@ set -eu
 
 installer_path=${1:?installer path is required}
 sandbox="$RUNNER_TEMP/mad-codex-macos-$$"
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+catalog_fixture="$script_dir/fixtures/codex-models.json"
 
 fail() {
   printf 'Assertion failed: %s\n' "$1" >&2
@@ -35,10 +37,10 @@ session_dir="$home/sessions/2026/08/01"
 mkdir -p "$session_dir"
 config_path="$home/config.toml"
 session_path="$session_dir/sentinel.jsonl"
-cat > "$config_path" <<'EOF'
+cat > "$config_path" <<EOF
 model_provider = "custom"
 model = "old-model"
-model_catalog_json = "/tmp/old-static-catalog.json"
+model_catalog_json = "$catalog_fixture"
 model_reasoning_effort = "medium"
 
 [features]

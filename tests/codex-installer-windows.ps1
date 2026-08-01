@@ -66,10 +66,11 @@ try {
     $desktop = ([char]0x684c).ToString() + ([char]0x9762)
     $project = ([char]0x9879).ToString() + ([char]0x76ee)
     $projectPath = "D:\$desktop\$project"
+    $catalogFixture = (Join-Path $PSScriptRoot 'fixtures\codex-models.json').Replace('\', '/')
     $config = @"
 model_provider = "custom"
 model = "old-model"
-model_catalog_json = "C:\old-static-catalog.json"
+model_catalog_json = "$catalogFixture"
 model_reasoning_effort = "medium"
 
 [features]

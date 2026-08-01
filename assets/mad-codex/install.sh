@@ -46,6 +46,7 @@ $path_codex"
   fi
   candidates="$candidates
 /Applications/Codex.app/Contents/Resources/codex
+/Applications/ChatGPT.app/Contents/Resources/codex
 $HOME/Library/Application Support/OpenAI/Codex/bin/codex"
 
   old_ifs=$IFS

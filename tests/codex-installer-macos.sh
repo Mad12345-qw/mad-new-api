@@ -3,6 +3,10 @@ set -eu
 
 installer_path=${1:?installer path is required}
 installer_path=$(CDPATH= cd -- "$(dirname -- "$installer_path")" && pwd)/$(basename -- "$installer_path")
+grep -Fq '/Applications/ChatGPT.app/Contents/Resources/codex' "$installer_path" || {
+  printf '%s\n' 'Installer does not recognize the ChatGPT desktop app CLI path.' >&2
+  exit 1
+}
 sandbox="$RUNNER_TEMP/mad-codex-macos-$$"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 catalog_fixture="$sandbox/catalog from any external tool.json"
@@ -219,5 +223,20 @@ fi
 [ "$(hash_file "$rollback_home/config.toml")" = "$rollback_hash" ] || fail 'Config was not rolled back byte-for-byte.'
 [ "$(cat "$rollback_home/madapi.key")" = 'sk-old-key' ] || fail 'Protected dynamic catalog key was not rolled back.'
 [ "$(hash_file "$rollback_home/madapi-models.json")" = "$rollback_catalog_hash" ] || fail 'Unrelated legacy model catalog was changed.'
+
+fallback_home="$sandbox/fallback-home"
+fallback_codex_home="$fallback_home/.codex"
+fallback_cli="$fallback_home/Library/Application Support/OpenAI/Codex/bin/codex"
+mkdir -p "$(dirname -- "$fallback_cli")"
+cat > "$fallback_cli" <<'EOF'
+#!/bin/sh
+set -eu
+[ "${1:-}" = '--version' ] && exit 0
+[ "${1:-}" = 'features' ] && [ "${2:-}" = 'list' ]
+EOF
+chmod 700 "$fallback_cli"
+HOME="$fallback_home" PATH=/usr/bin:/bin CODEX_HOME="$fallback_codex_home" \
+  MADAPI_KEY='sk-macos-fallback-key' /bin/sh "$installer_path" >/dev/null
+grep -Fq '[model_providers.custom]' "$fallback_codex_home/config.toml" || fail 'Codex app support-path fallback did not install.'
 
 printf '%s\n' 'macOS Codex installer acceptance passed.'

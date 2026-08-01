@@ -62,6 +62,14 @@ jobs:
           path: source
           fetch-depth: 1
 
+      - name: Check out pinned CLIProxyAPI
+        uses: actions/checkout@v4
+        with:
+          repository: router-for-me/CLIProxyAPI
+          ref: a63da8ae76b1a4e0c0486c3eb0fb7ccf8f33e69d
+          path: cpa-source
+          fetch-depth: 1
+
       - name: Install Mad API static assets
         run: |
           mkdir -p source/web/default/public
@@ -103,6 +111,8 @@ jobs:
             controller/codex_compat.go
             controller/codex_compat_test.go
             controller/codex_websocket.go
+            controller/internal_codex_catalog.go
+            controller/internal_codex_catalog_test.go
             controller/playground.go
             controller/relay.go
             controller/relay_task_retry_test.go
@@ -181,24 +191,49 @@ jobs:
       - name: Test image response compatibility service
         run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
 
+      - name: Test CPA sidecar catalog sync
+        run: python3 -m unittest server/cpa-codex/test_catalog_sync.py
+
+      - name: Verify CPA deployment scripts
+        run: |
+          sh -n server/new-api-autoupdate.sh
+          sh -n server/cpa-codex/entrypoint.sh
+          sh -n server/cpa-codex/sidecar-autodeploy.sh
+
+      - name: Apply and test CPA sidecar patch
+        working-directory: cpa-source
+        run: |
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-passthrough-authorization.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-passthrough-authorization.patch"
+          go test ./internal/runtime/executor ./internal/watcher/synthesizer ./sdk/api/handlers/openai
+
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
+
+      - name: Build CPA Codex sidecar image
+        run: docker build --pull --build-arg CPA_PATCHED=1 --file server/cpa-codex/Dockerfile --tag mad-cpa-codex:latest .
 
       - name: Export image
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
           docker save mad-new-api:latest | gzip -1 > mad-new-api.tar.gz
           sha256sum mad-new-api.tar.gz > mad-new-api.tar.gz.sha256
+          docker save mad-cpa-codex:latest | gzip -1 > mad-cpa-codex.tar.gz
+          sha256sum mad-cpa-codex.tar.gz > mad-cpa-codex.tar.gz.sha256
           tar -C site/mad-home -czf mad-home.tar.gz .
           cp server/image-url-compat/service.py image-url-compat.py
           cp server/image-url-compat/image-url-compat.service image-url-compat.service
           cp server/image-url-compat/patch_nginx.py patch-image-compat-nginx.py
           cp server/new-api-autoupdate.sh new-api-autoupdate.sh
+          cp server/cpa-codex/sidecar-autodeploy.sh cpa-codex-autodeploy.sh
+          cp server/cpa-codex/patch_nginx.py patch-cpa-codex-nginx.py
           sha256sum mad-home.tar.gz > mad-home.tar.gz.sha256
           sha256sum image-url-compat.py > image-url-compat.py.sha256
           sha256sum image-url-compat.service > image-url-compat.service.sha256
           sha256sum patch-image-compat-nginx.py > patch-image-compat-nginx.py.sha256
           sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
+          sha256sum cpa-codex-autodeploy.sh > cpa-codex-autodeploy.sh.sha256
+          sha256sum patch-cpa-codex-nginx.py > patch-cpa-codex-nginx.py.sha256
           git -C source rev-parse HEAD > upstream-commit.txt
 
       - name: Publish stable release
@@ -210,6 +245,8 @@ jobs:
           gh release create build-latest \
             mad-new-api.tar.gz \
             mad-new-api.tar.gz.sha256 \
+            mad-cpa-codex.tar.gz \
+            mad-cpa-codex.tar.gz.sha256 \
             mad-home.tar.gz \
             mad-home.tar.gz.sha256 \
             image-url-compat.py \
@@ -220,6 +257,10 @@ jobs:
             patch-image-compat-nginx.py.sha256 \
             new-api-autoupdate.sh \
             new-api-autoupdate.sh.sha256 \
+            cpa-codex-autodeploy.sh \
+            cpa-codex-autodeploy.sh.sha256 \
+            patch-cpa-codex-nginx.py \
+            patch-cpa-codex-nginx.py.sha256 \
             upstream-commit.txt \
             --title "Mad New API latest build" \
             --notes "Automated build from the pinned upstream New API source with Mad API billing, branding, recharge, multi-model playground, and image response compatibility customizations."

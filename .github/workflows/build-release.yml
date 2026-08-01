@@ -81,6 +81,10 @@ jobs:
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done
+          for patch in "$GITHUB_WORKSPACE"/detector-patches/*.patch; do
+            git -C source apply --check "$patch"
+            git -C source apply "$patch"
+          done
 
       - name: Verify protected Mad API customizations
         working-directory: source
@@ -107,6 +111,7 @@ jobs:
         working-directory: source
         run: |
           files=(
+            controller/model_detector_internal.go
             controller/codex_catalog.go
             controller/codex_compat.go
             controller/codex_compat_test.go
@@ -143,6 +148,8 @@ jobs:
             relay/relay_task.go
             relay/relay_task_billing_test.go
             router/video-router.go
+            router/model-detector-router.go
+            router/model_detector_router_test.go
             router/relay-router.go
             service/quota.go
             service/quota_audio_test.go

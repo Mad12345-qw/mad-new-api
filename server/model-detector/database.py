@@ -57,6 +57,15 @@ class Database:
                     reference_upstream_id INTEGER,
                     allow_paid_probes INTEGER NOT NULL DEFAULT 0,
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    source_type TEXT NOT NULL DEFAULT 'manual',
+                    new_api_channel_id INTEGER,
+                    new_api_key_index INTEGER,
+                    new_api_channel_type INTEGER,
+                    new_api_channel_status INTEGER,
+                    expected_channel TEXT NOT NULL DEFAULT 'unknown',
+                    expected_models_json TEXT NOT NULL DEFAULT '[]',
+                    auto_disable_on_mismatch INTEGER NOT NULL DEFAULT 0,
+                    last_synced_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(reference_upstream_id) REFERENCES upstreams(id) ON DELETE SET NULL
@@ -71,6 +80,11 @@ class Database:
                     likely_channel TEXT,
                     confidence REAL,
                     summary TEXT,
+                    compliance_status TEXT NOT NULL DEFAULT 'not_evaluated',
+                    compliance_detail_json TEXT NOT NULL DEFAULT '{}',
+                    expected_channel TEXT,
+                    auto_action TEXT NOT NULL DEFAULT 'none',
+                    auto_action_detail TEXT,
                     rule_version TEXT NOT NULL,
                     started_at TEXT NOT NULL,
                     finished_at TEXT,
@@ -108,10 +122,36 @@ class Database:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS channel_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    upstream_id INTEGER NOT NULL,
+                    new_api_channel_id INTEGER NOT NULL,
+                    action TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    detail_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,
+                    FOREIGN KEY(upstream_id) REFERENCES upstreams(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS notification_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    destination TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
+                );
                 CREATE INDEX IF NOT EXISTS idx_runs_upstream_started
                     ON runs(upstream_id, started_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_evidence_run
                     ON evidence(run_id, id);
+                CREATE INDEX IF NOT EXISTS idx_channel_actions_run
+                    ON channel_actions(run_id, id);
+                CREATE INDEX IF NOT EXISTS idx_notifications_run
+                    ON notification_events(run_id, id);
                 """
             )
             columns = {row["name"] for row in db.execute("PRAGMA table_info(upstreams)")}
@@ -121,14 +161,57 @@ class Database:
                 db.execute("ALTER TABLE upstreams ADD COLUMN model_routes_json TEXT NOT NULL DEFAULT '[]'")
             if "discovery_json" not in columns:
                 db.execute("ALTER TABLE upstreams ADD COLUMN discovery_json TEXT NOT NULL DEFAULT '{}'")
+            upstream_migrations = {
+                "source_type": "TEXT NOT NULL DEFAULT 'manual'",
+                "new_api_channel_id": "INTEGER",
+                "new_api_key_index": "INTEGER",
+                "new_api_channel_type": "INTEGER",
+                "new_api_channel_status": "INTEGER",
+                "expected_channel": "TEXT NOT NULL DEFAULT 'unknown'",
+                "expected_models_json": "TEXT NOT NULL DEFAULT '[]'",
+                "auto_disable_on_mismatch": "INTEGER NOT NULL DEFAULT 0",
+                "last_synced_at": "TEXT",
+            }
+            for name, definition in upstream_migrations.items():
+                if name not in columns:
+                    db.execute(f"ALTER TABLE upstreams ADD COLUMN {name} {definition}")
             evidence_columns = {row["name"] for row in db.execute("PRAGMA table_info(evidence)")}
             if "model" not in evidence_columns:
                 db.execute("ALTER TABLE evidence ADD COLUMN model TEXT")
+            run_columns = {row["name"] for row in db.execute("PRAGMA table_info(runs)")}
+            run_migrations = {
+                "compliance_status": "TEXT NOT NULL DEFAULT 'not_evaluated'",
+                "compliance_detail_json": "TEXT NOT NULL DEFAULT '{}'",
+                "expected_channel": "TEXT",
+                "auto_action": "TEXT NOT NULL DEFAULT 'none'",
+                "auto_action_detail": "TEXT",
+            }
+            for name, definition in run_migrations.items():
+                if name not in run_columns:
+                    db.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
+            db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_upstreams_new_api_channel_key "
+                "ON upstreams(new_api_channel_id, new_api_key_index) "
+                "WHERE new_api_channel_id IS NOT NULL AND new_api_key_index IS NOT NULL"
+            )
             for key, value in (
                 ("scheduler_enabled", False),
                 ("interval_minutes", 15),
                 ("scheduled_mode", "safe"),
                 ("webhook_url", ""),
+                ("webhook_type", "generic"),
+                ("email_enabled", False),
+                ("smtp_host", ""),
+                ("smtp_port", 587),
+                ("smtp_username", ""),
+                ("smtp_password_encrypted", ""),
+                ("smtp_from", ""),
+                ("smtp_starttls", True),
+                ("smtp_ssl", False),
+                ("alert_email_to", ""),
+                ("auto_disable_enabled", False),
+                ("auto_disable_min_confidence", 0.95),
+                ("last_new_api_sync_at", ""),
             ):
                 db.execute(
                     "INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) "

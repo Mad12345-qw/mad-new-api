@@ -1,0 +1,223 @@
+diff --git a/controller/model_detector_internal.go b/controller/model_detector_internal.go
+new file mode 100644
+index 00000000..b60d69b8
+--- /dev/null
++++ b/controller/model_detector_internal.go
+@@ -0,0 +1,124 @@
++package controller
++
++import (
++	"encoding/json"
++	"net/http"
++	"strconv"
++	"strings"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/constant"
++	"github.com/QuantumNous/new-api/model"
++	"github.com/gin-gonic/gin"
++)
++
++type modelDetectorKey struct {
++	Index   int    `json:"index"`
++	Key     string `json:"key"`
++	Enabled bool   `json:"enabled"`
++}
++
++type modelDetectorChannel struct {
++	ID           int                `json:"id"`
++	Name         string             `json:"name"`
++	Type         int                `json:"type"`
++	TypeName     string             `json:"type_name"`
++	Status       int                `json:"status"`
++	BaseURL      string             `json:"base_url"`
++	Models       []string           `json:"models"`
++	ModelMapping map[string]string  `json:"model_mapping"`
++	Keys         []modelDetectorKey `json:"keys"`
++}
++
++type modelDetectorDisableRequest struct {
++	Reason string `json:"reason"`
++	RunID  int    `json:"run_id"`
++}
++
++func GetModelDetectorHealth(c *gin.Context) {
++	common.ApiSuccess(c, gin.H{"contract_version": 1})
++}
++
++func GetModelDetectorChannels(c *gin.Context) {
++	channels := make([]*model.Channel, 0)
++	if err := model.DB.Order("id ASC").Find(&channels).Error; err != nil {
++		common.ApiError(c, err)
++		return
++	}
++	result := make([]modelDetectorChannel, 0, len(channels))
++	for _, channel := range channels {
++		mapping := make(map[string]string)
++		if raw := strings.TrimSpace(channel.GetModelMapping()); raw != "" {
++			_ = json.Unmarshal([]byte(raw), &mapping)
++		}
++		keys := channel.GetKeys()
++		keyItems := make([]modelDetectorKey, 0, len(keys))
++		for index, key := range keys {
++			keyStatus := common.ChannelStatusEnabled
++			if status, ok := channel.ChannelInfo.MultiKeyStatusList[index]; ok {
++				keyStatus = status
++			}
++			keyItems = append(keyItems, modelDetectorKey{
++				Index:   index,
++				Key:     key,
++				Enabled: channel.Status == common.ChannelStatusEnabled && keyStatus == common.ChannelStatusEnabled,
++			})
++		}
++		result = append(result, modelDetectorChannel{
++			ID:           channel.Id,
++			Name:         channel.Name,
++			Type:         channel.Type,
++			TypeName:     constant.GetChannelTypeName(channel.Type),
++			Status:       channel.Status,
++			BaseURL:      channel.GetBaseURL(),
++			Models:       channel.GetModels(),
++			ModelMapping: mapping,
++			Keys:         keyItems,
++		})
++	}
++	c.Header("Cache-Control", "no-store")
++	common.ApiSuccess(c, gin.H{"contract_version": 1, "channels": result})
++}
++
++func DisableChannelByModelDetector(c *gin.Context) {
++	id, err := strconv.Atoi(c.Param("id"))
++	if err != nil || id <= 0 {
++		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid channel id"})
++		return
++	}
++	request := modelDetectorDisableRequest{}
++	if err := c.ShouldBindJSON(&request); err != nil || request.RunID <= 0 || strings.TrimSpace(request.Reason) == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "run_id and reason are required"})
++		return
++	}
++	channel, err := model.GetChannelById(id, true)
++	if err != nil {
++		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "channel not found"})
++		return
++	}
++	if channel.Status != common.ChannelStatusEnabled {
++		common.ApiSuccess(c, gin.H{
++			"channel_id": id,
++			"changed":    false,
++			"status":     channel.Status,
++			"run_id":     request.RunID,
++		})
++		return
++	}
++	changed := model.UpdateChannelStatus(
++		id,
++		"",
++		common.ChannelStatusAutoDisabled,
++		"model detector: "+strings.TrimSpace(request.Reason),
++	)
++	if !changed {
++		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "channel status update failed"})
++		return
++	}
++	common.ApiSuccess(c, gin.H{
++		"channel_id": id,
++		"changed":    true,
++		"status":     common.ChannelStatusAutoDisabled,
++		"run_id":     request.RunID,
++	})
++}
+diff --git a/router/api-router.go b/router/api-router.go
+index 83f9259b..9199b4fd 100644
+--- a/router/api-router.go
++++ b/router/api-router.go
+@@ -228,6 +228,7 @@ func SetApiRouter(router *gin.Engine) {
+ 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
+ 		}
+ 		registerChannelRoutes(apiRouter)
++		registerModelDetectorRoutes(apiRouter)
+ 		registerAuthzRoutes(apiRouter)
+ 		tokenRoute := apiRouter.Group("/token")
+ 		tokenRoute.Use(middleware.UserAuth())
+diff --git a/router/model-detector-router.go b/router/model-detector-router.go
+new file mode 100644
+index 00000000..2460e37e
+--- /dev/null
++++ b/router/model-detector-router.go
+@@ -0,0 +1,31 @@
++package router
++
++import (
++	"crypto/subtle"
++	"net/http"
++	"os"
++	"strings"
++
++	"github.com/QuantumNous/new-api/controller"
++	"github.com/gin-gonic/gin"
++)
++
++func modelDetectorServiceAuth() gin.HandlerFunc {
++	return func(c *gin.Context) {
++		expected := strings.TrimSpace(os.Getenv("MODEL_DETECTOR_SERVICE_TOKEN"))
++		provided := strings.TrimSpace(c.GetHeader("X-Model-Detector-Token"))
++		if len(expected) < 32 || len(expected) != len(provided) || subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
++			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "message": "unauthorized"})
++			return
++		}
++		c.Next()
++	}
++}
++
++func registerModelDetectorRoutes(apiRouter *gin.RouterGroup) {
++	route := apiRouter.Group("/model-detector")
++	route.Use(modelDetectorServiceAuth())
++	route.GET("/health", controller.GetModelDetectorHealth)
++	route.GET("/channels", controller.GetModelDetectorChannels)
++	route.POST("/channels/:id/disable", controller.DisableChannelByModelDetector)
++}
+diff --git a/router/model_detector_router_test.go b/router/model_detector_router_test.go
+new file mode 100644
+index 00000000..ccada95c
+--- /dev/null
++++ b/router/model_detector_router_test.go
+@@ -0,0 +1,38 @@
++package router
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/require"
++)
++
++func TestModelDetectorServiceAuthRequiresConfiguredMatchingToken(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	previous := os.Getenv("MODEL_DETECTOR_SERVICE_TOKEN")
++	t.Cleanup(func() { _ = os.Setenv("MODEL_DETECTOR_SERVICE_TOKEN", previous) })
++	require.NoError(t, os.Setenv("MODEL_DETECTOR_SERVICE_TOKEN", "unit-test-model-detector-service-token-123456"))
++	router := gin.New()
++	router.GET("/internal", modelDetectorServiceAuth(), func(c *gin.Context) {
++		c.JSON(http.StatusOK, gin.H{"success": true})
++	})
++
++	missing := httptest.NewRecorder()
++	router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/internal", nil))
++	require.Equal(t, http.StatusUnauthorized, missing.Code)
++
++	wrongRequest := httptest.NewRequest(http.MethodGet, "/internal", nil)
++	wrongRequest.Header.Set("X-Model-Detector-Token", "wrong-token-that-is-long-enough-but-does-not-match")
++	wrong := httptest.NewRecorder()
++	router.ServeHTTP(wrong, wrongRequest)
++	require.Equal(t, http.StatusUnauthorized, wrong.Code)
++
++	validRequest := httptest.NewRequest(http.MethodGet, "/internal", nil)
++	validRequest.Header.Set("X-Model-Detector-Token", "unit-test-model-detector-service-token-123456")
++	valid := httptest.NewRecorder()
++	router.ServeHTTP(valid, validRequest)
++	require.Equal(t, http.StatusOK, valid.Code)
++}

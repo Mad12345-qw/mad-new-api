@@ -26,7 +26,11 @@ GitHub Actions applies and verifies every patch, runs backend, frontend, and ima
 
 ## Model detector edition
 
-`build-detector-release.yml` builds an isolated deployment edition from the same pinned New API baseline. It deliberately excludes the old site logo, avatar, promotion, Telegram, email-branding, and AdForge patches, then adds a same-origin `模型真伪检测` entry backed by a separate detector container.
+The detector is a plugin-style subsystem in the same repository. The normal Mad New API build receives only a versioned, service-token-protected channel contract and a `模型溯源检测` navigation entry; `build-detector-release.yml` independently builds the TraceGuard Python image, Compose file, database and release artifacts. Updating either image no longer rebuilds or replaces the other one.
+
+TraceGuard can synchronize configured New API channels, expand multi-key channels into separately monitored encrypted credentials, apply model mappings before route selection, and retain removed or disabled channels as historical records. Manual and scheduled runs use the same evidence engine. A policy layer compares the configured expected source with the detected source and records the decision, threshold, evidence, notifications and any New API channel action in the report.
+
+Automatic channel disabling is protected by two independent switches (global and per channel), a configurable minimum confidence that cannot be set below 90%, at least one successfully penetrated model probe, and an explicit incompatible-source matrix. Timeouts, rate limits, insufficient balance, 5xx responses, model self-report and other rewriteable single fields remain inconclusive and cannot disable a channel. Confirmed mismatches can be delivered by SMTP, generic webhook, Feishu bot or DingTalk bot.
 
 The detector stores upstream keys encrypted at rest, runs a low-output protocol and contract suite, requires at least 80% probe coverage, and only reports an alternate channel when independent evidence reaches the channel-specific confidence threshold. Active model-output probes are disabled per upstream until an administrator explicitly enables them. Scheduled checks have a separate master switch and remain disabled by default until the operator enables them. Frontier model names are treated as unverified aliases unless stronger transport, contract, tokenizer, or calibrated reference evidence is present.
 

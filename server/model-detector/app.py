@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 from database import Database, utc_now
 from discovery import discover_models, route_for_model, validate_public_api_url
 from engine import DetectorEngine, Evidence, RULE_PACK, RULE_VERSION, classify, cliproxyapi_header_fingerprint
+from new_api import NewAPIClient, NewAPIIntegrationError
+from notifications import send_notifications
 from security import decrypt_secret, encrypt_secret, make_session, mask_secret, validate_runtime_secrets, verify_admin_token, verify_session
 
 
@@ -20,6 +23,7 @@ ROOT = Path(__file__).resolve().parent
 validate_runtime_secrets()
 db = Database()
 engine = DetectorEngine(float(os.environ.get("DETECTOR_TIMEOUT_SECONDS", "30")))
+new_api = NewAPIClient()
 run_lock = asyncio.Lock()
 scheduler_stop = asyncio.Event()
 CLAUDE_HISTORY_RULE = RULE_PACK.get("history_rules", {}).get("claude_route_change", {})
@@ -58,9 +62,11 @@ class UpstreamInput(BaseModel):
     discovery: dict[str, Any] = Field(default_factory=dict)
     role: str = "candidate"
     claimed_channel: str = "unknown"
+    expected_channel: str = "unknown"
     reference_upstream_id: int | None = None
     allow_paid_probes: bool = False
     enabled: bool = True
+    auto_disable_on_mismatch: bool = False
 
     @field_validator("api_style")
     @classmethod
@@ -99,6 +105,18 @@ class SettingsInput(BaseModel):
     interval_minutes: int = Field(ge=10, le=1440)
     scheduled_mode: str = "safe"
     webhook_url: str = ""
+    webhook_type: str = "generic"
+    email_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: str = Field(default="", max_length=1000)
+    smtp_from: str = ""
+    smtp_starttls: bool = True
+    smtp_ssl: bool = False
+    alert_email_to: str = ""
+    auto_disable_enabled: bool = False
+    auto_disable_min_confidence: float = Field(default=0.95, ge=0.9, le=0.999)
 
     @field_validator("scheduled_mode")
     @classmethod
@@ -106,6 +124,19 @@ class SettingsInput(BaseModel):
         if value not in {"safe", "active"}:
             raise ValueError("scheduled_mode must be safe or active")
         return value
+
+    @field_validator("webhook_type")
+    @classmethod
+    def validate_webhook_type(cls, value: str) -> str:
+        if value not in {"generic", "feishu", "dingtalk"}:
+            raise ValueError("webhook_type must be generic, feishu, or dingtalk")
+        return value
+
+
+class NewAPIChannelPolicyInput(BaseModel):
+    expected_channel: str = "unknown"
+    auto_disable_on_mismatch: bool = False
+    enabled: bool = True
 
 
 def require_admin(request: Request, detector_session: str = Cookie(default="")) -> None:
@@ -138,9 +169,17 @@ def public_upstream(row: dict[str, Any]) -> dict[str, Any]:
     result["models"] = json.loads(result.pop("models_json", "[]"))
     result["model_routes"] = json.loads(result.pop("model_routes_json", "[]"))
     result["discovery"] = json.loads(result.pop("discovery_json", "{}"))
-    for field in ("allow_paid_probes", "enabled"):
+    result["expected_models"] = json.loads(result.pop("expected_models_json", "[]"))
+    for field in ("allow_paid_probes", "enabled", "auto_disable_on_mismatch"):
         result[field] = bool(result[field])
     return result
+
+
+def public_settings() -> dict[str, Any]:
+    settings = db.settings()
+    encrypted = str(settings.pop("smtp_password_encrypted", "") or "")
+    settings["smtp_password_configured"] = bool(encrypted)
+    return settings
 
 
 def load_upstream(upstream_id: int) -> dict[str, Any]:
@@ -177,6 +216,177 @@ def normalized_submitted_routes(items: list[ModelRouteInput]) -> list[dict[str, 
         if route:
             routes.append(route.to_dict())
     return routes
+
+
+KNOWN_EXPECTED_CHANNELS = {
+    "unknown",
+    "openai_official",
+    "anthropic_official",
+    "gemini_developer_api",
+    "azure_openai",
+    "aws_bedrock",
+    "vertex_ai",
+    "codex_subscription_relay",
+    "claude_subscription_relay",
+    "antigravity_subscription_relay",
+    "relay_or_custom",
+}
+
+
+def expected_channel_for_new_api(channel: dict[str, Any]) -> str:
+    channel_type = int(channel.get("type") or 0)
+    host = (urlparse(str(channel.get("base_url") or "")).hostname or "").lower()
+    if channel_type == 3:
+        return "azure_openai"
+    if channel_type == 33:
+        return "aws_bedrock"
+    if channel_type == 41:
+        return "vertex_ai"
+    if channel_type == 57:
+        return "codex_subscription_relay"
+    if channel_type == 1 and host in {"api.openai.com"}:
+        return "openai_official"
+    if channel_type == 14 and host in {"api.anthropic.com"}:
+        return "anthropic_official"
+    if channel_type == 24 and host in {"generativelanguage.googleapis.com"}:
+        return "gemini_developer_api"
+    return "unknown"
+
+
+def channel_endpoint_types(channel_type: int) -> list[str]:
+    if channel_type == 14:
+        return ["anthropic"]
+    if channel_type in {24, 41}:
+        return ["gemini"]
+    return ["openai"]
+
+
+def effective_channel_models(channel: dict[str, Any]) -> list[str]:
+    models = [str(item).strip() for item in channel.get("models", []) if str(item).strip()]
+    mapping = channel.get("model_mapping")
+    if not isinstance(mapping, dict):
+        mapping = {}
+    return list(dict.fromkeys(str(mapping.get(model) or model).strip() for model in models if str(mapping.get(model) or model).strip()))
+
+
+async def sync_new_api_channels() -> dict[str, Any]:
+    channels = await new_api.channels()
+    now = utc_now()
+    seen: set[tuple[int, int]] = set()
+    created = 0
+    updated = 0
+    ignored = 0
+    for channel in channels:
+        channel_id = int(channel.get("id") or 0)
+        channel_type = int(channel.get("type") or 0)
+        if channel_id <= 0:
+            ignored += 1
+            continue
+        models = effective_channel_models(channel)
+        routes: list[dict[str, Any]] = []
+        endpoint_types = channel_endpoint_types(channel_type)
+        for model in models:
+            route = route_for_model(model, str(channel.get("type_name") or ""), endpoint_types, "new_api_channel")
+            if route:
+                routes.append(route.to_dict())
+        if not routes:
+            ignored += 1
+            continue
+        expected_models = [item["model"] for item in routes]
+        keys = channel.get("keys")
+        if not isinstance(keys, list):
+            keys = []
+        for key_item in keys:
+            if not isinstance(key_item, dict):
+                continue
+            key_index = int(key_item.get("index") or 0)
+            api_key = str(key_item.get("key") or "")
+            if not api_key:
+                continue
+            seen.add((channel_id, key_index))
+            current = db.row(
+                "SELECT * FROM upstreams WHERE new_api_channel_id=? AND new_api_key_index=?",
+                (channel_id, key_index),
+            )
+            auto_expected = expected_channel_for_new_api(channel)
+            expected = str(current.get("expected_channel") or "unknown") if current else auto_expected
+            if expected == "unknown" and auto_expected != "unknown":
+                expected = auto_expected
+            channel_enabled = int(channel.get("status") or 0) == 1 and bool(key_item.get("enabled", True))
+            display_name = str(channel.get("name") or f"Channel {channel_id}")
+            if len(keys) > 1:
+                display_name += f" · Key {key_index + 1}"
+            values = (
+                display_name,
+                str(channel.get("base_url") or "").rstrip("/"),
+                expected,
+                encrypt_secret(api_key),
+                mask_secret(api_key),
+                json.dumps(expected_models, ensure_ascii=False),
+                json.dumps(routes, ensure_ascii=False),
+                json.dumps({"source": "new_api", "channel": {"id": channel_id, "type": channel_type}}, ensure_ascii=False),
+                int(channel_enabled),
+                channel_type,
+                int(channel.get("status") or 0),
+                expected,
+                json.dumps(expected_models, ensure_ascii=False),
+                now,
+                now,
+            )
+            if current:
+                db.execute(
+                    "UPDATE upstreams SET name=?,base_url=?,api_style='auto',claimed_channel=?,api_key_encrypted=?,api_key_masked=?,"
+                    "models_json=?,model_routes_json=?,discovery_json=?,allow_paid_probes=1,enabled=?,source_type='new_api',"
+                    "new_api_channel_type=?,new_api_channel_status=?,expected_channel=?,expected_models_json=?,last_synced_at=?,updated_at=? "
+                    "WHERE id=?",
+                    values + (current["id"],),
+                )
+                updated += 1
+            else:
+                db.execute(
+                    "INSERT INTO upstreams(name,base_url,api_style,claimed_channel,api_key_encrypted,api_key_masked,models_json,"
+                    "model_routes_json,discovery_json,role,reference_upstream_id,allow_paid_probes,enabled,source_type,new_api_channel_id,"
+                    "new_api_key_index,new_api_channel_type,new_api_channel_status,expected_channel,expected_models_json,"
+                    "auto_disable_on_mismatch,last_synced_at,created_at,updated_at) "
+                    "VALUES(?,?,'auto',?,?,?,?,?,?,'candidate',NULL,1,?,'new_api',?,?,?, ?,?,?,0,?,?,?)",
+                    (
+                        display_name,
+                        str(channel.get("base_url") or "").rstrip("/"),
+                        expected,
+                        encrypt_secret(api_key),
+                        mask_secret(api_key),
+                        json.dumps(expected_models, ensure_ascii=False),
+                        json.dumps(routes, ensure_ascii=False),
+                        json.dumps({"source": "new_api", "channel": {"id": channel_id, "type": channel_type}}, ensure_ascii=False),
+                        int(channel_enabled),
+                        channel_id,
+                        key_index,
+                        channel_type,
+                        int(channel.get("status") or 0),
+                        expected,
+                        json.dumps(expected_models, ensure_ascii=False),
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+                created += 1
+    linked = db.rows("SELECT id,new_api_channel_id,new_api_key_index FROM upstreams WHERE source_type='new_api'")
+    disabled = 0
+    for item in linked:
+        marker = (int(item["new_api_channel_id"]), int(item["new_api_key_index"]))
+        if marker not in seen:
+            db.execute("UPDATE upstreams SET enabled=0,updated_at=? WHERE id=?", (now, item["id"]))
+            disabled += 1
+    db.set_setting("last_new_api_sync_at", now)
+    return {
+        "channels_received": len(channels),
+        "created": created,
+        "updated": updated,
+        "disabled_stale": disabled,
+        "ignored_without_supported_models": ignored,
+        "synced_at": now,
+    }
 
 
 async def save_evidence(run_id: int, evidence: list[Evidence], model: str | None = None) -> None:
@@ -294,6 +504,160 @@ def aggregate_model_results(model_results: list[dict[str, Any]]) -> dict[str, An
             f"本轮共检测 {len(model_results)} 个模型，{penetrated} 个至少一个探针收到响应"
         ),
     }
+
+
+def model_declaration_warnings(model_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    for result in model_results:
+        expected_model = str(result.get("model") or "").removeprefix("models/").lower()
+        declared: set[str] = set()
+        for evidence in result.get("evidence", []):
+            if evidence.category != "response_model":
+                continue
+            value = str(evidence.detail.get("response_model") or "").removeprefix("models/").lower()
+            if value:
+                declared.add(value)
+        different = sorted(value for value in declared if value != expected_model)
+        if different:
+            warnings.append(
+                {
+                    "expected_model": expected_model,
+                    "declared_models": different,
+                    "severity": "warning",
+                    "note": "响应声明模型与请求模型不同，但该字段可由中转改写，因此不会单独触发自动禁用",
+                }
+            )
+    return warnings
+
+
+def evaluate_compliance(
+    upstream: dict[str, Any], result: dict[str, Any], model_results: list[dict[str, Any]]
+) -> dict[str, Any]:
+    expected = str(upstream.get("expected_channel") or upstream.get("claimed_channel") or "unknown")
+    likely = str(result.get("likely_channel") or "unknown")
+    confidence = float(result.get("confidence") or 0.0)
+    threshold = float(db.settings().get("auto_disable_min_confidence", 0.95))
+    warnings = model_declaration_warnings(model_results)
+    incompatible = {
+        "openai_official": {
+            "azure_openai", "codex_subscription_relay", "claude_subscription_relay",
+            "claude_compatibility_relay", "gemini_compatibility_relay", "antigravity_subscription_relay",
+            "aws_bedrock", "vertex_ai", "heterogeneous_backend_pool",
+        },
+        "anthropic_official": {
+            "aws_bedrock", "vertex_ai", "claude_subscription_relay", "claude_compatibility_relay",
+            "codex_subscription_relay", "heterogeneous_backend_pool",
+        },
+        "gemini_developer_api": {
+            "vertex_ai", "antigravity_subscription_relay", "gemini_compatibility_relay",
+            "codex_subscription_relay", "heterogeneous_backend_pool",
+        },
+        "azure_openai": {"openai_official", "codex_subscription_relay", "aws_bedrock", "vertex_ai"},
+        "aws_bedrock": {"anthropic_official", "vertex_ai", "claude_subscription_relay"},
+        "vertex_ai": {"gemini_developer_api", "aws_bedrock", "antigravity_subscription_relay"},
+        "codex_subscription_relay": {"openai_official", "azure_openai"},
+        "claude_subscription_relay": {"anthropic_official", "aws_bedrock", "vertex_ai"},
+        "antigravity_subscription_relay": {"gemini_developer_api", "vertex_ai"},
+    }
+    if expected in {"", "unknown", "relay_or_custom"}:
+        status = "not_configured"
+        reason = "尚未为该 New API 渠道设置期望来源，只生成溯源报告，不执行自动禁用"
+    elif not model_results or sum(int(item.get("success_probes") or 0) for item in model_results) == 0:
+        status = "inconclusive"
+        reason = "没有有效模型探针成功穿透，禁止将网络、限流、余额或上游故障当作来源不一致"
+    elif likely == expected and confidence >= 0.65:
+        status = "match"
+        reason = "检测来源与期望来源一致"
+    elif likely in incompatible.get(expected, set()) and confidence >= threshold and result.get("verdict") in {
+        "suspected_substitution", "probable_alternate_channel", "confirmed_direct"
+    }:
+        status = "mismatch_confirmed"
+        reason = f"期望 {expected}，但高置信度证据指向 {likely}（{confidence:.1%}）"
+    else:
+        status = "inconclusive"
+        reason = "现有证据不足以安全执行自动禁用；继续保留渠道并等待后续检测"
+    return {
+        "status": status,
+        "reason": reason,
+        "expected_channel": expected,
+        "likely_channel": likely,
+        "confidence": confidence,
+        "threshold": threshold,
+        "model_declaration_warnings": warnings,
+    }
+
+
+def notification_settings() -> dict[str, Any]:
+    settings = db.settings()
+    encrypted = str(settings.get("smtp_password_encrypted") or "")
+    settings["smtp_password"] = decrypt_secret(encrypted) if encrypted else ""
+    return settings
+
+
+async def enforce_and_notify(
+    upstream: dict[str, Any], result: dict[str, Any], compliance: dict[str, Any], run_id: int
+) -> tuple[str, str]:
+    if compliance["status"] != "mismatch_confirmed":
+        return "none", ""
+    auto_action = "alert_only"
+    auto_detail = "自动禁用未启用"
+    settings = db.settings()
+    channel_id = upstream.get("new_api_channel_id")
+    should_disable = (
+        bool(settings.get("auto_disable_enabled", False))
+        and bool(upstream.get("auto_disable_on_mismatch", False))
+        and channel_id is not None
+        and new_api.configured
+    )
+    if should_disable:
+        reason = f"模型溯源检测报告 #{run_id}：{compliance['reason']}"
+        try:
+            response = await new_api.disable_channel(int(channel_id), reason, run_id)
+            auto_action = "new_api_channel_disabled"
+            auto_detail = json.dumps(response, ensure_ascii=False, separators=(",", ":"))
+            db.execute(
+                "UPDATE upstreams SET enabled=0,new_api_channel_status=3,updated_at=? WHERE new_api_channel_id=?",
+                (utc_now(), int(channel_id)),
+            )
+            action_status = "completed"
+        except NewAPIIntegrationError as exc:
+            auto_action = "disable_failed"
+            auto_detail = str(exc)[:500]
+            action_status = "failed"
+        db.execute(
+            "INSERT INTO channel_actions(run_id,upstream_id,new_api_channel_id,action,status,reason,detail_json,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (
+                run_id,
+                upstream["id"],
+                int(channel_id),
+                "disable",
+                action_status,
+                reason,
+                auto_detail if auto_detail.startswith("{") else json.dumps({"detail": auto_detail}, ensure_ascii=False),
+                utc_now(),
+            ),
+        )
+    report = {
+        "run_id": run_id,
+        "upstream_name": upstream["name"],
+        "new_api_channel_id": channel_id,
+        "compliance_status": compliance["status"],
+        "expected_channel": compliance["expected_channel"],
+        "likely_channel": compliance["likely_channel"],
+        "confidence": compliance["confidence"],
+        "auto_action": auto_action,
+        "summary": result.get("summary", ""),
+    }
+
+    def record(destination: str, status: str, detail: str) -> None:
+        db.execute(
+            "INSERT INTO notification_events(run_id,destination,status,detail,created_at) VALUES(?,?,?,?,?)",
+            (run_id, destination, status, detail, utc_now()),
+        )
+
+    await send_notifications(notification_settings(), report, record)
+    return auto_action, auto_detail
 
 
 def _integer(value: Any) -> int:
@@ -608,8 +972,16 @@ async def save_model_results(run_id: int, model_results: list[dict[str, Any]]) -
 async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) -> int:
     started = utc_now()
     run_id = db.execute(
-        "INSERT INTO runs(upstream_id,trigger,mode,status,rule_version,started_at) VALUES(?,?,?,?,?,?)",
-        (upstream["id"], trigger, mode, "running", RULE_VERSION, started),
+        "INSERT INTO runs(upstream_id,trigger,mode,status,expected_channel,rule_version,started_at) VALUES(?,?,?,?,?,?,?)",
+        (
+            upstream["id"],
+            trigger,
+            mode,
+            "running",
+            str(upstream.get("expected_channel") or upstream.get("claimed_channel") or "unknown"),
+            RULE_VERSION,
+            started,
+        ),
     )
     try:
         baseline = dict(upstream)
@@ -625,6 +997,7 @@ async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) ->
             model_results = apply_historical_route_changes(upstream["id"], model_results)
             await save_model_results(run_id, model_results)
             result = aggregate_model_results(model_results)
+            compliance = evaluate_compliance(upstream, result, model_results)
         else:
             result = {
                 "verdict": "inconclusive",
@@ -632,11 +1005,33 @@ async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) ->
                 "confidence": 0.0,
                 "summary": "仅完成模型列表与入口协议巡检；未调用有效模型，不能据此判断终端上游真伪",
             }
+            compliance = {
+                "status": "not_evaluated",
+                "reason": "入口巡检不执行真实性合规判定",
+                "expected_channel": str(upstream.get("expected_channel") or "unknown"),
+                "likely_channel": result["likely_channel"],
+                "confidence": 0.0,
+            }
         db.execute(
-            "UPDATE runs SET status='completed',verdict=?,likely_channel=?,confidence=?,summary=?,finished_at=? WHERE id=?",
-            (result["verdict"], result["likely_channel"], result["confidence"], result["summary"], utc_now(), run_id),
+            "UPDATE runs SET status='completed',verdict=?,likely_channel=?,confidence=?,summary=?,compliance_status=?,"
+            "compliance_detail_json=?,expected_channel=?,finished_at=? WHERE id=?",
+            (
+                result["verdict"],
+                result["likely_channel"],
+                result["confidence"],
+                result["summary"],
+                compliance["status"],
+                json.dumps(compliance, ensure_ascii=False, separators=(",", ":")),
+                compliance["expected_channel"],
+                utc_now(),
+                run_id,
+            ),
         )
-        await notify_if_needed(upstream, result, run_id)
+        auto_action, auto_detail = await enforce_and_notify(upstream, result, compliance, run_id)
+        db.execute(
+            "UPDATE runs SET auto_action=?,auto_action_detail=? WHERE id=?",
+            (auto_action, auto_detail, run_id),
+        )
     except Exception as exc:
         db.execute(
             "UPDATE runs SET status='failed',summary=?,finished_at=? WHERE id=?",
@@ -667,6 +1062,8 @@ async def scheduler_loop() -> None:
         interval = max(10, int(settings.get("interval_minutes", 15)))
         if enabled:
             try:
+                if new_api.configured:
+                    await sync_new_api_channels()
                 await execute_batch(None, str(settings.get("scheduled_mode", "safe")), "schedule")
             except Exception:
                 pass
@@ -695,6 +1092,7 @@ def health() -> dict[str, Any]:
         "ok": True,
         "rule_version": RULE_VERSION,
         "scheduler_enabled": bool(db.settings().get("scheduler_enabled", False)),
+        "new_api_integration_configured": new_api.configured,
     }
 
 
@@ -732,7 +1130,57 @@ def state() -> dict[str, Any]:
         "SELECT r.*,u.name AS upstream_name FROM runs r JOIN upstreams u ON u.id=r.upstream_id "
         "ORDER BY r.started_at DESC LIMIT 100"
     )
-    return {"upstreams": upstreams, "runs": runs, "settings": db.settings(), "rule_version": RULE_VERSION}
+    return {
+        "upstreams": upstreams,
+        "runs": runs,
+        "settings": public_settings(),
+        "rule_version": RULE_VERSION,
+        "new_api": {
+            "configured": new_api.configured,
+            "last_sync_at": db.settings().get("last_new_api_sync_at", ""),
+        },
+    }
+
+
+@app.post("/detector/api/new-api/sync", dependencies=[Depends(require_admin)])
+async def sync_new_api() -> dict[str, Any]:
+    if not new_api.configured:
+        raise HTTPException(status_code=503, detail="New API integration is not configured")
+    try:
+        return await sync_new_api_channels()
+    except NewAPIIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/detector/api/upstreams/{upstream_id}/policy", dependencies=[Depends(require_admin)])
+def update_new_api_channel_policy(upstream_id: int, value: NewAPIChannelPolicyInput) -> dict[str, Any]:
+    upstream = load_upstream(upstream_id)
+    if value.expected_channel not in KNOWN_EXPECTED_CHANNELS:
+        raise HTTPException(status_code=400, detail="unsupported expected_channel")
+    db.execute(
+        "UPDATE upstreams SET expected_channel=?,claimed_channel=?,auto_disable_on_mismatch=?,enabled=?,updated_at=? WHERE id=?",
+        (
+            value.expected_channel,
+            value.expected_channel,
+            int(value.auto_disable_on_mismatch),
+            int(value.enabled),
+            utc_now(),
+            upstream_id,
+        ),
+    )
+    if upstream.get("new_api_channel_id") is not None:
+        db.execute(
+            "UPDATE upstreams SET expected_channel=?,claimed_channel=?,auto_disable_on_mismatch=?,updated_at=? "
+            "WHERE new_api_channel_id=?",
+            (
+                value.expected_channel,
+                value.expected_channel,
+                int(value.auto_disable_on_mismatch),
+                utc_now(),
+                upstream["new_api_channel_id"],
+            ),
+        )
+    return public_upstream(load_upstream(upstream_id))
 
 
 @app.post("/detector/api/discover", dependencies=[Depends(require_admin)])
@@ -775,14 +1223,18 @@ def create_upstream(value: UpstreamInput) -> dict[str, Any]:
         if reference["role"] != "reference":
             raise HTTPException(status_code=400, detail="reference_upstream_id must point to a reference upstream")
     now = utc_now()
+    expected_channel = value.expected_channel if value.expected_channel != "unknown" else value.claimed_channel
+    if expected_channel not in KNOWN_EXPECTED_CHANNELS:
+        raise HTTPException(status_code=400, detail="unsupported expected_channel")
     upstream_id = db.execute(
         "INSERT INTO upstreams(name,base_url,api_style,claimed_channel,api_key_encrypted,api_key_masked,models_json,model_routes_json,"
-        "discovery_json,role,reference_upstream_id,allow_paid_probes,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "discovery_json,role,reference_upstream_id,allow_paid_probes,enabled,expected_channel,expected_models_json,"
+        "auto_disable_on_mismatch,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             value.name,
             str(value.base_url).rstrip("/"),
             "auto",
-            "unknown",
+            expected_channel,
             encrypt_secret(value.api_key),
             mask_secret(value.api_key),
             json.dumps(models, ensure_ascii=False),
@@ -792,6 +1244,9 @@ def create_upstream(value: UpstreamInput) -> dict[str, Any]:
             value.reference_upstream_id,
             int(value.allow_paid_probes),
             int(value.enabled),
+            expected_channel,
+            json.dumps(models, ensure_ascii=False),
+            int(value.auto_disable_on_mismatch),
             now,
             now,
         ),
@@ -817,12 +1272,17 @@ def update_upstream(upstream_id: int, value: UpstreamInput) -> dict[str, Any]:
     if value.api_key:
         encrypted = encrypt_secret(value.api_key)
         masked = mask_secret(value.api_key)
+    expected_channel = value.expected_channel if value.expected_channel != "unknown" else value.claimed_channel
+    if expected_channel not in KNOWN_EXPECTED_CHANNELS:
+        raise HTTPException(status_code=400, detail="unsupported expected_channel")
     db.execute(
-        "UPDATE upstreams SET name=?,base_url=?,api_style='auto',claimed_channel='unknown',api_key_encrypted=?,api_key_masked=?,"
-        "models_json=?,model_routes_json=?,discovery_json=?,role=?,reference_upstream_id=?,allow_paid_probes=?,enabled=?,updated_at=? WHERE id=?",
+        "UPDATE upstreams SET name=?,base_url=?,api_style='auto',claimed_channel=?,api_key_encrypted=?,api_key_masked=?,"
+        "models_json=?,model_routes_json=?,discovery_json=?,role=?,reference_upstream_id=?,allow_paid_probes=?,enabled=?,"
+        "expected_channel=?,expected_models_json=?,auto_disable_on_mismatch=?,updated_at=? WHERE id=?",
         (
             value.name,
             str(value.base_url).rstrip("/"),
+            expected_channel,
             encrypted,
             masked,
             json.dumps(models, ensure_ascii=False),
@@ -832,6 +1292,9 @@ def update_upstream(upstream_id: int, value: UpstreamInput) -> dict[str, Any]:
             value.reference_upstream_id,
             int(value.allow_paid_probes),
             int(value.enabled),
+            expected_channel,
+            json.dumps(models, ensure_ascii=False),
+            int(value.auto_disable_on_mismatch),
             utc_now(),
             upstream_id,
         ),
@@ -848,6 +1311,11 @@ def delete_upstream(upstream_id: int) -> dict[str, bool]:
 
 @app.post("/detector/api/run", dependencies=[Depends(require_admin)])
 async def run_detector(value: RunInput) -> dict[str, Any]:
+    if new_api.configured:
+        try:
+            await sync_new_api_channels()
+        except NewAPIIntegrationError as exc:
+            raise HTTPException(status_code=502, detail=f"New API channel sync failed: {exc}") from exc
     run_ids = await execute_batch(value.upstream_id, value.mode, "manual")
     return {"run_ids": run_ids}
 
@@ -861,13 +1329,24 @@ def run_detail(run_id: int) -> dict[str, Any]:
     )
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
+    run["compliance"] = json.loads(run.pop("compliance_detail_json") or "{}")
     evidence = db.rows("SELECT * FROM evidence WHERE run_id=? ORDER BY model IS NOT NULL,model,id", (run_id,))
     for item in evidence:
         item["detail"] = json.loads(item.pop("detail_json"))
     model_results = db.rows("SELECT * FROM model_results WHERE run_id=? ORDER BY id", (run_id,))
     for item in model_results:
         item["chain"] = json.loads(item.pop("chain_json"))
-    return {"run": run, "model_results": model_results, "evidence": evidence}
+    actions = db.rows("SELECT * FROM channel_actions WHERE run_id=? ORDER BY id", (run_id,))
+    for item in actions:
+        item["detail"] = json.loads(item.pop("detail_json") or "{}")
+    notifications = db.rows("SELECT * FROM notification_events WHERE run_id=? ORDER BY id", (run_id,))
+    return {
+        "run": run,
+        "model_results": model_results,
+        "evidence": evidence,
+        "actions": actions,
+        "notifications": notifications,
+    }
 
 
 @app.put("/detector/api/settings", dependencies=[Depends(require_admin)])
@@ -876,4 +1355,17 @@ def update_settings(value: SettingsInput) -> dict[str, Any]:
     db.set_setting("interval_minutes", value.interval_minutes)
     db.set_setting("scheduled_mode", value.scheduled_mode)
     db.set_setting("webhook_url", value.webhook_url)
-    return db.settings()
+    db.set_setting("webhook_type", value.webhook_type)
+    db.set_setting("email_enabled", value.email_enabled)
+    db.set_setting("smtp_host", value.smtp_host)
+    db.set_setting("smtp_port", value.smtp_port)
+    db.set_setting("smtp_username", value.smtp_username)
+    if value.smtp_password:
+        db.set_setting("smtp_password_encrypted", encrypt_secret(value.smtp_password))
+    db.set_setting("smtp_from", value.smtp_from)
+    db.set_setting("smtp_starttls", value.smtp_starttls)
+    db.set_setting("smtp_ssl", value.smtp_ssl)
+    db.set_setting("alert_email_to", value.alert_email_to)
+    db.set_setting("auto_disable_enabled", value.auto_disable_enabled)
+    db.set_setting("auto_disable_min_confidence", value.auto_disable_min_confidence)
+    return public_settings()

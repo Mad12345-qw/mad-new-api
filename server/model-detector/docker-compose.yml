@@ -19,6 +19,7 @@ services:
       TZ: Asia/Shanghai
       SQLITE_PATH: /data/new-api.db?_busy_timeout=30000
       SESSION_SECRET: ${NEW_API_SESSION_SECRET}
+      MODEL_DETECTOR_SERVICE_TOKEN: ${MODEL_DETECTOR_SERVICE_TOKEN}
     volumes:
       - ./data/new-api:/data
     healthcheck:
@@ -47,6 +48,7 @@ services:
       DETECTOR_ADMIN_TOKEN: ${DETECTOR_ADMIN_TOKEN}
       DETECTOR_TIMEOUT_SECONDS: ${DETECTOR_TIMEOUT_SECONDS:-30}
       DETECTOR_NEW_API_INTERNAL_URL: http://new-api:3000
+      DETECTOR_NEW_API_SERVICE_TOKEN: ${MODEL_DETECTOR_SERVICE_TOKEN}
     volumes:
       - ./data/detector:/data
     depends_on:

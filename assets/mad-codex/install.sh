@@ -64,7 +64,7 @@ $HOME/Library/Application Support/OpenAI/Codex/bin/codex"
 }
 
 codex_config_valid() {
-  CODEX_HOME="$codex_home" "$codex_cli" --strict-config features list >/dev/null 2>&1
+  CODEX_HOME="$codex_home" "$codex_cli" features list >/dev/null 2>&1
 }
 
 codex_cli=$(find_codex_cli || true)
@@ -73,7 +73,7 @@ if [ -z "$codex_cli" ]; then
   exit 1
 fi
 if [ "$had_config" -eq 1 ] && ! codex_config_valid; then
-  printf '%s\n' 'The existing Codex configuration did not pass strict validation. No files were changed.' >&2
+  printf '%s\n' 'The existing Codex configuration could not be parsed. No files were changed.' >&2
   exit 1
 fi
 
@@ -174,7 +174,7 @@ config_installed=1
 chmod 600 "$config_path" "$key_path"
 
 if ! codex_config_valid; then
-  printf '%s\n' 'The generated MadAPI configuration failed strict Codex validation.' >&2
+  printf '%s\n' 'The generated MadAPI configuration could not be parsed by Codex.' >&2
   exit 1
 fi
 

@@ -69,7 +69,7 @@ function Test-CodexConfig([string]$Candidate, [string]$CodexHome) {
     try {
         $env:CODEX_HOME = $CodexHome
         $ErrorActionPreference = 'Continue'
-        & $Candidate --strict-config features list *> $null
+        & $Candidate features list *> $null
         return ($LASTEXITCODE -eq 0)
     } catch {
         return $false
@@ -148,7 +148,7 @@ if ($null -eq $codexCli) {
     throw 'Codex CLI was not found. Install or update Codex, then try again.'
 }
 if ($hadConfig -and -not (Test-CodexConfig $codexCli $codexHome)) {
-    throw 'The existing Codex configuration did not pass strict validation. No files were changed.'
+    throw 'The existing Codex configuration could not be parsed. No files were changed.'
 }
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -257,7 +257,7 @@ try {
     $configInstalled = $true
 
     if (-not (Test-CodexConfig $codexCli $codexHome)) {
-        throw 'The generated MadAPI configuration failed strict Codex validation.'
+        throw 'The generated MadAPI configuration could not be parsed by Codex.'
     }
 
     if (Test-Path -LiteralPath $rollbackKeyPath) {

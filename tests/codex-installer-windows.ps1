@@ -20,13 +20,13 @@ function Write-Utf8NoBom([string]$Path, [string]$Content) {
     [IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-function Invoke-TestInstaller([string]$Home, [string]$Key, [string]$CliPath) {
+function Invoke-TestInstaller([string]$CodexHome, [string]$Key, [string]$CliPath) {
     $oldHome = [string]$env:CODEX_HOME
     $oldKey = [string]$env:MADAPI_KEY
     $oldCli = [string]$env:CODEX_CLI_PATH
     $oldPreference = $ErrorActionPreference
     try {
-        $env:CODEX_HOME = $Home
+        $env:CODEX_HOME = $CodexHome
         $env:MADAPI_KEY = $Key
         $env:CODEX_CLI_PATH = $CliPath
         $ErrorActionPreference = 'Continue'
@@ -58,10 +58,10 @@ $sandbox = Join-Path $env:RUNNER_TEMP ('mad-codex-windows-' + [guid]::NewGuid().
 
 try {
     New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
-    $home = Join-Path $sandbox 'complex'
-    $sessionDir = Join-Path $home 'sessions\2026\08\01'
+    $testHome = Join-Path $sandbox 'complex'
+    $sessionDir = Join-Path $testHome 'sessions\2026\08\01'
     New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
-    $configPath = Join-Path $home 'config.toml'
+    $configPath = Join-Path $testHome 'config.toml'
     $sessionPath = Join-Path $sessionDir 'sentinel.jsonl'
     $desktop = ([char]0x684c).ToString() + ([char]0x9762)
     $project = ([char]0x9879).ToString() + ([char]0x76ee)
@@ -97,7 +97,7 @@ args = []
     $configHash = Get-Hash $configPath
     $sessionHash = Get-Hash $sessionPath
 
-    $first = Invoke-TestInstaller $home 'sk-windows-first-key' $codexCli
+    $first = Invoke-TestInstaller $testHome 'sk-windows-first-key' $codexCli
     Assert-True ($first.ExitCode -eq 0) ('First install failed: ' + ($first.Output -join ' | '))
     $installed = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8)
     Assert-True ($installed.Contains($projectPath)) 'UTF-8 project path was not preserved.'
@@ -110,17 +110,17 @@ args = []
     Assert-True ($installed.Contains('madapi.key')) 'Protected key-file auth was not configured.'
     Assert-True ((Get-Hash $sessionPath) -eq $sessionHash) 'Session data changed.'
 
-    $backup = @(Get-ChildItem -LiteralPath $home -Filter 'config.toml.madapi-backup-*' -File)
+    $backup = @(Get-ChildItem -LiteralPath $testHome -Filter 'config.toml.madapi-backup-*' -File)
     Assert-True ($backup.Count -eq 1) 'Exactly one backup was not created.'
     Assert-True ((Get-Hash $backup[0].FullName) -eq $configHash) 'Backup is not byte-identical to the original config.'
-    $keyPath = Join-Path $home 'madapi.key'
+    $keyPath = Join-Path $testHome 'madapi.key'
     Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-first-key') 'Protected key file has the wrong value.'
     Assert-True ((Get-Acl -LiteralPath $keyPath).AreAccessRulesProtected) 'Key file still inherits broad ACLs.'
 
     $oldHome = [string]$env:CODEX_HOME
     try {
-        $env:CODEX_HOME = $home
-        & $codexCli --strict-config features list *> $null
+        $env:CODEX_HOME = $testHome
+        & $codexCli features list *> $null
         Assert-True ($LASTEXITCODE -eq 0) 'Actual Codex rejected the installed configuration.'
     } finally {
         if ([string]::IsNullOrEmpty($oldHome)) {
@@ -131,12 +131,28 @@ args = []
     }
 
     Start-Sleep -Milliseconds 1100
-    $second = Invoke-TestInstaller $home 'sk-windows-second-key' $codexCli
+    $second = Invoke-TestInstaller $testHome 'sk-windows-second-key' $codexCli
     Assert-True ($second.ExitCode -eq 0) 'Repeat install failed.'
     $reinstalled = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8)
     Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\]$')).Count -eq 1) 'Duplicate provider section was created.'
     Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\.auth\]$')).Count -eq 1) 'Duplicate auth section was created.'
     Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-second-key') 'Repeat install did not rotate the key.'
+
+    $freshHome = Join-Path $sandbox 'fresh'
+    $fresh = Invoke-TestInstaller $freshHome 'sk-windows-fresh-key' $codexCli
+    Assert-True ($fresh.ExitCode -eq 0) 'Fresh install failed.'
+    $oldHome = [string]$env:CODEX_HOME
+    try {
+        $env:CODEX_HOME = $freshHome
+        & $codexCli --strict-config features list *> $null
+        Assert-True ($LASTEXITCODE -eq 0) 'Actual Codex strictly rejected the clean generated configuration.'
+    } finally {
+        if ([string]::IsNullOrEmpty($oldHome)) {
+            Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue
+        } else {
+            $env:CODEX_HOME = $oldHome
+        }
+    }
 
     $badHome = Join-Path $sandbox 'malformed'
     New-Item -ItemType Directory -Path $badHome -Force | Out-Null

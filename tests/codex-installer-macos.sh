@@ -81,13 +81,17 @@ backup=$(find "$home" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
 [ "$(hash_file "$backup")" = "$config_hash" ] || fail 'Backup is not byte-identical to the original config.'
 [ "$(cat "$home/madapi.key")" = 'sk-macos-first-key' ] || fail 'Protected key file has the wrong value.'
 [ "$(stat -f '%Lp' "$home/madapi.key")" = '600' ] || fail 'Key file permissions are not 600.'
-CODEX_HOME="$home" "$codex_cli" --strict-config features list >/dev/null
+CODEX_HOME="$home" "$codex_cli" features list >/dev/null
 
 sleep 1
 run_installer "$home" 'sk-macos-second-key' "$codex_cli"
 [ "$(grep -c '^\[model_providers\.madapi\]$' "$config_path")" -eq 1 ] || fail 'Duplicate provider section was created.'
 [ "$(grep -c '^\[model_providers\.madapi\.auth\]$' "$config_path")" -eq 1 ] || fail 'Duplicate auth section was created.'
 [ "$(cat "$home/madapi.key")" = 'sk-macos-second-key' ] || fail 'Repeat install did not rotate the key.'
+
+fresh_home="$sandbox/fresh"
+run_installer "$fresh_home" 'sk-macos-fresh-key' "$codex_cli"
+CODEX_HOME="$fresh_home" "$codex_cli" --strict-config features list >/dev/null
 
 bad_home="$sandbox/malformed"
 mkdir -p "$bad_home"

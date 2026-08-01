@@ -233,7 +233,7 @@ foreach ($line in $sourceLines) {
     }
 
     if ($currentSection -eq '') {
-        if ($line -match '^\s*(model_provider|model|model_catalog_json)\s*=') {
+        if ($line -match '^\s*(?:model_provider|model|model_catalog_json|"model_provider"|"model"|"model_catalog_json"|''model_provider''|''model''|''model_catalog_json'')\s*=') {
             continue
         }
         foreach ($name in @($preservedDefaults.Keys)) {

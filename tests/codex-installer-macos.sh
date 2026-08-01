@@ -4,7 +4,7 @@ set -eu
 installer_path=${1:?installer path is required}
 sandbox="$RUNNER_TEMP/mad-codex-macos-$$"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-catalog_fixture="$script_dir/fixtures/codex-models.json"
+catalog_fixture="$sandbox/catalog from any external tool.json"
 
 fail() {
   printf 'Assertion failed: %s\n' "$1" >&2
@@ -29,6 +29,7 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 mkdir -p "$sandbox"
+printf '%s' '{"models":[]}' > "$catalog_fixture"
 codex_cli=$(command -v codex)
 [ -x "$codex_cli" ] || fail 'Latest Codex CLI is unavailable.'
 
@@ -40,7 +41,7 @@ session_path="$session_dir/sentinel.jsonl"
 cat > "$config_path" <<EOF
 model_provider = "custom"
 model = "old-model"
-model_catalog_json = "$catalog_fixture"
+  'model_catalog_json'   =   "$catalog_fixture" # supplied by an arbitrary external configurator
 model_reasoning_effort = "medium"
 disable_response_storage = true
 
@@ -87,10 +88,11 @@ grep -Fq 'model_reasoning_effort = "medium"' "$config_path" || fail 'Existing re
 grep -Fq 'experimental_bearer_token = "sk-macos-first-key"' "$config_path" || fail 'API key was not written into the active provider.'
 [ "$(grep -c '^experimental_bearer_token = "sk-macos-first-key"$' "$config_path")" -eq 1 ] || fail 'API key was written more than once.'
 ! grep -Fq 'madapi.key' "$config_path" || fail 'Obsolete key-file authentication remained configured.'
-! grep -Fq 'model_catalog_json' "$config_path" || fail 'A static model catalog remained configured.'
+! grep -Eq "^[[:space:]]*(model_catalog_json|\"model_catalog_json\"|'model_catalog_json')[[:space:]]*=" "$config_path" || fail 'An external static model catalog remained active.'
+[ -f "$catalog_fixture" ] || fail 'The external catalog file was deleted instead of only removing its config reference.'
 ! grep -Fq '[model_providers.custom.auth]' "$config_path" || fail 'Command-backed authentication remained configured.'
 ! grep -Fq 'supports_websockets' "$config_path" || fail 'Unverified WebSocket support was enabled.'
-grep -Fq 'disable_response_storage = true' "$config_path" || fail 'CC Switch response-storage preference was not preserved.'
+grep -Fq 'disable_response_storage = true' "$config_path" || fail 'The existing response-storage preference was not preserved.'
 grep -Fq 'stream_idle_timeout_ms = 360000' "$config_path" || fail 'Stable 360 second stream timeout was not configured.'
 grep -Fq 'request_max_retries = 3' "$config_path" || fail 'Stable request retry count was not configured.'
 grep -Fq 'requires_openai_auth = true' "$config_path" || fail 'Remote model catalog authentication was not enabled.'

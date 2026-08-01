@@ -172,7 +172,7 @@ if [ "$had_config" -eq 1 ]; then
       if (skip) next
     }
     skip { next }
-    current == "" && /^[[:space:]]*(model_provider|model|model_catalog_json)[[:space:]]*=/ { next }
+    current == "" && /^[[:space:]]*(model_provider|model|model_catalog_json|"model_provider"|"model"|"model_catalog_json"|\047model_provider\047|\047model\047|\047model_catalog_json\047)[[:space:]]*=/ { next }
     { print }
   ' "$config_path" > "$body_path"
 else

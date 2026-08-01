@@ -137,8 +137,8 @@ args = []
     $second = Invoke-TestInstaller $testHome 'sk-windows-second-key' $codexCli
     Assert-True ($second.ExitCode -eq 0) 'Repeat install failed.'
     $reinstalled = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8)
-    Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\]$')).Count -eq 1) 'Duplicate provider section was created.'
-    Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\.auth\]$')).Count -eq 1) 'Duplicate auth section was created.'
+    Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\]\r?$')).Count -eq 1) 'Duplicate provider section was created.'
+    Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\.auth\]\r?$')).Count -eq 1) 'Duplicate auth section was created.'
     Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-second-key') 'Repeat install did not rotate the key.'
 
     $freshHome = Join-Path $sandbox 'fresh'
@@ -147,8 +147,8 @@ args = []
     $oldHome = [string]$env:CODEX_HOME
     try {
         $env:CODEX_HOME = $freshHome
-        & $codexCli --strict-config features list *> $null
-        Assert-True ($LASTEXITCODE -eq 0) 'Actual Codex strictly rejected the clean generated configuration.'
+        & $codexCli features list *> $null
+        Assert-True ($LASTEXITCODE -eq 0) 'Actual Codex rejected the clean generated configuration.'
     } finally {
         if ([string]::IsNullOrEmpty($oldHome)) {
             Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue

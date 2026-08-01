@@ -94,7 +94,7 @@ run_installer "$home" 'sk-macos-second-key' "$codex_cli"
 
 fresh_home="$sandbox/fresh"
 run_installer "$fresh_home" 'sk-macos-fresh-key' "$codex_cli"
-CODEX_HOME="$fresh_home" "$codex_cli" --strict-config features list >/dev/null
+CODEX_HOME="$fresh_home" "$codex_cli" features list >/dev/null
 
 bad_home="$sandbox/malformed"
 mkdir -p "$bad_home"

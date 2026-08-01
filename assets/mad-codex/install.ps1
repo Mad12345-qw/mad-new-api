@@ -272,7 +272,6 @@ if (-not $preservedDefaults.model_reasoning_effort) {
 if (-not $preservedDefaults.model_auto_compact_token_limit) {
     $headerLines.Add('model_auto_compact_token_limit = 500000')
 }
-$authCommand = '$h=if([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)){Join-Path ([Environment]::GetFolderPath(''UserProfile'')) ''.codex''}else{[string]$env:CODEX_HOME};[Console]::Out.Write([IO.File]::ReadAllText((Join-Path $h ''madapi.key'')).Trim())'
 $configLines = New-Object 'System.Collections.Generic.List[string]'
 foreach ($line in $headerLines) {
     $configLines.Add($line)
@@ -286,15 +285,11 @@ $configLines.Add('[' + $targetProviderSection + ']')
 $configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
 $configLines.Add('base_url = "https://mad.myddns.me/codex/v1"')
 $configLines.Add('wire_api = "responses"')
+$configLines.Add('requires_openai_auth = true')
+$configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
 $configLines.Add('stream_idle_timeout_ms = 360000')
 $configLines.Add('request_max_retries = 3')
 $configLines.Add('context_window_override = 1048576')
-$configLines.Add('')
-$configLines.Add('[' + $targetProviderSection + '.auth]')
-$configLines.Add('command = "powershell.exe"')
-$configLines.Add('args = ["-NoProfile", "-Command", ' + (ConvertTo-TomlBasicString $authCommand) + ']')
-$configLines.Add('timeout_ms = 5000')
-$configLines.Add('refresh_interval_ms = 300000')
 try {
     [IO.File]::WriteAllText(
         $tempConfigPath,

@@ -238,14 +238,11 @@ trap 'exit 1' HUP INT TERM
   printf 'name = %s\n' "$(toml_string "$provider_name")"
   printf '%s\n' 'base_url = "https://mad.myddns.me/codex/v1"'
   printf '%s\n' 'wire_api = "responses"'
+  printf '%s\n' 'requires_openai_auth = true'
+  printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 3'
-  printf '%s\n\n' 'context_window_override = 1048576'
-  printf '[model_providers.%s.auth]\n' "$provider_id"
-  printf '%s\n' 'command = "/bin/sh"'
-  printf '%s\n' 'args = ["-c", "h=${CODEX_HOME:-$HOME/.codex}; exec cat \"$h/madapi.key\""]'
-  printf '%s\n' 'timeout_ms = 5000'
-  printf '%s\n' 'refresh_interval_ms = 300000'
+  printf '%s\n' 'context_window_override = 1048576'
 } > "$temp_path"
 
 printf '%s' "$api_key" > "$temp_key_path"

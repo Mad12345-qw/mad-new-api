@@ -101,10 +101,9 @@ grep -Fq '[plugins."github@openai-curated"]' "$config_path" || fail 'Plugin conf
 grep -Fq '[mcp_servers.node_repl]' "$config_path" || fail 'MCP configuration was not preserved.'
 grep -Fq 'model_reasoning_effort = "medium"' "$config_path" || fail 'Existing reasoning effort was overwritten.'
 ! grep -Fq 'old-secret' "$config_path" || fail 'Old MadAPI secret remained in config.toml.'
-! grep -Fq 'experimental_bearer_token' "$config_path" || fail 'Conflicting direct bearer authentication remained configured.'
-! grep -Fq 'requires_openai_auth' "$config_path" || fail 'Conflicting OpenAI authentication remained configured.'
-grep -Fq '[model_providers.custom.auth]' "$config_path" || fail 'Dynamic catalog command authentication was not configured.'
-grep -Fq 'madapi.key' "$config_path" || fail 'Dynamic catalog authentication does not read the protected MadAPI key.'
+grep -Fq 'requires_openai_auth = true' "$config_path" || fail 'Desktop Codex OpenAI-auth compatibility was not configured.'
+grep -Fq 'experimental_bearer_token = "sk-macos-first-key"' "$config_path" || fail 'Desktop Codex bearer authentication was not configured.'
+! grep -Fq '[model_providers.custom.auth]' "$config_path" || fail 'Conflicting command authentication remained configured.'
 [ "$(cat "$key_path")" = 'sk-macos-first-key' ] || fail 'Protected dynamic catalog key was not written correctly.'
 [ ! -e "$models_cache_path" ] || fail 'Stale model cache was not cleared.'
 ! grep -Eq "^[[:space:]]*(model_catalog_json|\"model_catalog_json\"|'model_catalog_json')[[:space:]]*=" "$config_path" || fail 'An external static model catalog remained active.'
@@ -125,7 +124,8 @@ CODEX_HOME="$home" "$codex_cli" features list >/dev/null
 sleep 1
 run_installer "$home" 'sk-macos-second-key' "$codex_cli"
 [ "$(grep -c '^\[model_providers\.custom\]$' "$config_path")" -eq 1 ] || fail 'Duplicate provider section was created.'
-! grep -Fq 'experimental_bearer_token' "$config_path" || fail 'Repeat install restored conflicting direct bearer authentication.'
+grep -Fq 'experimental_bearer_token = "sk-macos-second-key"' "$config_path" || fail 'Repeat install did not update direct bearer authentication.'
+! grep -Fq '[model_providers.custom.auth]' "$config_path" || fail 'Repeat install restored conflicting command authentication.'
 [ "$(cat "$key_path")" = 'sk-macos-second-key' ] || fail 'Repeat install did not update the protected dynamic catalog key.'
 ! grep -Fq 'supports_websockets' "$config_path" || fail 'Repeat install enabled unverified WebSocket support.'
 
@@ -163,8 +163,9 @@ fresh_home="$sandbox/fresh"
 run_one_command "$fresh_home" 'sk-macos-fresh-key' "$codex_cli"
 grep -Fq 'model_provider = "custom"' "$fresh_home/config.toml" || fail 'Fresh install did not use the proven custom provider identity.'
 grep -Fq 'name = "custom"' "$fresh_home/config.toml" || fail 'Fresh install did not use the proven custom provider display name.'
-! grep -Fq 'experimental_bearer_token' "$fresh_home/config.toml" || fail 'Fresh install added conflicting direct bearer authentication.'
-grep -Fq '[model_providers.custom.auth]' "$fresh_home/config.toml" || fail 'Fresh install did not enable dynamic catalog refresh for API-key users.'
+grep -Fq 'requires_openai_auth = true' "$fresh_home/config.toml" || fail 'Fresh install did not enable desktop Codex compatibility.'
+grep -Fq 'experimental_bearer_token = "sk-macos-fresh-key"' "$fresh_home/config.toml" || fail 'Fresh install did not add direct bearer authentication.'
+! grep -Fq '[model_providers.custom.auth]' "$fresh_home/config.toml" || fail 'Fresh install added conflicting command authentication.'
 [ "$(cat "$fresh_home/madapi.key")" = 'sk-macos-fresh-key' ] || fail 'Fresh install did not create the protected dynamic catalog key.'
 ! grep -Fq 'disable_response_storage' "$fresh_home/config.toml" || fail 'Fresh install added an optional response-storage policy.'
 ! grep -Fq 'model_catalog_json' "$fresh_home/config.toml" || fail 'Fresh install added a static model catalog.'

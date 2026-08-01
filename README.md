@@ -19,6 +19,7 @@ This repository applies a small backend patch to the upstream New API source:
 - an isolated Codex Desktop compatibility surface at `/codex/v1`: its catalog is synthesized from each token's current conversation-model access, while Responses requests are normalized once and delegated to New API's existing channel selection, mapping, retry, billing, and channel-type adaptors
 - the MIT-licensed CPA Responses-to-Chat translator is vendored intact behind `/codex/v1`, including its original request/response regression suite; only thin New API authentication, routing, and billing adapters surround it
 - the Codex catalog uses a build-pinned CPA capability snapshot for truthful context windows, reasoning levels, and validated image-input metadata; unknown models remain conservative and media models stay outside the Codex picker
+- token-scoped Codex setup from the API key page, with automatic Windows/macOS detection and one-command configuration that backs up and preserves existing plugins, MCP servers, and personal settings
 
 GitHub Actions applies and verifies every patch, runs backend, frontend, and image compatibility tests, builds the Docker image away from the production server, and publishes stable release artifacts. No production credentials are stored in this repository.
 

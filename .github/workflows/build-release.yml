@@ -139,9 +139,55 @@ jobs:
       - name: Verify playground frontend
         working-directory: source/web/default
         run: |
+          bun test tests/codex-config.test.ts
           bun run typecheck
           ../node_modules/.bin/oxlint -c .oxlintrc.json src/features/playground
           bun run build
+
+      - name: Verify Codex setup installers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mac_home="$RUNNER_TEMP/mad-codex-macos"
+          mkdir -p "$mac_home"
+          printf '%s\n' \
+            'model_provider = "old"' \
+            'model = "old-model"' \
+            '' \
+            '[features]' \
+            'memories = true' \
+            '' \
+            '[model_providers.madapi]' \
+            'experimental_bearer_token = "old-secret"' \
+            > "$mac_home/config.toml"
+          CODEX_HOME="$mac_home" MADAPI_KEY='sk-ci-test-key' \
+            sh assets/mad-codex/install.sh
+          test "$(grep -c '^\[model_providers.madapi\]$' "$mac_home/config.toml")" -eq 1
+          test "$(grep -c '^\[model_providers.madapi.auth\]$' "$mac_home/config.toml")" -eq 1
+          grep -q '^memories = true$' "$mac_home/config.toml"
+          ! grep -q 'old-secret' "$mac_home/config.toml"
+          find "$mac_home" -maxdepth 1 -name 'config.toml.madapi-backup-*' | grep -q .
+
+          win_home="$RUNNER_TEMP/mad-codex-windows"
+          mkdir -p "$win_home"
+          printf '%s\n' \
+            'model_provider = "old"' \
+            'model = "old-model"' \
+            '' \
+            '[features]' \
+            'memories = true' \
+            '' \
+            '[model_providers.madapi]' \
+            'experimental_bearer_token = "old-secret"' \
+            > "$win_home/config.toml"
+          CODEX_HOME="$win_home" MADAPI_KEY='sk-ci-test-key' \
+            pwsh -NoProfile -File assets/mad-codex/install.ps1
+          test "$(grep -c '^\[model_providers.madapi\]$' "$win_home/config.toml")" -eq 1
+          test "$(grep -c '^\[model_providers.madapi.auth\]$' "$win_home/config.toml")" -eq 1
+          grep -q '^memories = true$' "$win_home/config.toml"
+          ! grep -q 'old-secret' "$win_home/config.toml"
+          find "$win_home" -maxdepth 1 -name 'config.toml.madapi-backup-*' | grep -q .
 
       - name: Test image response compatibility service
         run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'

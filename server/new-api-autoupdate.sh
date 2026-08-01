@@ -17,6 +17,7 @@ COMPAT_HEALTH_URL=http://127.0.0.1:3010/health
 HOME_DIR=/opt/mad-home
 HOME_STATE_FILE=/opt/new-api/mad-home-sha256.txt
 SELF_SCRIPT=/usr/local/sbin/new-api-autoupdate.sh
+CPA_DEPLOY_SCRIPT=/usr/local/sbin/cpa-codex-autodeploy.sh
 
 exec 9>"$LOCK_FILE"
 flock -n 9 || exit 0
@@ -25,7 +26,7 @@ work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 cache_bust=$(date +%s)
 
-for asset in mad-home.tar.gz new-api-autoupdate.sh; do
+for asset in mad-home.tar.gz new-api-autoupdate.sh cpa-codex-autodeploy.sh; do
   curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
     -o "$work_dir/$asset" "$RELEASE_BASE/$asset?cb=$cache_bust"
   curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
@@ -35,8 +36,10 @@ done
 cd "$work_dir"
 sha256sum -c mad-home.tar.gz.sha256
 sha256sum -c new-api-autoupdate.sh.sha256
+sha256sum -c cpa-codex-autodeploy.sh.sha256
 home_sha=$(awk '{print $1}' mad-home.tar.gz.sha256)
 self_sha=$(awk '{print $1}' new-api-autoupdate.sh.sha256)
+cpa_deploy_sha=$(awk '{print $1}' cpa-codex-autodeploy.sh.sha256)
 
 install_updater() {
   current_sha=''
@@ -47,6 +50,18 @@ install_updater() {
     [ ! -f "$SELF_SCRIPT" ] || cp -a "$SELF_SCRIPT" "$SELF_SCRIPT.bak"
     install -m 0755 "$work_dir/new-api-autoupdate.sh" "$SELF_SCRIPT"
     logger -t new-api-autoupdate "updater refreshed successfully: $self_sha"
+  fi
+}
+
+install_cpa_deployer() {
+  current_sha=''
+  if [ -f "$CPA_DEPLOY_SCRIPT" ]; then
+    current_sha=$(sha256sum "$CPA_DEPLOY_SCRIPT" | awk '{print $1}')
+  fi
+  if [ "$current_sha" != "$cpa_deploy_sha" ]; then
+    [ ! -f "$CPA_DEPLOY_SCRIPT" ] || cp -a "$CPA_DEPLOY_SCRIPT" "$CPA_DEPLOY_SCRIPT.bak"
+    install -m 0755 "$work_dir/cpa-codex-autodeploy.sh" "$CPA_DEPLOY_SCRIPT"
+    logger -t new-api-autoupdate "CPA Codex deployer refreshed successfully: $cpa_deploy_sha"
   fi
 }
 
@@ -83,6 +98,7 @@ fi
 
 if [ "${MAD_HOME_ONLY:-0}" = 1 ]; then
   install_updater
+  install_cpa_deployer
   logger -t new-api-autoupdate "homepage-only release completed: $home_sha"
   exit 0
 fi
@@ -147,6 +163,8 @@ if [ -f "$STATE_FILE" ] \
   && [ "$(cat "$STATE_FILE")" = "$release_sha" ] \
   && docker image inspect "$IMAGE" >/dev/null 2>&1; then
   install_updater
+  install_cpa_deployer
+  "$CPA_DEPLOY_SCRIPT"
   logger -t new-api-autoupdate "already current: $release_sha"
   exit 0
 fi
@@ -183,6 +201,8 @@ done
 if [ "$healthy" -eq 1 ]; then
   printf '%s\n' "$release_sha" > "$STATE_FILE"
   install_updater
+  install_cpa_deployer
+  "$CPA_DEPLOY_SCRIPT"
   logger -t new-api-autoupdate "release deployed successfully: $release_sha"
   exit 0
 fi

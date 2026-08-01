@@ -2,6 +2,7 @@
 set -eu
 
 installer_path=${1:?installer path is required}
+installer_path=$(CDPATH= cd -- "$(dirname -- "$installer_path")" && pwd)/$(basename -- "$installer_path")
 sandbox="$RUNNER_TEMP/mad-codex-macos-$$"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 catalog_fixture="$sandbox/catalog from any external tool.json"
@@ -20,6 +21,14 @@ run_installer() {
   key=$2
   cli=$3
   CODEX_HOME="$home" MADAPI_KEY="$key" CODEX_CLI_PATH="$cli" /bin/sh "$installer_path"
+}
+
+run_one_command() {
+  home=$1
+  key=$2
+  cli=$3
+  CODEX_HOME="$home" CODEX_CLI_PATH="$cli" /bin/sh -c \
+    "p=\$(mktemp) && trap 'rm -f \"\$p\"' EXIT && curl -fsSL 'file://$installer_path' -o \"\$p\" && MADAPI_KEY='$key' /bin/sh \"\$p\""
 }
 
 cleanup() {
@@ -147,7 +156,7 @@ grep -Fq 'model_provider = "custom"' "$recovery_home/config.toml" || fail 'Origi
 ! grep -Fq '[model_providers.madapi]' "$recovery_home/config.toml" || fail 'Temporary MadAPI provider identity remained after recovery.'
 
 fresh_home="$sandbox/fresh"
-run_installer "$fresh_home" 'sk-macos-fresh-key' "$codex_cli"
+run_one_command "$fresh_home" 'sk-macos-fresh-key' "$codex_cli"
 grep -Fq 'model_provider = "custom"' "$fresh_home/config.toml" || fail 'Fresh install did not use the proven custom provider identity.'
 grep -Fq 'name = "custom"' "$fresh_home/config.toml" || fail 'Fresh install did not use the proven custom provider display name.'
 ! grep -Fq 'experimental_bearer_token' "$fresh_home/config.toml" || fail 'Fresh install added conflicting direct bearer authentication.'

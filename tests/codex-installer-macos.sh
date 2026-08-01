@@ -2,6 +2,7 @@
 set -eu
 
 installer_path=${1:?installer path is required}
+installer_path=$(CDPATH= cd -- "$(dirname -- "$installer_path")" && pwd)/$(basename -- "$installer_path")
 sandbox="$RUNNER_TEMP/mad-codex-macos-$$"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 catalog_fixture="$sandbox/catalog from any external tool.json"

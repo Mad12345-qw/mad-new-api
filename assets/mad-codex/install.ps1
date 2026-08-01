@@ -7,6 +7,33 @@ function ConvertTo-TomlBasicString([string]$Value) {
     return '"' + $escaped + '"'
 }
 
+function Get-RootTomlString([string[]]$Lines, [string]$Key) {
+    foreach ($line in $Lines) {
+        if ($line -match '^\s*\[') {
+            break
+        }
+        if ($line -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*"([^"]+)"')) {
+            return $Matches[1]
+        }
+    }
+    return $null
+}
+
+function Get-ProviderDisplayName([string[]]$Lines, [string]$ProviderId) {
+    $targetSection = 'model_providers.' + $ProviderId
+    $currentSection = ''
+    foreach ($line in $Lines) {
+        if ($line -match '^\s*\[([^]]+)\]\s*(?:#.*)?$') {
+            $currentSection = $Matches[1].Trim()
+            continue
+        }
+        if ($currentSection -eq $targetSection -and $line -match '^\s*name\s*=\s*"([^"]+)"') {
+            return $Matches[1]
+        }
+    }
+    return $null
+}
+
 function Get-CodexCandidates {
     $candidates = New-Object 'System.Collections.Generic.List[string]'
 
@@ -124,16 +151,11 @@ $codexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) {
     [string]$env:CODEX_HOME
 }
 $configPath = Join-Path $codexHome 'config.toml'
-$keyPath = Join-Path $codexHome 'madapi.key'
 $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
-$tempKeyPath = Join-Path $codexHome ("madapi.key.$transactionId.tmp")
-$rollbackKeyPath = Join-Path $codexHome ("madapi.key.$transactionId.rollback")
 $backupPath = $null
 $hadConfig = Test-Path -LiteralPath $configPath
-$hadKey = Test-Path -LiteralPath $keyPath
 $configInstalled = $false
-$keyInstalled = $false
 
 New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
 
@@ -158,6 +180,33 @@ if ($hadConfig) {
     $sourceLines = @([IO.File]::ReadAllLines($configPath, $utf8Strict))
 }
 
+$providerSourceLines = $sourceLines
+$providerId = Get-RootTomlString $sourceLines 'model_provider'
+if ([string]::IsNullOrWhiteSpace($providerId) -or $providerId -eq 'madapi') {
+    $backupPattern = ([IO.Path]::GetFileName($configPath)) + '.madapi-backup-*'
+    foreach ($backup in @(Get-ChildItem -LiteralPath $codexHome -Filter $backupPattern -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
+        $backupLines = @([IO.File]::ReadAllLines($backup.FullName, $utf8Strict))
+        $candidate = Get-RootTomlString $backupLines 'model_provider'
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and $candidate -ne 'madapi') {
+            $providerId = $candidate
+            $providerSourceLines = $backupLines
+            break
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($providerId) -or @('openai', 'ollama', 'lmstudio', 'amazon-bedrock') -contains $providerId) {
+    $providerId = 'custom'
+    $providerSourceLines = @()
+}
+if ($providerId -notmatch '^[A-Za-z0-9_-]+$') {
+    throw 'The existing model provider identifier is not supported. No files were changed.'
+}
+$providerDisplayName = Get-ProviderDisplayName $providerSourceLines $providerId
+if ([string]::IsNullOrWhiteSpace($providerDisplayName)) {
+    $providerDisplayName = $providerId
+}
+$targetProviderSection = 'model_providers.' + $providerId
+
 $keptLines = New-Object 'System.Collections.Generic.List[string]'
 $currentSection = ''
 $skipMadApiSection = $false
@@ -172,7 +221,9 @@ foreach ($line in $sourceLines) {
         $currentSection = $Matches[1].Trim()
         $skipMadApiSection =
             $currentSection -eq 'model_providers.madapi' -or
-            $currentSection.StartsWith('model_providers.madapi.')
+            $currentSection.StartsWith('model_providers.madapi.') -or
+            $currentSection -eq $targetProviderSection -or
+            $currentSection.StartsWith($targetProviderSection + '.')
         if ($skipMadApiSection) {
             continue
         }
@@ -183,7 +234,7 @@ foreach ($line in $sourceLines) {
     }
 
     if ($currentSection -eq '') {
-        if ($line -match '^\s*(model_provider|model)\s*=') {
+        if ($line -match '^\s*(model_provider|model|model_catalog_json)\s*=') {
             continue
         }
         foreach ($name in @($preservedDefaults.Keys)) {
@@ -197,7 +248,7 @@ foreach ($line in $sourceLines) {
 }
 
 $headerLines = New-Object 'System.Collections.Generic.List[string]'
-$headerLines.Add('model_provider = "madapi"')
+$headerLines.Add('model_provider = ' + (ConvertTo-TomlBasicString $providerId))
 $headerLines.Add('model = "gpt-5.6-sol"')
 if (-not $preservedDefaults.model_reasoning_effort) {
     $headerLines.Add('model_reasoning_effort = "high"')
@@ -209,7 +260,6 @@ if (-not $preservedDefaults.disable_response_storage) {
     $headerLines.Add('disable_response_storage = true')
 }
 
-$authCommand = '$h=if([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)){Join-Path ([Environment]::GetFolderPath(''UserProfile'')) ''.codex''}else{[string]$env:CODEX_HOME};[Console]::Out.Write([IO.File]::ReadAllText((Join-Path $h ''madapi.key'')).Trim())'
 $configLines = New-Object 'System.Collections.Generic.List[string]'
 foreach ($line in $headerLines) {
     $configLines.Add($line)
@@ -219,41 +269,29 @@ foreach ($line in $keptLines) {
     $configLines.Add($line)
 }
 $configLines.Add('')
-$configLines.Add('[model_providers.madapi]')
-$configLines.Add('name = "MadAPI"')
+$configLines.Add('[' + $targetProviderSection + ']')
+$configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
 $configLines.Add('base_url = "https://mad.myddns.me/codex/v1"')
 $configLines.Add('wire_api = "responses"')
+$configLines.Add('requires_openai_auth = true')
+$configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
 $configLines.Add('supports_websockets = true')
 $configLines.Add('stream_idle_timeout_ms = 360000')
 $configLines.Add('request_max_retries = 0')
 $configLines.Add('context_window_override = 1048576')
-$configLines.Add('')
-$configLines.Add('[model_providers.madapi.auth]')
-$configLines.Add('command = "powershell.exe"')
-$configLines.Add('args = ["-NoProfile", "-Command", ' + (ConvertTo-TomlBasicString $authCommand) + ']')
-$configLines.Add('timeout_ms = 5000')
-$configLines.Add('refresh_interval_ms = 300000')
-
 try {
     [IO.File]::WriteAllText(
         $tempConfigPath,
         (($configLines -join [Environment]::NewLine).Trim() + [Environment]::NewLine),
         $utf8NoBom
     )
-    [IO.File]::WriteAllText($tempKeyPath, $apiKey, $utf8NoBom)
-    Protect-SecretFile $tempKeyPath
+    Protect-SecretFile $tempConfigPath
 
     if ($hadConfig) {
         $backupPath = '{0}.madapi-backup-{1}' -f $configPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
         [IO.File]::Copy($configPath, $backupPath, $false)
         Protect-SecretFile $backupPath
     }
-    if ($hadKey) {
-        Move-Item -LiteralPath $keyPath -Destination $rollbackKeyPath
-    }
-
-    Move-Item -LiteralPath $tempKeyPath -Destination $keyPath
-    $keyInstalled = $true
     Move-Item -LiteralPath $tempConfigPath -Destination $configPath -Force
     $configInstalled = $true
 
@@ -261,9 +299,6 @@ try {
         throw 'The generated MadAPI configuration could not be parsed by Codex.'
     }
 
-    if (Test-Path -LiteralPath $rollbackKeyPath) {
-        Remove-Item -LiteralPath $rollbackKeyPath -Force
-    }
 } catch {
     $failure = $_
     if ($configInstalled) {
@@ -273,15 +308,9 @@ try {
             Remove-Item -LiteralPath $configPath -Force
         }
     }
-    if ($keyInstalled -and (Test-Path -LiteralPath $keyPath)) {
-        Remove-Item -LiteralPath $keyPath -Force
-    }
-    if ($hadKey -and (Test-Path -LiteralPath $rollbackKeyPath)) {
-        Move-Item -LiteralPath $rollbackKeyPath -Destination $keyPath
-    }
     throw $failure
 } finally {
-    foreach ($path in @($tempConfigPath, $tempKeyPath, $rollbackKeyPath)) {
+    foreach ($path in @($tempConfigPath)) {
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force
         }

@@ -1,0 +1,650 @@
+diff --git a/controller/codex_catalog.go b/controller/codex_catalog.go
+index 333564b..da58d85 100644
+--- a/controller/codex_catalog.go
++++ b/controller/codex_catalog.go
+@@ -66,6 +66,28 @@ var codexValidatedImageInputModels = map[string]bool{
+ 	"kimi-k3":          true,
+ }
+ 
++var codexNativeSearchModels = map[string]bool{
++	"claude-fable-5":      true,
++	"claude-opus-4-8":     true,
++	"claude-opus-5":       true,
++	"deepseek-v4-flash":   true,
++	"gemini-3.6-flash":    true,
++	"glm-5-2":             true,
++	"gpt-5.5":             true,
++	"gpt-5.6-luna":        true,
++	"gpt-5.6-sol":         true,
++	"gpt-5.6-terra":       true,
++	"grok-4.5":            true,
++	"qwen3.8-max-preview": true,
++}
++
++var codexNativeVerbosityModels = map[string]bool{
++	"gpt-5.5":       true,
++	"gpt-5.6-luna":  true,
++	"gpt-5.6-sol":   true,
++	"gpt-5.6-terra": true,
++}
++
+ // These aliases are absent from CPA's pinned static snapshot but are documented
+ // by their vendors. The MadAPI channel mapping is responsible for translating
+ // glm-5-2 to the official glm-5.2 identifier.
+@@ -202,7 +224,7 @@ func codexReasoningLevels(info *codexCPAModelInfo) ([]any, string) {
+ 		if defaultLevel == "" && level != "none" {
+ 			defaultLevel = level
+ 		}
+-		if level == "medium" {
++		if level == "high" {
+ 			defaultLevel = level
+ 		}
+ 	}
+@@ -218,9 +240,11 @@ func codexReasoningLevels(info *codexCPAModelInfo) ([]any, string) {
+ func applyCodexCPACapabilities(entry map[string]any, candidate dto.OpenAIModels) {
+ 	entry["comp_hash"] = "madapi-cpa-d9460a8"
+ 	info := codexCatalogModel(candidate)
++	entry["supports_search_tool"] = codexNativeSearchModels[strings.ToLower(strings.TrimSpace(candidate.Id))]
+ 	if info == nil {
+ 		return
+ 	}
++	entry["support_verbosity"] = codexNativeVerbosityModels[strings.ToLower(strings.TrimSpace(candidate.Id))]
+ 	if value := strings.TrimSpace(info.DisplayName); value != "" {
+ 		entry["display_name"] = value
+ 	}
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+index 95115d8..9fd833f 100644
+--- a/controller/codex_compat.go
++++ b/controller/codex_compat.go
+@@ -131,6 +131,11 @@ func CodexResponses(c *gin.Context) {
+ 		return
+ 	}
+ 	normalizeCodexDeveloperMessages(&chatReq)
++	normalizeCodexVerbosity(&chatReq)
++	if err = normalizeCodexNativeSearch(&chatReq); err != nil {
++		codexCompatibilityError(c, http.StatusBadRequest, err)
++		return
++	}
+ 	normalizeCodexGLMToolChoice(&chatReq)
+ 	if stream {
+ 		chatReq.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
+@@ -335,6 +340,54 @@ func normalizeCodexDeveloperMessages(request *dto.GeneralOpenAIRequest) {
+ 	}
+ }
+ 
++func normalizeCodexVerbosity(request *dto.GeneralOpenAIRequest) {
++	if request == nil || len(request.Verbosity) == 0 {
++		return
++	}
++	modelName := strings.ToLower(strings.TrimSpace(request.Model))
++	if codexCatalogModel(dto.OpenAIModels{Id: modelName}) != nil && !codexNativeVerbosityModels[modelName] {
++		request.Verbosity = nil
++	}
++}
++
++func normalizeCodexNativeSearch(request *dto.GeneralOpenAIRequest) error {
++	if request == nil || request.WebSearchOptions == nil {
++		return nil
++	}
++
++	modelName := strings.ToLower(strings.TrimSpace(request.Model))
++	if !codexNativeSearchModels[modelName] {
++		return fmt.Errorf("model %q does not support vendor-native web search through Codex", request.Model)
++	}
++
++	switch modelName {
++	case "gemini-3.6-flash":
++		found := false
++		for _, tool := range request.Tools {
++			if tool.Type == "function" && tool.Function.Name == "googleSearch" {
++				found = true
++				break
++			}
++		}
++		if !found {
++			request.Tools = append(request.Tools, dto.ToolCallRequest{
++				Type:     "function",
++				Function: dto.FunctionRequest{Name: "googleSearch"},
++			})
++		}
++		request.WebSearchOptions = nil
++	case "qwen3.8-max-preview":
++		request.EnableSearch = json.RawMessage("true")
++		request.WebSearchOptions = nil
++	case "glm-5-2":
++		request.WebSearch = json.RawMessage(`{"enable":true}`)
++		request.WebSearchOptions = nil
++	case "grok-4.5":
++		request.SearchParameters = json.RawMessage(`{"mode":"on"}`)
++	}
++	return nil
++}
++
+ func normalizeCodexGLMToolChoice(request *dto.GeneralOpenAIRequest) {
+ 	if request == nil || !strings.EqualFold(strings.TrimSpace(request.Model), "glm-5-2") || lo.FromPtrOr(request.Stream, false) {
+ 		return
+@@ -405,30 +458,36 @@ func isCodexConversationModel(candidate dto.OpenAIModels, textPricing map[string
+ func buildCodexModel(candidate dto.OpenAIModels, index int) map[string]any {
+ 	displayName := strings.TrimSpace(candidate.Id)
+ 	entry := map[string]any{
+-		"slug":                                 candidate.Id,
+-		"display_name":                         displayName,
+-		"description":                          "Available through MadAPI: " + displayName,
+-		"prefer_websockets":                    false,
+-		"support_verbosity":                    false,
+-		"default_verbosity":                    "low",
+-		"web_search_tool_type":                 "text_and_image",
+-		"input_modalities":                     []string{"text"},
+-		"supports_image_detail_original":       false,
+-		"truncation_policy":                    map[string]any{"mode": "tokens", "limit": 10000},
+-		"supports_parallel_tool_calls":         true,
+-		"tool_mode":                            nil,
+-		"multi_agent_version":                  nil,
+-		"use_responses_lite":                   false,
+-		"include_skills_usage_instructions":    true,
+-		"auto_review_model_override":           nil,
+-		"context_window":                       128000,
+-		"max_context_window":                   128000,
+-		"auto_compact_token_limit":             nil,
+-		"comp_hash":                            "madapi-codex-compat-v1",
+-		"reasoning_summary_format":             "none",
+-		"default_reasoning_summary":            "none",
+-		"default_reasoning_level":              "none",
+-		"supported_reasoning_levels":           []any{map[string]any{"effort": "none", "description": "Uses the model's default reasoning behavior"}},
++		"slug":                              candidate.Id,
++		"display_name":                      displayName,
++		"description":                       "Available through MadAPI: " + displayName,
++		"prefer_websockets":                 false,
++		"support_verbosity":                 true,
++		"default_verbosity":                 "medium",
++		"web_search_tool_type":              "text_and_image",
++		"input_modalities":                  []string{"text"},
++		"supports_image_detail_original":    false,
++		"truncation_policy":                 map[string]any{"mode": "tokens", "limit": 10000},
++		"supports_parallel_tool_calls":      true,
++		"tool_mode":                         nil,
++		"multi_agent_version":               nil,
++		"use_responses_lite":                false,
++		"include_skills_usage_instructions": true,
++		"auto_review_model_override":        nil,
++		"context_window":                    1000000,
++		"max_context_window":                1000000,
++		"auto_compact_token_limit":          nil,
++		"comp_hash":                         "madapi-codex-compat-v1",
++		"reasoning_summary_format":          "none",
++		"default_reasoning_summary":         "none",
++		"default_reasoning_level":           "high",
++		"supported_reasoning_levels": []any{
++			map[string]any{"effort": "low", "description": codexReasoningDescription("low")},
++			map[string]any{"effort": "medium", "description": codexReasoningDescription("medium")},
++			map[string]any{"effort": "high", "description": codexReasoningDescription("high")},
++			map[string]any{"effort": "xhigh", "description": codexReasoningDescription("xhigh")},
++			map[string]any{"effort": "max", "description": codexReasoningDescription("max")},
++		},
+ 		"shell_type":                           "shell_command",
+ 		"visibility":                           "list",
+ 		"minimal_client_version":               "0.0.0",
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index 53541f1..7bb9c48 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -69,7 +69,9 @@ func TestCodexListModelsUsesExistingTextPricingAndEndpointMetadata(t *testing.T)
+ 	require.Equal(t, "claude-opus-test", model["slug"])
+ 	require.Equal(t, "list", model["visibility"])
+ 	require.Equal(t, false, model["prefer_websockets"])
+-	require.Equal(t, "none", model["default_reasoning_level"])
++	require.Equal(t, "high", model["default_reasoning_level"])
++	require.Equal(t, true, model["support_verbosity"])
++	require.Equal(t, "medium", model["default_verbosity"])
+ 	require.NotEmpty(t, model["supported_reasoning_levels"])
+ 	require.NotEmpty(t, model["model_messages"])
+ }
+@@ -84,7 +86,8 @@ func TestBuildCodexModelUsesPinnedCPACapabilityMetadata(t *testing.T) {
+ 	require.Equal(t, 1000000, model["context_window"])
+ 	require.Equal(t, []string{"text", "image"}, model["input_modalities"])
+ 	require.Equal(t, true, model["supports_image_detail_original"])
+-	require.Equal(t, "medium", model["default_reasoning_level"])
++	require.Equal(t, false, model["support_verbosity"])
++	require.Equal(t, "high", model["default_reasoning_level"])
+ 	levels, ok := model["supported_reasoning_levels"].([]any)
+ 	require.True(t, ok)
+ 	require.Len(t, levels, 5)
+@@ -97,17 +100,21 @@ func TestBuildCodexModelUsesMostCompleteCPAEntryForGemini(t *testing.T) {
+ 	require.Equal(t, 1048576, model["context_window"])
+ 	require.Equal(t, 65536, model["max_completion_tokens"])
+ 	require.Equal(t, []string{"text", "image"}, model["input_modalities"])
+-	require.Equal(t, "medium", model["default_reasoning_level"])
++	require.Equal(t, "high", model["default_reasoning_level"])
+ }
+ 
+-func TestBuildCodexModelKeepsUnknownModelsConservative(t *testing.T) {
++func TestBuildCodexModelUsesHighEndDefaultsForUnknownModels(t *testing.T) {
+ 	model := buildCodexModel(dto.OpenAIModels{Id: "future-text-model"}, 0)
+ 
+-	require.Equal(t, 128000, model["context_window"])
++	require.Equal(t, 1000000, model["context_window"])
++	require.Equal(t, 1000000, model["max_context_window"])
+ 	require.Equal(t, []string{"text"}, model["input_modalities"])
+-	require.Equal(t, "none", model["default_reasoning_level"])
++	require.Equal(t, "high", model["default_reasoning_level"])
++	require.Equal(t, true, model["support_verbosity"])
++	require.Equal(t, "medium", model["default_verbosity"])
+ 	require.Equal(t, false, model["supports_search_tool"])
+ 	require.Equal(t, false, model["prefer_websockets"])
++	require.Empty(t, model["service_tiers"])
+ }
+ 
+ func TestBuildCodexModelUsesOfficialCapabilitiesMissingFromCPA(t *testing.T) {
+@@ -124,10 +131,78 @@ func TestBuildCodexModelUsesOfficialCapabilitiesMissingFromCPA(t *testing.T) {
+ 	require.Equal(t, "high", glm["default_reasoning_level"])
+ 
+ 	qwenAlias := buildCodexModel(dto.OpenAIModels{Id: "qwen3.8-max-preview"}, 0)
+-	require.Equal(t, 128000, qwenAlias["context_window"])
++	require.Equal(t, 1000000, qwenAlias["context_window"])
+ 	require.Equal(t, "high", qwenAlias["default_reasoning_level"])
+ }
+ 
++func TestBuildCodexModelAdvertisesOnlyImplementedNativeSearch(t *testing.T) {
++	for _, modelName := range []string{
++		"gpt-5.5", "claude-opus-5", "gemini-3.6-flash", "grok-4.5",
++		"deepseek-v4-flash", "glm-5-2", "qwen3.8-max-preview",
++	} {
++		model := buildCodexModel(dto.OpenAIModels{Id: modelName}, 0)
++		require.Equal(t, true, model["supports_search_tool"], modelName)
++	}
++	for _, modelName := range []string{"deepseek-v4-pro", "kimi-k3", "future-text-model"} {
++		model := buildCodexModel(dto.OpenAIModels{Id: modelName}, 0)
++		require.Equal(t, false, model["supports_search_tool"], modelName)
++	}
++}
++
++func TestNormalizeCodexNativeSearchUsesVendorFields(t *testing.T) {
++	newRequest := func(modelName string) *dto.GeneralOpenAIRequest {
++		return &dto.GeneralOpenAIRequest{
++			Model: modelName,
++			WebSearchOptions: &dto.WebSearchOptions{
++				SearchContextSize: "high",
++			},
++		}
++	}
++
++	gpt := newRequest("gpt-5.5")
++	require.NoError(t, normalizeCodexNativeSearch(gpt))
++	require.NotNil(t, gpt.WebSearchOptions)
++
++	claude := newRequest("claude-opus-5")
++	require.NoError(t, normalizeCodexNativeSearch(claude))
++	require.NotNil(t, claude.WebSearchOptions)
++
++	gemini := newRequest("gemini-3.6-flash")
++	require.NoError(t, normalizeCodexNativeSearch(gemini))
++	require.Nil(t, gemini.WebSearchOptions)
++	require.Len(t, gemini.Tools, 1)
++	require.Equal(t, "googleSearch", gemini.Tools[0].Function.Name)
++
++	grok := newRequest("grok-4.5")
++	require.NoError(t, normalizeCodexNativeSearch(grok))
++	require.JSONEq(t, `{"mode":"on"}`, string(grok.SearchParameters))
++	require.NotNil(t, grok.WebSearchOptions)
++
++	qwen := newRequest("qwen3.8-max-preview")
++	require.NoError(t, normalizeCodexNativeSearch(qwen))
++	require.Equal(t, "true", string(qwen.EnableSearch))
++	require.Nil(t, qwen.WebSearchOptions)
++
++	glm := newRequest("glm-5-2")
++	require.NoError(t, normalizeCodexNativeSearch(glm))
++	require.Nil(t, glm.WebSearchOptions)
++	require.Empty(t, glm.Tools)
++	require.JSONEq(t, `{"enable":true}`, string(glm.WebSearch))
++}
++
++func TestNormalizeCodexVerbosityKeepsOnlyNativeOrUnknownModels(t *testing.T) {
++	for _, modelName := range []string{"gpt-5.5", "future-text-model"} {
++		request := &dto.GeneralOpenAIRequest{Model: modelName, Verbosity: json.RawMessage(`"medium"`)}
++		normalizeCodexVerbosity(request)
++		require.JSONEq(t, `"medium"`, string(request.Verbosity), modelName)
++	}
++	for _, modelName := range []string{"claude-opus-5", "gemini-3.6-flash", "deepseek-v4-flash", "grok-4.5", "glm-5-2", "qwen3.8-max-preview"} {
++		request := &dto.GeneralOpenAIRequest{Model: modelName, Verbosity: json.RawMessage(`"medium"`)}
++		normalizeCodexVerbosity(request)
++		require.Empty(t, request.Verbosity, modelName)
++	}
++}
++
+ func TestCodexResponsesDelegatesArbitraryModelsThroughExistingChatRoute(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	modelNames := []string{"claude-opus-test", "gemini-flash-test"}
+@@ -206,6 +281,8 @@ func TestCodexResponsesUsesCPAForResponsesOnlyAndNamespaceTools(t *testing.T) {
+ 		var request dto.GeneralOpenAIRequest
+ 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+ 		require.Len(t, request.Tools, 2)
++		require.NotNil(t, request.WebSearchOptions)
++		require.Equal(t, "medium", request.WebSearchOptions.SearchContextSize)
+ 		for _, tool := range request.Tools {
+ 			require.Equal(t, "function", tool.Type)
+ 		}
+@@ -216,10 +293,10 @@ func TestCodexResponsesUsesCPAForResponsesOnlyAndNamespaceTools(t *testing.T) {
+ 
+ 		w.Header().Set("Content-Type", "application/json")
+ 		_, _ = io.WriteString(w, `{"id":"chatcmpl-tool","object":"chat.completion","created":1,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_get_me","type":"function","function":{"name":"mcp__github__get_me","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}`)
+-	}), "gpt-test")
++	}), "gpt-5.5")
+ 
+ 	body := `{
+-		"model":"gpt-test",
++		"model":"gpt-5.5",
+ 		"input":[
+ 			{"role":"user","content":"use get_me"},
+ 			{"type":"additional_tools","tools":[{"type":"namespace","name":"terminal","tools":[{"type":"custom","name":"exec"}]}]}
+@@ -253,6 +330,30 @@ func TestCodexResponsesUsesCPAForResponsesOnlyAndNamespaceTools(t *testing.T) {
+ 	require.Equal(t, "mcp__github", response.Output[0].Namespace)
+ }
+ 
++func TestCodexResponsesRejectsUnsupportedNativeSearchBeforeInnerRequest(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		w.WriteHeader(http.StatusInternalServerError)
++	}), "kimi-k3", "deepseek-v4-pro")
++
++	for _, modelName := range []string{"kimi-k3", "deepseek-v4-pro"} {
++		recorder := httptest.NewRecorder()
++		c, _ := gin.CreateTestContext(recorder)
++		body := fmt.Sprintf(`{"model":%q,"input":"search","tools":[{"type":"web_search"}],"stream":false}`, modelName)
++		c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(body))
++		c.Request.Header.Set("Authorization", "Bearer test-token")
++		c.Request.Header.Set("Content-Type", "application/json")
++
++		CodexResponses(c)
++
++		require.Equal(t, http.StatusBadRequest, recorder.Code, modelName)
++		require.Contains(t, recorder.Body.String(), "does not support vendor-native web search", modelName)
++	}
++	require.Equal(t, int32(0), calls.Load())
++}
++
+ func TestNormalizeCodexGLMToolChoiceForNonStreamingRequests(t *testing.T) {
+ 	streamFalse := false
+ 	tools := []dto.ToolCallRequest{{Type: "function"}}
+diff --git a/relay/channel/zhipu_4v/relay-zhipu_v4.go b/relay/channel/zhipu_4v/relay-zhipu_v4.go
+index 91ef0c4..0437cc5 100644
+--- a/relay/channel/zhipu_4v/relay-zhipu_v4.go
++++ b/relay/channel/zhipu_4v/relay-zhipu_v4.go
+@@ -3,10 +3,11 @@ package zhipu_4v
+ import (
+ 	"strings"
+ 
++	"github.com/QuantumNous/new-api/common"
+ 	"github.com/QuantumNous/new-api/dto"
+ )
+ 
+-func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) *dto.GeneralOpenAIRequest {
++func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) any {
+ 	messages := make([]dto.Message, 0, len(request.Messages))
+ 	for _, message := range request.Messages {
+ 		if !message.IsStringContent() {
+@@ -56,5 +57,17 @@ func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) *dto.GeneralOpenAIReq
+ 		maxTokens := request.GetMaxTokens()
+ 		out.MaxTokens = &maxTokens
+ 	}
++	if len(request.WebSearch) > 0 {
++		var webSearch any
++		if common.Unmarshal(request.WebSearch, &webSearch) == nil {
++			toMap := out.ToMap()
++			tools, _ := toMap["tools"].([]any)
++			toMap["tools"] = append(tools, map[string]any{
++				"type":       "web_search",
++				"web_search": webSearch,
++			})
++			return toMap
++		}
++	}
+ 	return out
+ }
+diff --git a/relay/channel/zhipu_4v/relay-zhipu_v4_test.go b/relay/channel/zhipu_4v/relay-zhipu_v4_test.go
+new file mode 100644
+index 0000000..11a3e29
+--- /dev/null
++++ b/relay/channel/zhipu_4v/relay-zhipu_v4_test.go
+@@ -0,0 +1,32 @@
++package zhipu_4v
++
++import (
++	"encoding/json"
++	"testing"
++
++	"github.com/QuantumNous/new-api/dto"
++	"github.com/stretchr/testify/require"
++	"github.com/tidwall/gjson"
++)
++
++func TestRequestOpenAI2ZhipuBuildsNativeWebSearchTool(t *testing.T) {
++	converted := requestOpenAI2Zhipu(dto.GeneralOpenAIRequest{
++		Model:     "glm-5-2",
++		WebSearch: json.RawMessage(`{"enable":true}`),
++		Tools: []dto.ToolCallRequest{{
++			Type: "function",
++			Function: dto.FunctionRequest{
++				Name:       "lookup",
++				Parameters: map[string]any{"type": "object"},
++			},
++		}},
++	})
++
++	raw, err := json.Marshal(converted)
++	require.NoError(t, err)
++	require.Equal(t, int64(2), gjson.GetBytes(raw, "tools.#").Int())
++	require.Equal(t, "lookup", gjson.GetBytes(raw, "tools.0.function.name").String())
++	require.Equal(t, "web_search", gjson.GetBytes(raw, "tools.1.type").String())
++	require.True(t, gjson.GetBytes(raw, "tools.1.web_search.enable").Bool())
++	require.False(t, gjson.GetBytes(raw, "tools.1.function").Exists())
++}
+diff --git a/service/relayconvert/internal/cpa_responses/request.go b/service/relayconvert/internal/cpa_responses/request.go
+index 150dd5d..18602bd 100644
+--- a/service/relayconvert/internal/cpa_responses/request.go
++++ b/service/relayconvert/internal/cpa_responses/request.go
+@@ -49,6 +49,9 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
+ 	if maxTokens := root.Get("max_output_tokens"); maxTokens.Exists() {
+ 		out, _ = sjson.SetBytes(out, "max_tokens", maxTokens.Int())
+ 	}
++	if verbosity := root.Get("text.verbosity"); verbosity.Exists() {
++		out, _ = sjson.SetBytes(out, "verbosity", verbosity.String())
++	}
+ 
+ 	// Convert instructions to system message
+ 	if instructions := root.Get("instructions"); instructions.Exists() {
+@@ -304,11 +307,22 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
+ 	// "additional_tools" input item instead of the top-level "tools" field,
+ 	// so merge both sources.
+ 	var chatCompletionsTools []interface{}
++	var webSearchOptions []byte
+ 	appendChatTools := func(tools gjson.Result) {
+ 		if !tools.Exists() || !tools.IsArray() {
+ 			return
+ 		}
+ 		tools.ForEach(func(_, tool gjson.Result) bool {
++			switch strings.TrimSpace(tool.Get("type").String()) {
++			case "web_search", "web_search_preview":
++				webSearchOptions = []byte(`{"search_context_size":"medium"}`)
++				if size := strings.TrimSpace(tool.Get("search_context_size").String()); size != "" {
++					webSearchOptions, _ = sjson.SetBytes(webSearchOptions, "search_context_size", size)
++				}
++				if location := tool.Get("user_location"); location.Exists() {
++					webSearchOptions, _ = sjson.SetRawBytes(webSearchOptions, "user_location", []byte(location.Raw))
++				}
++			}
+ 			for _, chatTool := range convertResponsesToolToOpenAIChatTools(tool) {
+ 				chatCompletionsTools = append(chatCompletionsTools, gjson.ParseBytes(chatTool).Value())
+ 			}
+@@ -324,6 +338,9 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
+ 			return true
+ 		})
+ 	}
++	if len(webSearchOptions) > 0 {
++		out, _ = sjson.SetRawBytes(out, "web_search_options", webSearchOptions)
++	}
+ 	if len(chatCompletionsTools) > 0 {
+ 		out, _ = sjson.SetBytes(out, "tools", chatCompletionsTools)
+ 		if parallelToolCalls := root.Get("parallel_tool_calls"); parallelToolCalls.Exists() {
+diff --git a/service/relayconvert/internal/cpa_responses/request_test.go b/service/relayconvert/internal/cpa_responses/request_test.go
+index b04b302..3f794e4 100644
+--- a/service/relayconvert/internal/cpa_responses/request_test.go
++++ b/service/relayconvert/internal/cpa_responses/request_test.go
+@@ -275,6 +275,35 @@ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_FlattensNamespaceT
+ 	}
+ }
+ 
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesWebSearchAndVerbosity(t *testing.T) {
++	raw := []byte(`{
++		"input":[{"role":"user","content":"Search current facts"}],
++		"text":{"verbosity":"medium"},
++		"tools":[
++			{"type":"web_search","search_context_size":"high","user_location":{"type":"approximate","country":"CN"}},
++			{"type":"namespace","name":"mcp__test","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
++		]
++	}`)
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("gpt-5.5", raw, false)
++
++	if got := gjson.GetBytes(out, "verbosity").String(); got != "medium" {
++		t.Fatalf("verbosity = %q, want medium; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "web_search_options.search_context_size").String(); got != "high" {
++		t.Fatalf("search context size = %q, want high; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "web_search_options.user_location.country").String(); got != "CN" {
++		t.Fatalf("search country = %q, want CN; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "tools.#").Int(); got != 1 {
++		t.Fatalf("function tools count = %d, want 1; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "tools.0.function.name").String(); got != "mcp__test__lookup" {
++		t.Fatalf("function tool name = %q, want mcp__test__lookup; output=%s", got, out)
++	}
++}
++
+ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_QualifiesNamespaceFunctionCallHistory(t *testing.T) {
+ 	raw := []byte(`{
+ 		"input": [
+diff --git a/service/relayconvert/internal/oai_chat/to_oai_responses_req.go b/service/relayconvert/internal/oai_chat/to_oai_responses_req.go
+index 0da9f44..d2797dc 100644
+--- a/service/relayconvert/internal/oai_chat/to_oai_responses_req.go
++++ b/service/relayconvert/internal/oai_chat/to_oai_responses_req.go
+@@ -35,16 +35,18 @@ func normalizeChatImageURLToString(v any) any {
+ 	}
+ }
+ 
+-func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) json.RawMessage {
+-	if reqFormat == nil || strings.TrimSpace(reqFormat.Type) == "" {
++func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat, verbosity json.RawMessage) json.RawMessage {
++	if (reqFormat == nil || strings.TrimSpace(reqFormat.Type) == "") && len(verbosity) == 0 {
+ 		return nil
+ 	}
+ 
+-	format := map[string]any{
+-		"type": reqFormat.Type,
++	text := make(map[string]any)
++	format := make(map[string]any)
++	if reqFormat != nil && strings.TrimSpace(reqFormat.Type) != "" {
++		format["type"] = reqFormat.Type
+ 	}
+ 
+-	if reqFormat.Type == "json_schema" && len(reqFormat.JsonSchema) > 0 {
++	if reqFormat != nil && reqFormat.Type == "json_schema" && len(reqFormat.JsonSchema) > 0 {
+ 		var chatSchema map[string]any
+ 		if err := common.Unmarshal(reqFormat.JsonSchema, &chatSchema); err == nil {
+ 			for key, value := range chatSchema {
+@@ -66,10 +68,17 @@ func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) jso
+ 			format["json_schema"] = reqFormat.JsonSchema
+ 		}
+ 	}
++	if len(format) > 0 {
++		text["format"] = format
++	}
++	if len(verbosity) > 0 {
++		var value any
++		if common.Unmarshal(verbosity, &value) == nil {
++			text["verbosity"] = value
++		}
++	}
+ 
+-	textRaw, _ := common.Marshal(map[string]any{
+-		"format": format,
+-	})
++	textRaw, _ := common.Marshal(text)
+ 	return textRaw
+ }
+ 
+@@ -286,8 +295,8 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
+ 	}
+ 
+ 	var toolsRaw json.RawMessage
+-	if req.Tools != nil {
+-		tools := make([]map[string]any, 0, len(req.Tools))
++	if req.Tools != nil || req.WebSearchOptions != nil {
++		tools := make([]map[string]any, 0, len(req.Tools)+1)
+ 		for _, tool := range req.Tools {
+ 			switch tool.Type {
+ 			case "function":
+@@ -309,6 +318,19 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
+ 				tools = append(tools, m)
+ 			}
+ 		}
++		if req.WebSearchOptions != nil {
++			webSearch := map[string]any{"type": "web_search"}
++			if size := strings.TrimSpace(req.WebSearchOptions.SearchContextSize); size != "" {
++				webSearch["search_context_size"] = size
++			}
++			if len(req.WebSearchOptions.UserLocation) > 0 {
++				var location any
++				if common.Unmarshal(req.WebSearchOptions.UserLocation, &location) == nil {
++					webSearch["user_location"] = location
++				}
++			}
++			tools = append(tools, webSearch)
++		}
+ 		toolsRaw, _ = common.Marshal(tools)
+ 	}
+ 
+@@ -355,7 +377,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
+ 		parallelToolCallsRaw, _ = common.Marshal(*req.ParallelTooCalls)
+ 	}
+ 
+-	textRaw := convertChatResponseFormatToResponsesText(req.ResponseFormat)
++	textRaw := convertChatResponseFormatToResponsesText(req.ResponseFormat, req.Verbosity)
+ 
+ 	maxOutputTokens := lo.FromPtrOr(req.MaxTokens, uint(0))
+ 	maxCompletionTokens := lo.FromPtrOr(req.MaxCompletionTokens, uint(0))
+diff --git a/service/relayconvert/internal/oai_chat/to_oai_responses_req_test.go b/service/relayconvert/internal/oai_chat/to_oai_responses_req_test.go
+index 1637603..cb934b2 100644
+--- a/service/relayconvert/internal/oai_chat/to_oai_responses_req_test.go
++++ b/service/relayconvert/internal/oai_chat/to_oai_responses_req_test.go
+@@ -37,6 +37,26 @@ func TestChatCompletionsRequestToResponsesRequestInstructionsAndTools(t *testing
+ 	assert.Equal(t, "function_call_output", gjson.GetBytes(got.Input, "3.type").String())
+ }
+ 
++func TestChatCompletionsRequestToResponsesRequestPreservesNativeSearchAndVerbosity(t *testing.T) {
++	req := &dto.GeneralOpenAIRequest{
++		Model:     "gpt-5.5",
++		Messages:  []dto.Message{{Role: "user", Content: "Search current facts"}},
++		Verbosity: []byte(`"medium"`),
++		WebSearchOptions: &dto.WebSearchOptions{
++			SearchContextSize: "high",
++			UserLocation:      []byte(`{"type":"approximate","country":"CN"}`),
++		},
++	}
++
++	got, err := ChatCompletionsRequestToResponsesRequest(req)
++	require.NoError(t, err)
++
++	assert.Equal(t, "medium", gjson.GetBytes(got.Text, "verbosity").String())
++	assert.Equal(t, "web_search", gjson.GetBytes(got.Tools, "0.type").String())
++	assert.Equal(t, "high", gjson.GetBytes(got.Tools, "0.search_context_size").String())
++	assert.Equal(t, "CN", gjson.GetBytes(got.Tools, "0.user_location.country").String())
++}
++
+ func TestChatCompletionsRequestToResponsesRequestRejectsMultipleChoices(t *testing.T) {
+ 	_, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+ 		Model: "gpt-test",

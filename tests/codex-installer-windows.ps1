@@ -292,7 +292,14 @@ exit 0
 
     Write-Host 'Windows PowerShell 5.1 Codex installer acceptance passed.'
 } finally {
+    for ($attempt = 0; $attempt -lt 10 -and (Test-Path -LiteralPath $sandbox); $attempt++) {
+        try {
+            [IO.Directory]::Delete($sandbox, $true)
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
     if (Test-Path -LiteralPath $sandbox) {
-        [IO.Directory]::Delete($sandbox, $true)
+        Write-Warning "Codex left a transient lock in the runner temp directory: $sandbox"
     }
 }

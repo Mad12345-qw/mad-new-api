@@ -37,6 +37,8 @@ home="$sandbox/complex"
 session_dir="$home/sessions/2026/08/01"
 mkdir -p "$session_dir"
 config_path="$home/config.toml"
+key_path="$home/madapi.key"
+models_cache_path="$home/models_cache.json"
 session_path="$session_dir/sentinel.jsonl"
 cat > "$config_path" <<EOF
 model_provider = "custom"
@@ -71,6 +73,7 @@ enabled = true
 command = '/usr/local/bin/node_repl'
 args = []
 EOF
+printf '%s' '{"models":[{"slug":"stale-gpt-only"}]}' > "$models_cache_path"
 printf '%s' '{"type":"sentinel"}' > "$session_path"
 config_hash=$(hash_file "$config_path")
 session_hash=$(hash_file "$session_path")
@@ -85,30 +88,32 @@ grep -Fq '[plugins."github@openai-curated"]' "$config_path" || fail 'Plugin conf
 grep -Fq '[mcp_servers.node_repl]' "$config_path" || fail 'MCP configuration was not preserved.'
 grep -Fq 'model_reasoning_effort = "medium"' "$config_path" || fail 'Existing reasoning effort was overwritten.'
 ! grep -Fq 'old-secret' "$config_path" || fail 'Old MadAPI secret remained in config.toml.'
-grep -Fq 'experimental_bearer_token = "sk-macos-first-key"' "$config_path" || fail 'API key was not written into the active provider.'
-[ "$(grep -c '^experimental_bearer_token = "sk-macos-first-key"$' "$config_path")" -eq 1 ] || fail 'API key was written more than once.'
-! grep -Fq 'madapi.key' "$config_path" || fail 'Obsolete key-file authentication remained configured.'
+! grep -Fq 'experimental_bearer_token' "$config_path" || fail 'Conflicting direct bearer authentication remained configured.'
+! grep -Fq 'requires_openai_auth' "$config_path" || fail 'Conflicting OpenAI authentication remained configured.'
+grep -Fq '[model_providers.custom.auth]' "$config_path" || fail 'Dynamic catalog command authentication was not configured.'
+grep -Fq 'madapi.key' "$config_path" || fail 'Dynamic catalog authentication does not read the protected MadAPI key.'
+[ "$(cat "$key_path")" = 'sk-macos-first-key' ] || fail 'Protected dynamic catalog key was not written correctly.'
+[ ! -e "$models_cache_path" ] || fail 'Stale model cache was not cleared.'
 ! grep -Eq "^[[:space:]]*(model_catalog_json|\"model_catalog_json\"|'model_catalog_json')[[:space:]]*=" "$config_path" || fail 'An external static model catalog remained active.'
 [ -f "$catalog_fixture" ] || fail 'The external catalog file was deleted instead of only removing its config reference.'
-! grep -Fq '[model_providers.custom.auth]' "$config_path" || fail 'Command-backed authentication remained configured.'
 ! grep -Fq 'supports_websockets' "$config_path" || fail 'Unverified WebSocket support was enabled.'
 grep -Fq 'disable_response_storage = true' "$config_path" || fail 'The existing response-storage preference was not preserved.'
 grep -Fq 'stream_idle_timeout_ms = 360000' "$config_path" || fail 'Stable 360 second stream timeout was not configured.'
 grep -Fq 'request_max_retries = 3' "$config_path" || fail 'Stable request retry count was not configured.'
-grep -Fq 'requires_openai_auth = true' "$config_path" || fail 'Remote model catalog authentication was not enabled.'
 [ "$(hash_file "$session_path")" = "$session_hash" ] || fail 'Session data changed.'
 
 backup=$(find "$home" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
 [ -n "$backup" ] || fail 'Config backup was not created.'
 [ "$(hash_file "$backup")" = "$config_hash" ] || fail 'Backup is not byte-identical to the original config.'
 [ "$(stat -f '%Lp' "$config_path")" = '600' ] || fail 'Config containing the API key permissions are not 600.'
+[ "$(stat -f '%Lp' "$key_path")" = '600' ] || fail 'Protected dynamic catalog key permissions are not 600.'
 CODEX_HOME="$home" "$codex_cli" features list >/dev/null
 
 sleep 1
 run_installer "$home" 'sk-macos-second-key' "$codex_cli"
 [ "$(grep -c '^\[model_providers\.custom\]$' "$config_path")" -eq 1 ] || fail 'Duplicate provider section was created.'
-[ "$(grep -c '^experimental_bearer_token = "sk-macos-second-key"$' "$config_path")" -eq 1 ] || fail 'Repeat install did not replace the API key exactly once.'
-! grep -Fq 'sk-macos-first-key' "$config_path" || fail 'Repeat install retained the previous API key.'
+! grep -Fq 'experimental_bearer_token' "$config_path" || fail 'Repeat install restored conflicting direct bearer authentication.'
+[ "$(cat "$key_path")" = 'sk-macos-second-key' ] || fail 'Repeat install did not update the protected dynamic catalog key.'
 ! grep -Fq 'supports_websockets' "$config_path" || fail 'Repeat install enabled unverified WebSocket support.'
 
 recovery_home="$sandbox/recover-provider"
@@ -145,10 +150,13 @@ fresh_home="$sandbox/fresh"
 run_installer "$fresh_home" 'sk-macos-fresh-key' "$codex_cli"
 grep -Fq 'model_provider = "custom"' "$fresh_home/config.toml" || fail 'Fresh install did not use the proven custom provider identity.'
 grep -Fq 'name = "custom"' "$fresh_home/config.toml" || fail 'Fresh install did not use the proven custom provider display name.'
-grep -Fq 'experimental_bearer_token = "sk-macos-fresh-key"' "$fresh_home/config.toml" || fail 'Fresh install did not configure the MadAPI key.'
+! grep -Fq 'experimental_bearer_token' "$fresh_home/config.toml" || fail 'Fresh install added conflicting direct bearer authentication.'
+grep -Fq '[model_providers.custom.auth]' "$fresh_home/config.toml" || fail 'Fresh install did not enable dynamic catalog refresh for API-key users.'
+[ "$(cat "$fresh_home/madapi.key")" = 'sk-macos-fresh-key' ] || fail 'Fresh install did not create the protected dynamic catalog key.'
 ! grep -Fq 'disable_response_storage' "$fresh_home/config.toml" || fail 'Fresh install added an optional response-storage policy.'
 ! grep -Fq 'model_catalog_json' "$fresh_home/config.toml" || fail 'Fresh install added a static model catalog.'
 CODEX_HOME="$fresh_home" "$codex_cli" features list >/dev/null
+node "$script_dir/codex-dynamic-catalog.mjs" "$codex_cli" "$fresh_home" "$script_dir/fixtures/codex-models.json" 'sk-macos-fresh-key'
 
 official_home="$sandbox/official-provider"
 mkdir -p "$official_home"
@@ -200,7 +208,7 @@ if CODEX_FAKE_COUNT="$counter" run_installer "$rollback_home" 'sk-new-key' "$fak
   fail 'Forced post-write validation failure was accepted.'
 fi
 [ "$(hash_file "$rollback_home/config.toml")" = "$rollback_hash" ] || fail 'Config was not rolled back byte-for-byte.'
-[ "$(cat "$rollback_home/madapi.key")" = 'sk-old-key' ] || fail 'Unrelated legacy key file was changed.'
+[ "$(cat "$rollback_home/madapi.key")" = 'sk-old-key' ] || fail 'Protected dynamic catalog key was not rolled back.'
 [ "$(hash_file "$rollback_home/madapi-models.json")" = "$rollback_catalog_hash" ] || fail 'Unrelated legacy model catalog was changed.'
 
 printf '%s\n' 'macOS Codex installer acceptance passed.'

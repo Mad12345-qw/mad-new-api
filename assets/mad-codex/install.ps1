@@ -151,11 +151,17 @@ $codexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) {
     [string]$env:CODEX_HOME
 }
 $configPath = Join-Path $codexHome 'config.toml'
+$keyPath = Join-Path $codexHome 'madapi.key'
+$modelsCachePath = Join-Path $codexHome 'models_cache.json'
 $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
+$tempKeyPath = Join-Path $codexHome ("madapi.key.$transactionId.tmp")
+$rollbackKeyPath = Join-Path $codexHome ("madapi.key.$transactionId.rollback")
 $backupPath = $null
 $hadConfig = Test-Path -LiteralPath $configPath
+$hadKey = Test-Path -LiteralPath $keyPath
 $configInstalled = $false
+$keyInstalled = $false
 
 New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
 
@@ -266,6 +272,7 @@ if (-not $preservedDefaults.model_reasoning_effort) {
 if (-not $preservedDefaults.model_auto_compact_token_limit) {
     $headerLines.Add('model_auto_compact_token_limit = 500000')
 }
+$authCommand = '$h=if([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)){Join-Path ([Environment]::GetFolderPath(''UserProfile'')) ''.codex''}else{[string]$env:CODEX_HOME};[Console]::Out.Write([IO.File]::ReadAllText((Join-Path $h ''madapi.key'')).Trim())'
 $configLines = New-Object 'System.Collections.Generic.List[string]'
 foreach ($line in $headerLines) {
     $configLines.Add($line)
@@ -279,11 +286,15 @@ $configLines.Add('[' + $targetProviderSection + ']')
 $configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
 $configLines.Add('base_url = "https://mad.myddns.me/codex/v1"')
 $configLines.Add('wire_api = "responses"')
-$configLines.Add('requires_openai_auth = true')
-$configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
 $configLines.Add('stream_idle_timeout_ms = 360000')
 $configLines.Add('request_max_retries = 3')
 $configLines.Add('context_window_override = 1048576')
+$configLines.Add('')
+$configLines.Add('[' + $targetProviderSection + '.auth]')
+$configLines.Add('command = "powershell.exe"')
+$configLines.Add('args = ["-NoProfile", "-Command", ' + (ConvertTo-TomlBasicString $authCommand) + ']')
+$configLines.Add('timeout_ms = 5000')
+$configLines.Add('refresh_interval_ms = 300000')
 try {
     [IO.File]::WriteAllText(
         $tempConfigPath,
@@ -291,19 +302,31 @@ try {
         $utf8NoBom
     )
     Protect-SecretFile $tempConfigPath
+    [IO.File]::WriteAllText($tempKeyPath, $apiKey, $utf8NoBom)
+    Protect-SecretFile $tempKeyPath
 
     if ($hadConfig) {
         $backupPath = '{0}.madapi-backup-{1}' -f $configPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
         [IO.File]::Copy($configPath, $backupPath, $false)
         Protect-SecretFile $backupPath
     }
+    if ($hadKey) {
+        Move-Item -LiteralPath $keyPath -Destination $rollbackKeyPath
+    }
+    Move-Item -LiteralPath $tempKeyPath -Destination $keyPath
+    $keyInstalled = $true
     Move-Item -LiteralPath $tempConfigPath -Destination $configPath -Force
     $configInstalled = $true
 
     if (-not (Test-CodexConfig $codexCli $codexHome)) {
         throw 'The generated MadAPI configuration could not be parsed by Codex.'
     }
-
+    if (Test-Path -LiteralPath $modelsCachePath) {
+        Remove-Item -LiteralPath $modelsCachePath -Force
+    }
+    if (Test-Path -LiteralPath $rollbackKeyPath) {
+        Remove-Item -LiteralPath $rollbackKeyPath -Force
+    }
 } catch {
     $failure = $_
     if ($configInstalled) {
@@ -313,9 +336,15 @@ try {
             Remove-Item -LiteralPath $configPath -Force
         }
     }
+    if ($keyInstalled -and (Test-Path -LiteralPath $keyPath)) {
+        Remove-Item -LiteralPath $keyPath -Force
+    }
+    if ($hadKey -and (Test-Path -LiteralPath $rollbackKeyPath)) {
+        Move-Item -LiteralPath $rollbackKeyPath -Destination $keyPath
+    }
     throw $failure
 } finally {
-    foreach ($path in @($tempConfigPath)) {
+    foreach ($path in @($tempConfigPath, $tempKeyPath, $rollbackKeyPath)) {
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force
         }

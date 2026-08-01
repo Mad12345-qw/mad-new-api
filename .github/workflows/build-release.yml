@@ -85,6 +85,8 @@ jobs:
             model/task_request_reservation.go
             model/task_request_reservation_test.go
             relay/channel/api_request.go
+            relay/channel/zhipu_4v/relay-zhipu_v4.go
+            relay/channel/zhipu_4v/relay-zhipu_v4_test.go
             relay/channel/task/xai/adaptor.go
             relay/channel/task/xai/adaptor_test.go
             relay/channel/task/xai/constants.go
@@ -104,6 +106,8 @@ jobs:
             service/relayconvert/internal/cpa_responses/response.go
             service/relayconvert/internal/cpa_responses/response_test.go
             service/relayconvert/internal/cpa_responses/tools.go
+            service/relayconvert/internal/oai_chat/to_oai_responses_req.go
+            service/relayconvert/internal/oai_chat/to_oai_responses_req_test.go
           )
           unformatted=$(gofmt -l "${files[@]}")
           if [ -n "$unformatted" ]; then
@@ -114,7 +118,7 @@ jobs:
 
       - name: Test backend paths
         working-directory: source
-        run: go test ./controller ./middleware ./relay/common ./relay/channel/task/xai ./relay ./router ./service ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses
+        run: go test ./controller ./middleware ./relay/common ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat
 
       - name: Verify playground frontend
         working-directory: source/web/default

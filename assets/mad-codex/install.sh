@@ -162,6 +162,22 @@ fi
 
 if [ "$had_config" -eq 1 ]; then
   LC_ALL=C awk -v target="model_providers.$provider_id" '
+    function root_key(line, equals_at, key, first, last, quote) {
+      equals_at = index(line, "=")
+      if (equals_at == 0) return ""
+      key = substr(line, 1, equals_at - 1)
+      sub(/^[[:space:]]+/, "", key)
+      sub(/[[:space:]]+$/, "", key)
+      if (length(key) >= 2) {
+        first = substr(key, 1, 1)
+        last = substr(key, length(key), 1)
+        quote = sprintf("%c", 39)
+        if ((first == "\"" && last == "\"") || (first == quote && last == quote)) {
+          key = substr(key, 2, length(key) - 2)
+        }
+      }
+      return key
+    }
     BEGIN { current = ""; skip = 0 }
     /^[[:space:]]*\[[^]]+\][[:space:]]*(#.*)?$/ {
       section = $0
@@ -172,7 +188,10 @@ if [ "$had_config" -eq 1 ]; then
       if (skip) next
     }
     skip { next }
-    current == "" && /^[[:space:]]*(model_provider|model|model_catalog_json|"model_provider"|"model"|"model_catalog_json"|\047model_provider\047|\047model\047|\047model_catalog_json\047)[[:space:]]*=/ { next }
+    current == "" {
+      key = root_key($0)
+      if (key == "model_provider" || key == "model" || key == "model_catalog_json") next
+    }
     { print }
   ' "$config_path" > "$body_path"
 else

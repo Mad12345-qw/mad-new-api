@@ -13,7 +13,7 @@ index fd79b80..d83157e 100644
  		"default_verbosity":                 "medium",
  		"web_search_tool_type":              "text_and_image",
 diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
-index 6f53f12..43d3db2 100644
+index 6f53f12..0ff7702 100644
 --- a/controller/codex_compat_test.go
 +++ b/controller/codex_compat_test.go
 @@ -13,9 +13,110 @@ import (
@@ -147,10 +147,10 @@ index 6f53f12..43d3db2 100644
  
 diff --git a/controller/codex_websocket.go b/controller/codex_websocket.go
 new file mode 100644
-index 0000000..922212e
+index 0000000..1b87da3
 --- /dev/null
 +++ b/controller/codex_websocket.go
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,336 @@
 +package controller
 +
 +import (
@@ -227,6 +227,7 @@ index 0000000..922212e
 +			continue
 +		}
 +
++		snapshot := state.Snapshot()
 +		prewarm := !state.HasRequest() && isCodexWebsocketPrewarm(payload)
 +		requestBody, normalizeErr := state.NormalizeWebsocketRequest(payload, codexWebsocketStateLimit)
 +		if normalizeErr != nil {
@@ -239,6 +240,7 @@ index 0000000..922212e
 +			Model string `json:"model"`
 +		}
 +		if json.Unmarshal(requestBody, &requestMeta) != nil || !isCodexConversationModel(dto.OpenAIModels{Id: requestMeta.Model}, codexTextPricingProvider()) {
++			state.Restore(snapshot)
 +			if writeCodexWebsocketError(conn, http.StatusBadRequest, "model_not_supported", fmt.Errorf("model %q is not a Codex conversation model", requestMeta.Model)) != nil {
 +				return
 +			}
@@ -252,6 +254,7 @@ index 0000000..922212e
 +		}
 +
 +		if processErr := processCodexWebsocketTurn(c, conn, state, requestBody); processErr != nil {
++			state.Restore(snapshot)
 +			if writeCodexWebsocketError(conn, processErr.status, processErr.code, processErr.err) != nil {
 +				return
 +			}
@@ -511,10 +514,10 @@ index 5ea7947..41b0582 100644
  }
 diff --git a/service/relayconvert/internal/cpa_responses/websocket.go b/service/relayconvert/internal/cpa_responses/websocket.go
 new file mode 100644
-index 0000000..96adcab
+index 0000000..c5c8c78
 --- /dev/null
 +++ b/service/relayconvert/internal/cpa_responses/websocket.go
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,353 @@
 +package cparesponses
 +
 +import (
@@ -536,6 +539,26 @@ index 0000000..96adcab
 +	lastRequest  []byte
 +	lastOutput   []json.RawMessage
 +	lastResponse string
++}
++
++type WebsocketStateSnapshot struct {
++	lastRequest  []byte
++	lastOutput   []json.RawMessage
++	lastResponse string
++}
++
++func (s *WebsocketState) Snapshot() WebsocketStateSnapshot {
++	return WebsocketStateSnapshot{
++		lastRequest:  bytes.Clone(s.lastRequest),
++		lastOutput:   cloneRawMessages(s.lastOutput),
++		lastResponse: s.lastResponse,
++	}
++}
++
++func (s *WebsocketState) Restore(snapshot WebsocketStateSnapshot) {
++	s.lastRequest = bytes.Clone(snapshot.lastRequest)
++	s.lastOutput = cloneRawMessages(snapshot.lastOutput)
++	s.lastResponse = snapshot.lastResponse
 +}
 +
 +// NormalizeWebsocketRequest implements CPA's HTTP-fallback websocket model:
@@ -850,10 +873,10 @@ index 0000000..96adcab
 +}
 diff --git a/service/relayconvert/internal/cpa_responses/websocket_test.go b/service/relayconvert/internal/cpa_responses/websocket_test.go
 new file mode 100644
-index 0000000..45fd4e4
+index 0000000..b93a674
 --- /dev/null
 +++ b/service/relayconvert/internal/cpa_responses/websocket_test.go
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,85 @@
 +package cparesponses
 +
 +import (
@@ -923,4 +946,19 @@ index 0000000..45fd4e4
 +	state := &WebsocketState{}
 +	_, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.create","model":"gpt-test","input":[{"type":"message","role":"user","content":"payload"}]}`), 32)
 +	require.ErrorContains(t, err, "exceeds")
++}
++
++func TestWebsocketStateSnapshotRestoresFailedTurn(t *testing.T) {
++	state := &WebsocketState{}
++	snapshot := state.Snapshot()
++	_, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.create","model":"gpt-test","input":[{"type":"message","role":"user","id":"failed"}]}`), 1<<20)
++	require.NoError(t, err)
++	require.True(t, state.HasRequest())
++
++	state.Restore(snapshot)
++	require.False(t, state.HasRequest())
++	next, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.create","model":"gpt-test","input":[{"type":"message","role":"user","id":"retry"}]}`), 1<<20)
++	require.NoError(t, err)
++	require.Contains(t, string(next), `"id":"retry"`)
++	require.NotContains(t, string(next), `"id":"failed"`)
 +}

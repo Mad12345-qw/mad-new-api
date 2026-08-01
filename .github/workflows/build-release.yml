@@ -199,7 +199,7 @@ jobs:
         run: docker build --pull --tag mad-new-api:latest source
 
       - name: Export image
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && github.event_name != 'pull_request')
         run: |
           docker save mad-new-api:latest | gzip -1 > mad-new-api.tar.gz
           sha256sum mad-new-api.tar.gz > mad-new-api.tar.gz.sha256
@@ -237,3 +237,16 @@ jobs:
             upstream-commit.txt \
             --title "Mad New API latest build" \
             --notes "Automated build from the pinned upstream New API source with Mad API billing, branding, recharge, multi-model playground, and image response compatibility customizations."
+
+      - name: Publish detector integration candidate
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete detector-integration-latest --cleanup-tag --yes || true
+          gh release create detector-integration-latest \
+            mad-new-api.tar.gz \
+            mad-new-api.tar.gz.sha256 \
+            upstream-commit.txt \
+            --title "Mad New API detector integration candidate" \
+            --notes "Candidate image from the detector integration branch. It does not replace the main build-latest release."

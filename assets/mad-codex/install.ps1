@@ -233,8 +233,19 @@ foreach ($line in $sourceLines) {
     }
 
     if ($currentSection -eq '') {
-        if ($line -match '^\s*(model_provider|model|model_catalog_json)\s*=') {
-            continue
+        $assignmentIndex = $line.IndexOf('=')
+        if ($assignmentIndex -ge 0) {
+            $rootKey = $line.Substring(0, $assignmentIndex).Trim()
+            if ($rootKey.Length -ge 2) {
+                $firstChar = $rootKey[0]
+                $lastChar = $rootKey[$rootKey.Length - 1]
+                if (($firstChar -eq '"' -and $lastChar -eq '"') -or ($firstChar -eq "'" -and $lastChar -eq "'")) {
+                    $rootKey = $rootKey.Substring(1, $rootKey.Length - 2)
+                }
+            }
+            if (@('model_provider', 'model', 'model_catalog_json') -contains $rootKey) {
+                continue
+            }
         }
         foreach ($name in @($preservedDefaults.Keys)) {
             if ($line -match ('^\s*' + [regex]::Escape($name) + '\s*=')) {

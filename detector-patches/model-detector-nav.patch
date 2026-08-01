@@ -1,13 +1,77 @@
 diff --git a/web/default/src/hooks/use-top-nav-links.ts b/web/default/src/hooks/use-top-nav-links.ts
 --- a/web/default/src/hooks/use-top-nav-links.ts
 +++ b/web/default/src/hooks/use-top-nav-links.ts
-@@ -102,7 +102,7 @@ export function useTopNavLinks(): TopNavLink[] {
+@@ -21,5 +21,6 @@ import { useTranslation } from 'react-i18next'
  
-   links.push({
+ import { useStatus } from '@/hooks/use-status'
++import { ROLE } from '@/lib/roles'
+ import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
+ import { useAuthStore } from '@/stores/auth-store'
+ 
+@@ -100,11 +101,14 @@ export function useTopNavLinks(): TopNavLink[] {
+     links.push({ title: t('About'), href: '/about' })
+   }
+ 
+-  links.push({
 -    title: 'AdForge（广告腹肌）',
 -    href: 'https://mad.myddns.me/adforge',
-+    title: '模型溯源检测',
-+    href: '/detector/',
-     external: true,
-   })
+-    external: true,
+-  })
++  const role = auth?.user?.role
++  if (role === ROLE.ADMIN || role === ROLE.SUPER_ADMIN) {
++    links.push({
++      title: '模型溯源检测',
++      href: '/detector/',
++      external: true,
++    })
++  }
  
+   return links
+ }
+diff --git a/web/default/src/features/channels/components/channels-primary-buttons.tsx b/web/default/src/features/channels/components/channels-primary-buttons.tsx
+--- a/web/default/src/features/channels/components/channels-primary-buttons.tsx
++++ b/web/default/src/features/channels/components/channels-primary-buttons.tsx
+@@ -27,5 +27,6 @@ import {
+   RefreshCw,
+   ArrowUpFromLine,
++  ShieldCheck,
+ } from 'lucide-react'
+ import { useState } from 'react'
+ import { useTranslation } from 'react-i18next'
+@@ -51,6 +52,7 @@ import {
+   ADMIN_PERMISSION_RESOURCES,
+   hasPermission,
+ } from '@/lib/admin-permissions'
++import { ROLE } from '@/lib/roles'
+ import { useAuthStore } from '@/stores/auth-store'
+ 
+ import {
+@@ -83,6 +85,9 @@ export function ChannelsPrimaryButtons() {
+     ADMIN_PERMISSION_RESOURCES.CHANNEL,
+     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+   )
++  const canUseModelDetector =
++    currentUser?.role === ROLE.ADMIN ||
++    currentUser?.role === ROLE.SUPER_ADMIN
+ 
+   const handleTagModeToggle = (checked: boolean) => {
+     localStorage.setItem('enable-tag-mode', String(checked))
+@@ -137,6 +143,18 @@ export function ChannelsPrimaryButtons() {
+           />
+         </div>
+ 
++        {canUseModelDetector && (
++          <Button
++            variant='outline'
++            size='sm'
++            render={<a href='/detector/' />}
++          >
++            <ShieldCheck className='h-4 w-4' />
++            <span className='max-sm:hidden'>模型溯源检测</span>
++            <span className='sm:hidden'>模型检测</span>
++          </Button>
++        )}
++
+         {/* Create Channel */}
+         <Tooltip>
+           <TooltipTrigger render={<span className='inline-flex' />}>

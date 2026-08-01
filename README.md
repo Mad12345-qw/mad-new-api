@@ -26,7 +26,7 @@ GitHub Actions applies and verifies every patch, runs backend, frontend, and ima
 
 ## Model detector edition
 
-The detector is a plugin-style subsystem in the same repository. The normal Mad New API build receives only a versioned, service-token-protected channel contract and a `模型溯源检测` navigation entry; `build-detector-release.yml` independently builds the TraceGuard Python image, Compose file, database and release artifacts. Updating either image no longer rebuilds or replaces the other one.
+The detector is a plugin-style subsystem in the same repository. The normal Mad New API build receives only a versioned, service-token-protected channel contract and administrator-only `模型溯源检测` entries in the top navigation and channel-management action bar; `build-detector-release.yml` independently builds the TraceGuard Python image, Compose file, database and release artifacts. Updating either image no longer rebuilds or replaces the other one.
 
 TraceGuard can synchronize configured New API channels, expand multi-key channels into separately monitored encrypted credentials, apply model mappings before route selection, and retain removed or disabled channels as historical records. Manual and scheduled runs use the same evidence engine. A policy layer compares the configured expected source with the detected source and records the decision, threshold, evidence, notifications and any New API channel action in the report.
 

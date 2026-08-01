@@ -910,7 +910,15 @@ def model_alias_evidence(models: list[str]) -> list[Evidence]:
         "gpt-5.6-terra",
         "gpt-image-2",
     }
-    official_anthropic = {"claude-fable-5", "claude-opus-4-8", "claude-opus-5"}
+    official_anthropic = {
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+    }
     official_google = {"gemini-3.6-flash"}
     for model in models:
         normalized = model.lower()
@@ -1579,6 +1587,179 @@ def openai_contract_evidence(
     return result
 
 
+def anthropic_contract_probe_specs(
+    route: ModelRoute,
+) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    baseline = RULE_PACK.get("official_baselines", {}).get("anthropic_messages", {})
+    if route.family != "anthropic" or route.protocol != "anthropic_messages":
+        return []
+    if not re.search(str(baseline.get("model_pattern", r"^claude-")), route.model.lower()):
+        return []
+    contract = baseline.get("contract_baseline", {})
+    common = {
+        "model": route.model,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "X"}],
+    }
+    return [
+        (
+            "anthropic_unknown_field",
+            {**common, "model_detector_invalid": True},
+            {
+                "name": "anthropic_unknown_field",
+                "expected_status": int(contract.get("unknown_field_status", 400)),
+                "expected_error_type": "invalid_request_error",
+                "expected_message_pattern": str(
+                    contract.get("unknown_field_message_pattern", "Extra inputs are not permitted")
+                ),
+                "expect_rejection": True,
+            },
+        ),
+        (
+            "anthropic_invalid_metadata",
+            {**common, "metadata": {"user_id": {"model_detector_invalid": True}}},
+            {
+                "name": "anthropic_invalid_metadata",
+                "expected_status": int(contract.get("invalid_metadata_status", 400)),
+                "expected_error_type": "invalid_request_error",
+                "expected_message_pattern": str(
+                    contract.get("invalid_metadata_message_pattern", "Input should be a valid string")
+                ),
+                "expect_rejection": True,
+            },
+        ),
+        (
+            "anthropic_middle_system_role",
+            {
+                **common,
+                "messages": [
+                    {"role": "user", "content": "X"},
+                    {"role": "system", "content": "model detector sentinel"},
+                    {"role": "user", "content": "Y"},
+                ],
+            },
+            {
+                "name": "anthropic_middle_system_role",
+                "expected_status": int(contract.get("middle_system_role_status", 400)),
+                "expected_error_type": "invalid_request_error",
+                "expect_rejection": True,
+            },
+        ),
+        (
+            "anthropic_max_tokens_zero",
+            {**common, "max_tokens": 0},
+            {
+                "name": "anthropic_max_tokens_zero",
+                "expected_status": int(contract.get("max_tokens_zero_status", 200)),
+                "expected_output_tokens": int(contract.get("max_tokens_zero_output_tokens", 0)),
+                "expect_rejection": False,
+            },
+        ),
+    ]
+
+
+def anthropic_contract_evidence(
+    observations: list[tuple[dict[str, Any], ProbeResponse]],
+) -> list[Evidence]:
+    if not observations:
+        return []
+    result: list[Evidence] = []
+    matched: list[str] = []
+    bypassed: list[dict[str, Any]] = []
+    for spec, response in observations:
+        value = response.body_json if isinstance(response.body_json, dict) else {}
+        error = value.get("error") if isinstance(value.get("error"), dict) else {}
+        error_message = str(error.get("message") or "")
+        usage = _claude_usage(value.get("usage") if isinstance(value.get("usage"), dict) else {})
+        expected_status = int(spec.get("expected_status", 400))
+        expected_error_type = spec.get("expected_error_type")
+        expected_message_pattern = str(spec.get("expected_message_pattern") or "")
+        expected_output_tokens = spec.get("expected_output_tokens")
+        exact_match = response.status_code == expected_status
+        if expected_error_type:
+            exact_match = exact_match and error.get("type") == expected_error_type
+        if expected_message_pattern:
+            exact_match = exact_match and re.search(expected_message_pattern, error_message, re.IGNORECASE) is not None
+        if expected_output_tokens is not None:
+            exact_match = exact_match and usage.get("output_tokens") == expected_output_tokens
+        observed = {
+            "status_code": response.status_code,
+            "error_type": error.get("type"),
+            "error_message_pattern_matched": (
+                re.search(expected_message_pattern, error_message, re.IGNORECASE) is not None
+                if expected_message_pattern
+                else None
+            ),
+            "output_tokens": usage.get("output_tokens"),
+        }
+        expected = {
+            "status_code": expected_status,
+            "error_type": expected_error_type,
+            "message_pattern": expected_message_pattern or None,
+            "output_tokens": expected_output_tokens,
+        }
+        if exact_match:
+            matched.append(str(spec["name"]))
+            result.append(
+                Evidence(
+                    str(spec["name"]),
+                    "official_contract_match",
+                    "info",
+                    None,
+                    "与 Anthropic 官方请求校验合同一致",
+                    {
+                        "expected": expected,
+                        "observed": observed,
+                        "note": "透明中转也能保留该合同；单项一致只排除部分改写器，不能独立证明 Anthropic 官方直连。",
+                    },
+                    response.raw_sha256,
+                )
+            )
+            continue
+        if bool(spec.get("expect_rejection")) and 200 <= response.status_code < 300:
+            bypassed.append(
+                {
+                    "probe": spec["name"],
+                    "official_expected": expected,
+                    "observed": observed,
+                    "body_shape": body_shape(value),
+                }
+            )
+            continue
+        result.append(
+            Evidence(
+                str(spec["name"]),
+                "official_contract_mismatch",
+                "info",
+                None,
+                "Anthropic 请求校验结果与官方基线不一致",
+                {"expected": expected, "observed": observed},
+                response.raw_sha256,
+            )
+        )
+    if bypassed:
+        result.append(
+            Evidence(
+                "anthropic_contract_matrix",
+                "claude_request_contract_rewrite",
+                "strong" if len(bypassed) >= 2 else "medium",
+                "claude_compatibility_relay",
+                "Anthropic 官方必拒绝请求被兼容层改写后执行",
+                {
+                    "rule_id": "anthropic_official_contract_bypass_v1",
+                    "bypassed_count": len(bypassed),
+                    "tested_count": len(observations),
+                    "bypassed": bypassed,
+                    "official_contract_matches": matched,
+                    "official_baseline": RULE_PACK.get("official_baselines", {}).get("anthropic_messages", {}),
+                    "note": "多项 2xx 能排除透明 Anthropic API Key 直传，但不能单独区分 Claude Code OAuth、Bedrock/Vertex 二次封装或其他自定义兼容实现。",
+                },
+                observations[0][1].raw_sha256,
+            )
+        )
+    return result
+
+
 def gemini_contract_probe_specs(route: ModelRoute) -> list[tuple[str, str, dict[str, Any], dict[str, Any]]]:
     baseline = RULE_PACK.get("official_baselines", {}).get("gemini_generate", {})
     if route.family != "google" or route.model.lower() != baseline.get("model"):
@@ -2001,7 +2182,10 @@ def classify(evidence: list[Evidence], claimed_channel: str = "unknown") -> dict
     for item in evidence:
         if not item.supports or item.supports in {"relay_or_custom", "openai_protocol", "anthropic_protocol", "google_generative_protocol"}:
             continue
-        channel_categories.setdefault(item.supports, set()).add(item.category)
+        categories = channel_categories.setdefault(item.supports, set())
+        if item.category in categories:
+            continue
+        categories.add(item.category)
         channel_score[item.supports] = channel_score.get(item.supports, 0.0) + weights.get(item.strength, 0.0)
     if not channel_score:
         return {"verdict": "inconclusive", "likely_channel": "unknown", "confidence": 0.0, "summary": "证据不足，无法判断真实上游渠道"}
@@ -2082,6 +2266,17 @@ def classify(evidence: list[Evidence], claimed_channel: str = "unknown") -> dict
                 "likely_channel": likely,
                 "confidence": 0.94,
                 "summary": "多项 Gemini Developer API 官方必拒绝参数被中转兼容层改写后执行；确认不是透明官方直连，但终端仍需结合 Vertex/Developer 专属泄漏指纹判断",
+            }
+    if likely == "claude_compatibility_relay":
+        matrix = next((item for item in evidence if item.category == "claude_request_contract_rewrite"), None)
+        bypassed_count = int(matrix.detail.get("bypassed_count", 0)) if matrix else 0
+        if bypassed_count >= 2:
+            verdict = "suspected_substitution" if claimed_channel in direct_channels else "probable_alternate_channel"
+            return {
+                "verdict": verdict,
+                "likely_channel": likely,
+                "confidence": 0.94,
+                "summary": "多项 Anthropic 官方必拒绝合同被兼容层改写后执行；确认不是透明 Anthropic API Key 直传，但最终承载渠道仍需结合 Bedrock、Vertex、Claude Code 与传输指纹判断",
             }
     if likely == "codex_subscription_relay":
         has_prompt = "codex_prompt_fingerprint" in categories
@@ -2546,6 +2741,40 @@ class DetectorEngine:
                         provenance_evidence(contract_name, route, contract_payload, contract_response)
                     )
                 model_evidence.extend(openai_contract_evidence(contract_observations))
+                anthropic_specs = anthropic_contract_probe_specs(route)
+                anthropic_observations: list[tuple[dict[str, Any], ProbeResponse]] = []
+                for anthropic_name, anthropic_payload, anthropic_spec in anthropic_specs:
+                    try:
+                        anthropic_response = await captured_request(
+                            client,
+                            "POST",
+                            api_endpoint(base_url, "/v1/messages"),
+                            protocol_headers("anthropic_messages", api_key),
+                            anthropic_payload,
+                        )
+                    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+                        model_evidence.append(
+                            Evidence(
+                                anthropic_name,
+                                "transport_error",
+                                "info",
+                                None,
+                                "Anthropic 官方合同差分探针失败",
+                                {"error_type": type(exc).__name__, "message": str(exc)[:500]},
+                            )
+                        )
+                        continue
+                    responses.append(anthropic_response)
+                    anthropic_observations.append((anthropic_spec, anthropic_response))
+                    profile = _response_route_profile(anthropic_name, anthropic_payload, anthropic_response)
+                    if profile:
+                        route_profiles.append(profile)
+                    model_evidence.extend(header_evidence(anthropic_name, anthropic_response))
+                    model_evidence.extend(payload_evidence(anthropic_name, anthropic_response, [route.model]))
+                    model_evidence.extend(
+                        provenance_evidence(anthropic_name, route, anthropic_payload, anthropic_response)
+                    )
+                model_evidence.extend(anthropic_contract_evidence(anthropic_observations))
                 gemini_specs = gemini_contract_probe_specs(route)
                 gemini_observations: list[tuple[dict[str, Any], ProbeResponse]] = []
                 for gemini_name, gemini_path, gemini_payload, gemini_spec in gemini_specs:
@@ -2643,7 +2872,14 @@ class DetectorEngine:
                 route_divergence = within_run_route_divergence_evidence(route, route_profiles)
                 if route_divergence:
                     model_evidence.append(route_divergence)
-                planned_probes = 3 + len(contract_specs) + len(gemini_specs) + alias_planned + system_planned
+                planned_probes = (
+                    3
+                    + len(contract_specs)
+                    + len(anthropic_specs)
+                    + len(gemini_specs)
+                    + alias_planned
+                    + system_planned
+                )
                 if route.family == "anthropic" and route.protocol != "anthropic_messages":
                     planned_probes += 1
                     native_route = route_with_protocol(route, "anthropic_messages")

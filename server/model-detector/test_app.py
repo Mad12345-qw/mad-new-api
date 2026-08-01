@@ -28,6 +28,13 @@ class AppTests(unittest.TestCase):
         response = self.client.post("/detector/api/login", json={"token": os.environ["DETECTOR_ADMIN_TOKEN"]})
         self.assertEqual(response.status_code, 200)
 
+    def test_health_reports_rule_and_scheduler_state(self) -> None:
+        response = self.client.get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertIn("rule_version", response.json())
+        self.assertIn("scheduler_enabled", response.json())
+
     def test_auth_and_secret_redaction(self) -> None:
         self.assertEqual(self.client.get("/detector/api/state").status_code, 401)
         self.assertEqual(self.client.post("/detector/api/login", json={"token": "wrong-token-value"}).status_code, 401)
@@ -50,6 +57,23 @@ class AppTests(unittest.TestCase):
         self.assertNotIn("api_key_encrypted", payload)
         stored = service.db.row("SELECT api_key_encrypted FROM upstreams WHERE id=?", (payload["id"],))
         self.assertNotIn("sk-unit-test-secret", stored["api_key_encrypted"])
+
+    def test_scheduler_requires_explicit_enable(self) -> None:
+        self.login()
+        response = self.client.put(
+            "/detector/api/settings",
+            json={
+                "scheduler_enabled": False,
+                "interval_minutes": 30,
+                "scheduled_mode": "active",
+                "webhook_url": "",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["scheduler_enabled"])
+        self.assertEqual(response.json()["interval_minutes"], 30)
+        state = self.client.get("/detector/api/state").json()
+        self.assertFalse(state["settings"]["scheduler_enabled"])
 
     def test_discovery_returns_routed_models_without_storing_key(self) -> None:
         self.login()
@@ -96,6 +120,70 @@ class AppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertNotIn("api_key", response.text)
         self.assertEqual(mocked.await_args.args[1], "saved-secret-key")
+
+    def test_new_api_channel_sync_applies_model_mapping_and_encrypts_each_key(self) -> None:
+        channel_id = 91001
+        channels = [
+            {
+                "id": channel_id,
+                "name": "Synced Relay",
+                "type": 1,
+                "type_name": "OpenAI",
+                "status": 1,
+                "base_url": "https://relay.example/v1",
+                "models": ["customer-gpt", "claude-fable-5"],
+                "model_mapping": {"customer-gpt": "gpt-5.6-sol"},
+                "keys": [
+                    {"index": 0, "key": "sync-secret-key-one", "enabled": True},
+                    {"index": 1, "key": "sync-secret-key-two", "enabled": True},
+                ],
+            }
+        ]
+        with patch.object(service.new_api, "channels", AsyncMock(return_value=channels)):
+            result = self.client.portal.call(service.sync_new_api_channels)
+        self.assertEqual(result["created"], 2)
+        rows = service.db.rows(
+            "SELECT * FROM upstreams WHERE new_api_channel_id=? ORDER BY new_api_key_index",
+            (channel_id,),
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(json.loads(rows[0]["models_json"]), ["gpt-5.6-sol", "claude-fable-5"])
+        self.assertNotIn("sync-secret-key", rows[0]["api_key_encrypted"])
+        self.assertEqual(rows[0]["source_type"], "new_api")
+
+    def test_compliance_never_disables_when_no_model_probe_succeeds(self) -> None:
+        compliance = service.evaluate_compliance(
+            {"expected_channel": "openai_official"},
+            {
+                "verdict": "suspected_substitution",
+                "likely_channel": "codex_subscription_relay",
+                "confidence": 0.99,
+            },
+            [{"model": "gpt-5.6-sol", "success_probes": 0, "evidence": []}],
+        )
+        self.assertEqual(compliance["status"], "inconclusive")
+
+    def test_compliance_confirms_only_high_confidence_incompatible_source(self) -> None:
+        compliance = service.evaluate_compliance(
+            {"expected_channel": "anthropic_official"},
+            {
+                "verdict": "suspected_substitution",
+                "likely_channel": "claude_subscription_relay",
+                "confidence": 0.99,
+            },
+            [{"model": "claude-fable-5", "success_probes": 3, "evidence": []}],
+        )
+        self.assertEqual(compliance["status"], "mismatch_confirmed")
+        uncertain = service.evaluate_compliance(
+            {"expected_channel": "anthropic_official"},
+            {
+                "verdict": "suspected_substitution",
+                "likely_channel": "claude_subscription_relay",
+                "confidence": 0.8,
+            },
+            [{"model": "claude-fable-5", "success_probes": 3, "evidence": []}],
+        )
+        self.assertEqual(uncertain["status"], "inconclusive")
 
     def test_existing_new_api_admin_session_is_accepted(self) -> None:
         previous = os.environ.get("DETECTOR_NEW_API_INTERNAL_URL")

@@ -11,6 +11,8 @@ from engine import (
     DetectorEngine,
     Evidence,
     ProbeResponse,
+    anthropic_contract_evidence,
+    anthropic_contract_probe_specs,
     body_shape,
     antigravity_alias_evidence,
     antigravity_alias_matrix_evidence,
@@ -708,6 +710,74 @@ class EngineTests(unittest.TestCase):
         _, payload = route_probe(route, False)
         self.assertEqual(payload["output_config"], {"effort": "low"})
         self.assertNotIn("effort", payload)
+
+    def test_anthropic_contract_specs_use_non_generation_validation_edges(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["anthropic"])
+        specs = anthropic_contract_probe_specs(route)
+        self.assertEqual(len(specs), 4)
+        by_name = {name: payload for name, payload, _ in specs}
+        self.assertTrue(by_name["anthropic_unknown_field"]["model_detector_invalid"])
+        self.assertIsInstance(by_name["anthropic_invalid_metadata"]["metadata"]["user_id"], dict)
+        self.assertEqual(by_name["anthropic_middle_system_role"]["messages"][1]["role"], "system")
+        self.assertEqual(by_name["anthropic_max_tokens_zero"]["max_tokens"], 0)
+
+    def test_anthropic_contract_matrix_detects_batch_rewrite(self) -> None:
+        route = route_for_model("claude-fable-5", "claude", ["anthropic"])
+        specs = anthropic_contract_probe_specs(route)
+        observations = [
+            (specs[0][2], ProbeResponse(200, 1, {}, "{}", {"type": "message"}, "a")),
+            (specs[1][2], ProbeResponse(200, 1, {}, "{}", {"type": "message"}, "b")),
+            (
+                specs[2][2],
+                ProbeResponse(
+                    400,
+                    1,
+                    {},
+                    "{}",
+                    {"error": {"type": "invalid_request_error", "message": "roles invalid"}},
+                    "c",
+                ),
+            ),
+            (
+                specs[3][2],
+                ProbeResponse(200, 1, {}, "{}", {"usage": {"output_tokens": 0}}, "d"),
+            ),
+        ]
+        evidence = anthropic_contract_evidence(observations)
+        matrix = next(item for item in evidence if item.category == "claude_request_contract_rewrite")
+        self.assertEqual(matrix.strength, "strong")
+        self.assertEqual(matrix.detail["bypassed_count"], 2)
+        verdict = classify(evidence, "anthropic_official")
+        self.assertEqual(verdict["verdict"], "suspected_substitution")
+        self.assertEqual(verdict["likely_channel"], "claude_compatibility_relay")
+        self.assertEqual(verdict["confidence"], 0.94)
+
+    def test_repeated_same_category_cannot_inflate_or_override_stronger_contract(self) -> None:
+        evidence = [
+            Evidence(
+                f"relay_headers_{index}",
+                "relay_headers",
+                "medium",
+                "claude_subscription_relay",
+                "same repeated header family",
+                {},
+            )
+            for index in range(8)
+        ]
+        evidence.append(
+            Evidence(
+                "anthropic_contract_matrix",
+                "claude_request_contract_rewrite",
+                "strong",
+                "claude_compatibility_relay",
+                "contract rewrite",
+                {"bypassed_count": 3},
+            )
+        )
+        verdict = classify(evidence, "anthropic_official")
+        self.assertEqual(verdict["verdict"], "suspected_substitution")
+        self.assertEqual(verdict["likely_channel"], "claude_compatibility_relay")
+        self.assertEqual(verdict["confidence"], 0.94)
 
     def test_opus_4_8_uses_adaptive_thinking_controls(self) -> None:
         route = route_for_model("claude-opus-4-8", "claude", ["anthropic"])

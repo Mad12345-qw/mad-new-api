@@ -10,6 +10,7 @@ class DatabaseTests(unittest.TestCase):
             first = Database(data_dir)
             first.set_setting("interval_minutes", 15)
             first.set_setting("scheduled_mode", "active")
+            first.set_setting("scheduler_enabled", True)
             first.set_setting("webhook_url", "https://alerts.example/hook")
 
             restarted = Database(data_dir)
@@ -17,6 +18,7 @@ class DatabaseTests(unittest.TestCase):
 
         self.assertEqual(settings["interval_minutes"], 15)
         self.assertEqual(settings["scheduled_mode"], "active")
+        self.assertTrue(settings["scheduler_enabled"])
         self.assertEqual(settings["webhook_url"], "https://alerts.example/hook")
 
 

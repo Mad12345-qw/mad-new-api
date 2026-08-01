@@ -1,0 +1,1412 @@
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+index 9fd833f..fd79b80 100644
+--- a/controller/codex_compat.go
++++ b/controller/codex_compat.go
+@@ -118,35 +118,13 @@ func CodexResponses(c *gin.Context) {
+ 		codexCompatibilityError(c, http.StatusBadRequest, fmt.Errorf("model %q is not a Codex conversation model", responsesReq.Model))
+ 		return
+ 	}
+-	if err = relayconvert.ValidateResponsesRequestForChat(responsesReq); err != nil {
+-		codexCompatibilityError(c, http.StatusBadRequest, err)
+-		return
+-	}
+ 
+-	stream := lo.FromPtrOr(responsesReq.Stream, false)
+-	convertedBody := relayconvert.ConvertCPAResponsesRequestToChat(responsesReq.Model, originalBody, stream)
+-	var chatReq dto.GeneralOpenAIRequest
+-	if err = common.Unmarshal(convertedBody, &chatReq); err != nil {
+-		codexCompatibilityError(c, http.StatusInternalServerError, fmt.Errorf("CPA request conversion failed: %w", err))
+-		return
+-	}
+-	normalizeCodexDeveloperMessages(&chatReq)
+-	normalizeCodexVerbosity(&chatReq)
+-	if err = normalizeCodexNativeSearch(&chatReq); err != nil {
+-		codexCompatibilityError(c, http.StatusBadRequest, err)
+-		return
+-	}
+-	normalizeCodexGLMToolChoice(&chatReq)
+-	if stream {
+-		chatReq.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
+-	}
+-
+-	body, err := common.Marshal(&chatReq)
++	body, err := relayconvert.NormalizeCPAResponsesRequest(originalBody)
+ 	if err != nil {
+-		codexCompatibilityError(c, http.StatusInternalServerError, err)
++		codexCompatibilityError(c, http.StatusBadRequest, err)
+ 		return
+ 	}
+-	innerReq, err := newCodexInternalRequest(c, http.MethodPost, "/chat/completions", bytes.NewReader(body))
++	innerReq, err := newCodexInternalRequest(c, http.MethodPost, "/responses", bytes.NewReader(body))
+ 	if err != nil {
+ 		codexCompatibilityError(c, http.StatusInternalServerError, err)
+ 		return
+@@ -155,7 +133,7 @@ func CodexResponses(c *gin.Context) {
+ 
+ 	resp, err := codexInternalHTTPClient.Do(innerReq)
+ 	if err != nil {
+-		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("chat compatibility request failed: %w", err))
++		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("native Responses request failed: %w", err))
+ 		return
+ 	}
+ 	if resp.StatusCode != http.StatusOK {
+@@ -165,244 +143,139 @@ func CodexResponses(c *gin.Context) {
+ 	}
+ 	defer resp.Body.Close()
+ 	copyCodexTraceHeaders(c, resp)
+-
+-	if stream || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+-		if err = streamCodexCPAResponse(c, resp, responsesReq.Model, originalBody, body); err != nil && !c.Writer.Written() {
+-			codexCompatibilityError(c, http.StatusBadGateway, err)
+-		}
+-		return
+-	}
+-	if err = writeCodexCPANonStreamResponse(c, resp, responsesReq.Model, originalBody, body); err != nil {
++	if err = proxyCodexNativeResponses(c, resp, originalBody, lo.FromPtrOr(responsesReq.Stream, false)); err != nil && !c.Writer.Written() {
+ 		codexCompatibilityError(c, http.StatusBadGateway, err)
+ 	}
+ }
+ 
+-func copyCodexTraceHeaders(c *gin.Context, resp *http.Response) {
+-	for _, header := range []string{"X-Oneapi-Request-Id", "X-Request-Id"} {
+-		if value := resp.Header.Get(header); value != "" {
+-			c.Header(header, value)
+-		}
++func CodexResponsesCompact(c *gin.Context) {
++	select {
++	case codexCompatibilitySlots <- struct{}{}:
++		defer func() { <-codexCompatibilitySlots }()
++	default:
++		codexCompatibilityError(c, http.StatusTooManyRequests, fmt.Errorf("Codex compatibility capacity is busy; retry shortly"))
++		return
+ 	}
+-}
+ 
+-func readCodexRequestBody(c *gin.Context) ([]byte, error) {
+-	body, err := common.GetRequestBody(c)
++	originalBody, err := readCodexRequestBody(c)
+ 	if err != nil {
+-		return nil, err
+-	}
+-	if _, err = body.Seek(0, io.SeekStart); err != nil {
+-		return nil, err
++		codexCompatibilityError(c, http.StatusBadRequest, err)
++		return
+ 	}
+-	reader, ok := body.(io.Reader)
+-	if !ok {
+-		return nil, fmt.Errorf("request body is not readable")
++	var compactReq dto.OpenAIResponsesCompactionRequest
++	if err = common.Unmarshal(originalBody, &compactReq); err != nil || strings.TrimSpace(compactReq.Model) == "" {
++		codexCompatibilityError(c, http.StatusBadRequest, fmt.Errorf("invalid Responses compact request"))
++		return
+ 	}
+-	raw, err := io.ReadAll(reader)
+-	if _, seekErr := body.Seek(0, io.SeekStart); err == nil && seekErr != nil {
+-		err = seekErr
++	if !isCodexConversationModel(dto.OpenAIModels{Id: compactReq.Model}, codexTextPricingProvider()) {
++		codexCompatibilityError(c, http.StatusBadRequest, fmt.Errorf("model %q is not a Codex conversation model", compactReq.Model))
++		return
+ 	}
+-	return raw, err
+-}
+ 
+-func writeCodexCPANonStreamResponse(c *gin.Context, resp *http.Response, modelName string, originalRequest, convertedRequest []byte) error {
+-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
++	body, err := relayconvert.NormalizeCPAResponsesRequest(originalBody)
+ 	if err != nil {
+-		return err
+-	}
+-	converted := relayconvert.ConvertCPAChatResponseToResponsesNonStream(c.Request.Context(), modelName, originalRequest, convertedRequest, body)
+-	if !json.Valid(converted) {
+-		return fmt.Errorf("CPA returned invalid non-stream JSON")
+-	}
+-	c.Header("Content-Type", "application/json")
+-	c.Status(http.StatusOK)
+-	_, err = c.Writer.Write(converted)
+-	return err
+-}
+-
+-type codexStreamTerminalState struct {
+-	responseID   string
+-	nextSequence int
+-	terminal     bool
+-}
+-
+-func (state *codexStreamTerminalState) observe(chunk []byte) {
+-	var event string
+-	var data []byte
+-	for _, line := range bytes.Split(chunk, []byte("\n")) {
+-		line = bytes.TrimSpace(line)
+-		switch {
+-		case bytes.HasPrefix(line, []byte("event:")):
+-			event = strings.TrimSpace(string(bytes.TrimPrefix(line, []byte("event:"))))
+-		case bytes.HasPrefix(line, []byte("data:")):
+-			data = bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+-		}
+-	}
+-	switch event {
+-	case "response.completed", "response.failed", "response.incomplete":
+-		state.terminal = true
+-	}
+-	if len(data) == 0 {
++		codexCompatibilityError(c, http.StatusBadRequest, err)
+ 		return
+ 	}
+-	var envelope struct {
+-		SequenceNumber int `json:"sequence_number"`
+-		Response       struct {
+-			ID string `json:"id"`
+-		} `json:"response"`
++	innerReq, err := newCodexInternalRequest(c, http.MethodPost, "/responses/compact", bytes.NewReader(body))
++	if err != nil {
++		codexCompatibilityError(c, http.StatusInternalServerError, err)
++		return
+ 	}
+-	if json.Unmarshal(data, &envelope) != nil {
++	innerReq.Header.Set("Content-Type", "application/json")
++	resp, err := codexInternalHTTPClient.Do(innerReq)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("native Responses compact request failed: %w", err))
+ 		return
+ 	}
+-	if envelope.SequenceNumber >= state.nextSequence {
+-		state.nextSequence = envelope.SequenceNumber + 1
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		proxyCodexErrorResponse(c, resp)
++		return
+ 	}
+-	if envelope.Response.ID != "" {
+-		state.responseID = envelope.Response.ID
++	copyCodexTraceHeaders(c, resp)
++	if err = proxyCodexNativeResponses(c, resp, originalBody, false); err != nil && !c.Writer.Written() {
++		codexCompatibilityError(c, http.StatusBadGateway, err)
+ 	}
+ }
+ 
+-func streamCodexCPAResponse(c *gin.Context, resp *http.Response, modelName string, originalRequest, convertedRequest []byte) error {
+-	c.Header("Content-Type", "text/event-stream")
+-	c.Header("Cache-Control", "no-cache")
+-	c.Header("Connection", "keep-alive")
+-	c.Status(http.StatusOK)
+-
+-	scanner := bufio.NewScanner(resp.Body)
+-	scanner.Buffer(make([]byte, 64<<10), 16<<20)
+-	var state any
+-	terminalState := codexStreamTerminalState{}
+-	for scanner.Scan() {
+-		line := bytes.TrimSpace(scanner.Bytes())
+-		if len(line) == 0 || bytes.HasPrefix(line, []byte("event:")) {
+-			continue
+-		}
+-		if !bytes.HasPrefix(line, []byte("data:")) {
+-			continue
+-		}
+-		chunks := relayconvert.ConvertCPAChatResponseToResponsesStream(
+-			c.Request.Context(), modelName, originalRequest, convertedRequest, append([]byte(nil), line...), &state,
+-		)
+-		for _, chunk := range chunks {
+-			terminalState.observe(chunk)
+-			if _, err := c.Writer.Write(append(chunk, '\n', '\n')); err != nil {
+-				return err
+-			}
+-			c.Writer.Flush()
+-		}
+-	}
+-	if err := scanner.Err(); err != nil {
+-		return writeCodexStreamFailure(c, &terminalState, "upstream stream failed before a terminal event")
+-	}
+-	if !terminalState.terminal {
+-		return writeCodexStreamFailure(c, &terminalState, "upstream stream ended before a terminal event")
++func proxyCodexNativeResponses(c *gin.Context, resp *http.Response, originalRequest []byte, stream bool) error {
++	copyCodexResponseHeaders(c, resp)
++	if stream || strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
++		return proxyCodexNativeResponsesStream(c, resp, originalRequest)
+ 	}
+-	return nil
+-}
+ 
+-func writeCodexStreamFailure(c *gin.Context, state *codexStreamTerminalState, message string) error {
+-	responseID := state.responseID
+-	if responseID == "" {
+-		responseID = fmt.Sprintf("resp_madapi_failed_%d", time.Now().UnixNano())
+-	}
+-	payload := map[string]any{
+-		"type":            "response.failed",
+-		"sequence_number": state.nextSequence,
+-		"response": map[string]any{
+-			"id":         responseID,
+-			"object":     "response",
+-			"created_at": time.Now().Unix(),
+-			"status":     "failed",
+-			"background": false,
+-			"error": map[string]any{
+-				"code":    "upstream_stream_ended",
+-				"message": message,
+-			},
+-			"output": []any{},
+-		},
+-	}
+-	raw, err := json.Marshal(payload)
++	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+ 	if err != nil {
+ 		return err
+ 	}
+-	if _, err = fmt.Fprintf(c.Writer, "event: response.failed\ndata: %s\n\n", raw); err != nil {
+-		return err
++	restored, err := relayconvert.RestoreCPAResponsesPayload(originalRequest, body)
++	if err != nil {
++		return fmt.Errorf("invalid native Responses payload: %w", err)
+ 	}
+-	c.Writer.Flush()
+-	return nil
++	c.Status(resp.StatusCode)
++	_, err = c.Writer.Write(restored)
++	return err
+ }
+ 
+-func normalizeCodexDeveloperMessages(request *dto.GeneralOpenAIRequest) {
+-	for index := range request.Messages {
+-		role := strings.TrimSpace(request.Messages[index].Role)
+-		if strings.EqualFold(role, "developer") {
+-			request.Messages[index].Role = "system"
++func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, originalRequest []byte) error {
++	c.Status(resp.StatusCode)
++	scanner := bufio.NewScanner(resp.Body)
++	scanner.Buffer(make([]byte, 64*1024), 32<<20)
++	for scanner.Scan() {
++		line := append([]byte(nil), scanner.Bytes()...)
++		if bytes.HasPrefix(line, []byte("data:")) {
++			payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
++			if len(payload) > 0 && !bytes.Equal(payload, []byte("[DONE]")) {
++				if restored, err := relayconvert.RestoreCPAResponsesPayload(originalRequest, payload); err == nil {
++					line = append([]byte("data: "), restored...)
++				}
++			}
+ 		}
++		if _, err := c.Writer.Write(append(line, '\n')); err != nil {
++			return err
++		}
++		c.Writer.Flush()
+ 	}
++	return scanner.Err()
+ }
+ 
+-func normalizeCodexVerbosity(request *dto.GeneralOpenAIRequest) {
+-	if request == nil || len(request.Verbosity) == 0 {
+-		return
+-	}
+-	modelName := strings.ToLower(strings.TrimSpace(request.Model))
+-	if codexCatalogModel(dto.OpenAIModels{Id: modelName}) != nil && !codexNativeVerbosityModels[modelName] {
+-		request.Verbosity = nil
++func copyCodexResponseHeaders(c *gin.Context, resp *http.Response) {
++	for key, values := range resp.Header {
++		if strings.EqualFold(key, "Content-Length") || strings.EqualFold(key, "Transfer-Encoding") || strings.EqualFold(key, "Connection") {
++			continue
++		}
++		for _, value := range values {
++			c.Writer.Header().Add(key, value)
++		}
+ 	}
+ }
+ 
+-func normalizeCodexNativeSearch(request *dto.GeneralOpenAIRequest) error {
+-	if request == nil || request.WebSearchOptions == nil {
+-		return nil
+-	}
+-
+-	modelName := strings.ToLower(strings.TrimSpace(request.Model))
+-	if !codexNativeSearchModels[modelName] {
+-		return fmt.Errorf("model %q does not support vendor-native web search through Codex", request.Model)
+-	}
+-
+-	switch modelName {
+-	case "gemini-3.6-flash":
+-		found := false
+-		for _, tool := range request.Tools {
+-			if tool.Type == "function" && tool.Function.Name == "googleSearch" {
+-				found = true
+-				break
+-			}
+-		}
+-		if !found {
+-			request.Tools = append(request.Tools, dto.ToolCallRequest{
+-				Type:     "function",
+-				Function: dto.FunctionRequest{Name: "googleSearch"},
+-			})
++func copyCodexTraceHeaders(c *gin.Context, resp *http.Response) {
++	for _, header := range []string{"X-Oneapi-Request-Id", "X-Request-Id"} {
++		if value := resp.Header.Get(header); value != "" {
++			c.Header(header, value)
+ 		}
+-		request.WebSearchOptions = nil
+-	case "qwen3.8-max-preview":
+-		request.EnableSearch = json.RawMessage("true")
+-		request.WebSearchOptions = nil
+-	case "glm-5-2":
+-		request.WebSearch = json.RawMessage(`{"enable":true}`)
+-		request.WebSearchOptions = nil
+-	case "grok-4.5":
+-		request.SearchParameters = json.RawMessage(`{"mode":"on"}`)
+-	}
+-	return nil
++	}
+ }
+ 
+-func normalizeCodexGLMToolChoice(request *dto.GeneralOpenAIRequest) {
+-	if request == nil || !strings.EqualFold(strings.TrimSpace(request.Model), "glm-5-2") || lo.FromPtrOr(request.Stream, false) {
+-		return
++func readCodexRequestBody(c *gin.Context) ([]byte, error) {
++	body, err := common.GetRequestBody(c)
++	if err != nil {
++		return nil, err
++	}
++	if _, err = body.Seek(0, io.SeekStart); err != nil {
++		return nil, err
+ 	}
+-	choice, ok := request.ToolChoice.(string)
++	reader, ok := body.(io.Reader)
+ 	if !ok {
+-		return
++		return nil, fmt.Errorf("request body is not readable")
+ 	}
+-	switch strings.ToLower(strings.TrimSpace(choice)) {
+-	case "auto":
+-		request.ToolChoice = nil
+-	case "none":
+-		request.ToolChoice = nil
+-		request.Tools = nil
++	raw, err := io.ReadAll(reader)
++	if _, seekErr := body.Seek(0, io.SeekStart); err == nil && seekErr != nil {
++		err = seekErr
+ 	}
++	return raw, err
+ }
+ 
+ func newCodexInternalRequest(c *gin.Context, method string, path string, body io.Reader) (*http.Request, error) {
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index e12f4bc..6f53f12 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -11,7 +11,6 @@ import (
+ 	"testing"
+ 	"time"
+ 
+-	"github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/dto"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/stretchr/testify/require"
+@@ -149,85 +148,24 @@ func TestBuildCodexModelAdvertisesOnlyImplementedNativeSearch(t *testing.T) {
+ 	}
+ }
+ 
+-func TestNormalizeCodexNativeSearchUsesVendorFields(t *testing.T) {
+-	newRequest := func(modelName string) *dto.GeneralOpenAIRequest {
+-		return &dto.GeneralOpenAIRequest{
+-			Model: modelName,
+-			WebSearchOptions: &dto.WebSearchOptions{
+-				SearchContextSize: "high",
+-			},
+-		}
+-	}
+-
+-	gpt := newRequest("gpt-5.5")
+-	require.NoError(t, normalizeCodexNativeSearch(gpt))
+-	require.NotNil(t, gpt.WebSearchOptions)
+-
+-	claude := newRequest("claude-opus-5")
+-	require.NoError(t, normalizeCodexNativeSearch(claude))
+-	require.NotNil(t, claude.WebSearchOptions)
+-
+-	kimi := newRequest("kimi-k3")
+-	require.NoError(t, normalizeCodexNativeSearch(kimi))
+-	require.NotNil(t, kimi.WebSearchOptions)
+-
+-	gemini := newRequest("gemini-3.6-flash")
+-	require.NoError(t, normalizeCodexNativeSearch(gemini))
+-	require.Nil(t, gemini.WebSearchOptions)
+-	require.Len(t, gemini.Tools, 1)
+-	require.Equal(t, "googleSearch", gemini.Tools[0].Function.Name)
+-
+-	grok := newRequest("grok-4.5")
+-	require.NoError(t, normalizeCodexNativeSearch(grok))
+-	require.JSONEq(t, `{"mode":"on"}`, string(grok.SearchParameters))
+-	require.NotNil(t, grok.WebSearchOptions)
+-
+-	qwen := newRequest("qwen3.8-max-preview")
+-	require.NoError(t, normalizeCodexNativeSearch(qwen))
+-	require.Equal(t, "true", string(qwen.EnableSearch))
+-	require.Nil(t, qwen.WebSearchOptions)
+-
+-	glm := newRequest("glm-5-2")
+-	require.NoError(t, normalizeCodexNativeSearch(glm))
+-	require.Nil(t, glm.WebSearchOptions)
+-	require.Empty(t, glm.Tools)
+-	require.JSONEq(t, `{"enable":true}`, string(glm.WebSearch))
+-}
+-
+-func TestNormalizeCodexVerbosityKeepsOnlyNativeOrUnknownModels(t *testing.T) {
+-	for _, modelName := range []string{"gpt-5.5", "future-text-model"} {
+-		request := &dto.GeneralOpenAIRequest{Model: modelName, Verbosity: json.RawMessage(`"medium"`)}
+-		normalizeCodexVerbosity(request)
+-		require.JSONEq(t, `"medium"`, string(request.Verbosity), modelName)
+-	}
+-	for _, modelName := range []string{"claude-opus-5", "gemini-3.6-flash", "deepseek-v4-flash", "grok-4.5", "glm-5-2", "qwen3.8-max-preview"} {
+-		request := &dto.GeneralOpenAIRequest{Model: modelName, Verbosity: json.RawMessage(`"medium"`)}
+-		normalizeCodexVerbosity(request)
+-		require.Empty(t, request.Verbosity, modelName)
+-	}
+-}
+-
+-func TestCodexResponsesDelegatesArbitraryModelsThroughExistingChatRoute(t *testing.T) {
++func TestCodexResponsesDelegatesArbitraryModelsThroughNativeResponsesRoute(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	modelNames := []string{"claude-opus-test", "gemini-flash-test"}
+ 	var calls atomic.Int32
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		calls.Add(1)
+ 		require.Equal(t, http.MethodPost, r.Method)
+-		require.Equal(t, "/chat/completions", r.URL.Path)
++		require.Equal(t, "/responses", r.URL.Path)
+ 		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+-		var request dto.GeneralOpenAIRequest
++		var request dto.OpenAIResponsesRequest
+ 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+ 		require.Contains(t, modelNames, request.Model)
+ 		require.False(t, *request.Stream)
+-		require.NotEmpty(t, request.Messages)
+-		require.Equal(t, "system", request.Messages[0].Role)
+-		for _, message := range request.Messages {
+-			require.NotEqual(t, "developer", message.Role)
+-		}
++		require.JSONEq(t, `"Follow the developer instructions"`, string(request.Instructions))
++		require.JSONEq(t, `"hello"`, string(request.Input))
+ 
+ 		w.Header().Set("Content-Type", "application/json")
+-		_, _ = io.WriteString(w, fmt.Sprintf(`{"id":"chatcmpl-test","object":"chat.completion","created":1,"model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"converted response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}`, request.Model))
++		_, _ = io.WriteString(w, fmt.Sprintf(`{"id":"resp-test","object":"response","status":"completed","model":%q,"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"native response"}]}]}`, request.Model))
+ 	}), modelNames...)
+ 
+ 	for _, modelName := range modelNames {
+@@ -246,20 +184,20 @@ func TestCodexResponsesDelegatesArbitraryModelsThroughExistingChatRoute(t *testi
+ 		require.Equal(t, "response", payload["object"])
+ 		require.Equal(t, "completed", payload["status"])
+ 	}
+-	require.Equal(t, int32(len(modelNames)), calls.Load(), "each request must submit exactly one billable inner request")
++	require.Equal(t, int32(len(modelNames)), calls.Load(), "each request must submit exactly one native billable request")
+ }
+ 
+ func TestCodexResponsesPreservesFunctionToolsForChannelAdaptor(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-		var request dto.GeneralOpenAIRequest
++		require.Equal(t, "/responses", r.URL.Path)
++		var request dto.OpenAIResponsesRequest
+ 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+-		require.Len(t, request.Tools, 1)
+-		require.Equal(t, "function", request.Tools[0].Type)
+-		require.Equal(t, "lookup", request.Tools[0].Function.Name)
++		require.Contains(t, string(request.Tools), `"type":"function"`)
++		require.Contains(t, string(request.Tools), `"name":"lookup"`)
+ 
+ 		w.Header().Set("Content-Type", "application/json")
+-		_, _ = io.WriteString(w, `{"id":"chatcmpl-tool","object":"chat.completion","created":1,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}`)
++		_, _ = io.WriteString(w, `{"id":"resp-tool","object":"response","status":"completed","model":"gpt-test","output":[]}`)
+ 	}), "gpt-test")
+ 
+ 	recorder := httptest.NewRecorder()
+@@ -280,23 +218,20 @@ func TestCodexResponsesPreservesFunctionToolsForChannelAdaptor(t *testing.T) {
+ 
+ func TestCodexResponsesUsesCPAForResponsesOnlyAndNamespaceTools(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+-	parallelToolCalls := true
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-		var request dto.GeneralOpenAIRequest
++		require.Equal(t, "/responses", r.URL.Path)
++		var request dto.OpenAIResponsesRequest
+ 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+-		require.Len(t, request.Tools, 2)
+-		require.NotNil(t, request.WebSearchOptions)
+-		require.Equal(t, "medium", request.WebSearchOptions.SearchContextSize)
+-		for _, tool := range request.Tools {
+-			require.Equal(t, "function", tool.Type)
+-		}
+-		require.Equal(t, "mcp__github__get_me", request.Tools[0].Function.Name)
+-		require.Equal(t, "terminal__exec", request.Tools[1].Function.Name)
+-		require.NotNil(t, request.ParallelTooCalls)
+-		require.Equal(t, parallelToolCalls, *request.ParallelTooCalls)
++		tools := string(request.Tools)
++		require.Contains(t, tools, `"type":"web_search"`)
++		require.Contains(t, tools, `"name":"mcp__github__get_me"`)
++		require.Contains(t, tools, `"name":"terminal__exec"`)
++		require.NotContains(t, tools, `"type":"namespace"`)
++		require.JSONEq(t, `true`, string(request.ParallelToolCalls))
++		require.NotContains(t, string(request.Input), "additional_tools")
+ 
+ 		w.Header().Set("Content-Type", "application/json")
+-		_, _ = io.WriteString(w, `{"id":"chatcmpl-tool","object":"chat.completion","created":1,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_get_me","type":"function","function":{"name":"mcp__github__get_me","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}`)
++		_, _ = io.WriteString(w, `{"id":"resp-tool","object":"response","status":"completed","model":"gpt-test","output":[{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_get_me","name":"mcp__github__get_me","arguments":"{}"}]}`)
+ 	}), "gpt-5.5")
+ 
+ 	body := `{
+@@ -334,12 +269,17 @@ func TestCodexResponsesUsesCPAForResponsesOnlyAndNamespaceTools(t *testing.T) {
+ 	require.Equal(t, "mcp__github", response.Output[0].Namespace)
+ }
+ 
+-func TestCodexResponsesRejectsUnsupportedNativeSearchBeforeInnerRequest(t *testing.T) {
++func TestCodexResponsesDoesNotOverrideChannelNativeSearchCapabilities(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	var calls atomic.Int32
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		calls.Add(1)
+-		w.WriteHeader(http.StatusInternalServerError)
++		require.Equal(t, "/responses", r.URL.Path)
++		var request dto.OpenAIResponsesRequest
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.Contains(t, string(request.Tools), `"type":"web_search"`)
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"id":"resp-search","object":"response","status":"completed","model":"deepseek-v4-pro","output":[]}`)
+ 	}), "deepseek-v4-pro")
+ 
+ 	for _, modelName := range []string{"deepseek-v4-pro"} {
+@@ -352,10 +292,9 @@ func TestCodexResponsesRejectsUnsupportedNativeSearchBeforeInnerRequest(t *testi
+ 
+ 		CodexResponses(c)
+ 
+-		require.Equal(t, http.StatusBadRequest, recorder.Code, modelName)
+-		require.Contains(t, recorder.Body.String(), "does not support vendor-native web search", modelName)
++		require.Equal(t, http.StatusOK, recorder.Code, modelName)
+ 	}
+-	require.Equal(t, int32(0), calls.Load())
++	require.Equal(t, int32(1), calls.Load())
+ }
+ 
+ func TestCodexResponsesForwardsKimiNativeSearchToUnifiedChannel(t *testing.T) {
+@@ -363,14 +302,14 @@ func TestCodexResponsesForwardsKimiNativeSearchToUnifiedChannel(t *testing.T) {
+ 	var calls atomic.Int32
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		calls.Add(1)
+-		var request dto.GeneralOpenAIRequest
++		require.Equal(t, "/responses", r.URL.Path)
++		var request dto.OpenAIResponsesRequest
+ 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+ 		require.Equal(t, "kimi-k3", request.Model)
+-		require.NotNil(t, request.WebSearchOptions)
+-		require.Equal(t, "medium", request.WebSearchOptions.SearchContextSize)
++		require.Contains(t, string(request.Tools), `"type":"web_search"`)
+ 
+ 		w.Header().Set("Content-Type", "application/json")
+-		_, _ = io.WriteString(w, `{"id":"chatcmpl-kimi-search","object":"chat.completion","created":1,"model":"kimi-k3","choices":[{"index":0,"message":{"role":"assistant","content":"search ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}`)
++		_, _ = io.WriteString(w, `{"id":"resp-kimi-search","object":"response","status":"completed","model":"kimi-k3","output":[]}`)
+ 	}), "kimi-k3")
+ 
+ 	recorder := httptest.NewRecorder()
+@@ -385,50 +324,21 @@ func TestCodexResponsesForwardsKimiNativeSearchToUnifiedChannel(t *testing.T) {
+ 	require.Equal(t, int32(1), calls.Load())
+ }
+ 
+-func TestNormalizeCodexGLMToolChoiceForNonStreamingRequests(t *testing.T) {
+-	streamFalse := false
+-	tools := []dto.ToolCallRequest{{Type: "function"}}
+-
+-	autoRequest := &dto.GeneralOpenAIRequest{Model: "glm-5-2", Stream: &streamFalse, Tools: tools, ToolChoice: "auto"}
+-	normalizeCodexGLMToolChoice(autoRequest)
+-	require.Nil(t, autoRequest.ToolChoice)
+-	require.Len(t, autoRequest.Tools, 1)
+-
+-	noneRequest := &dto.GeneralOpenAIRequest{Model: "glm-5-2", Stream: &streamFalse, Tools: tools, ToolChoice: "none"}
+-	normalizeCodexGLMToolChoice(noneRequest)
+-	require.Nil(t, noneRequest.ToolChoice)
+-	require.Empty(t, noneRequest.Tools)
+-
+-	streamTrue := true
+-	streamRequest := &dto.GeneralOpenAIRequest{Model: "glm-5-2", Stream: &streamTrue, Tools: tools, ToolChoice: "auto"}
+-	normalizeCodexGLMToolChoice(streamRequest)
+-	require.Equal(t, "auto", streamRequest.ToolChoice)
+-
+-	otherRequest := &dto.GeneralOpenAIRequest{Model: "gpt-5.5", Stream: &streamFalse, Tools: tools, ToolChoice: "none"}
+-	normalizeCodexGLMToolChoice(otherRequest)
+-	require.Equal(t, "none", otherRequest.ToolChoice)
+-	require.Len(t, otherRequest.Tools, 1)
+-}
+-
+-func TestCodexResponsesConvertsChatStreamToResponsesEvents(t *testing.T) {
++func TestCodexResponsesPassesNativeResponsesStreamEvents(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+-	originalStreamingTimeout := constant.StreamingTimeout
+-	constant.StreamingTimeout = 30
+-	t.Cleanup(func() { constant.StreamingTimeout = originalStreamingTimeout })
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-		var request dto.GeneralOpenAIRequest
++		require.Equal(t, "/responses", r.URL.Path)
++		var request dto.OpenAIResponsesRequest
+ 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+ 		require.True(t, *request.Stream)
+-		require.NotNil(t, request.StreamOptions)
+-		require.True(t, request.StreamOptions.IncludeUsage)
+ 
+ 		w.Header().Set("Content-Type", "text/event-stream")
+ 		flusher, ok := w.(http.Flusher)
+ 		require.True(t, ok)
+-		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":null}]}\n\n")
++		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-stream\",\"object\":\"response\",\"status\":\"in_progress\"}}\n\n")
+ 		flusher.Flush()
+-		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-stream\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}\n\n")
+-		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
++		_, _ = fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
++		_, _ = fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-stream\",\"object\":\"response\",\"status\":\"completed\"}}\n\n")
+ 		flusher.Flush()
+ 	}), "gpt-test")
+ 
+@@ -468,12 +378,17 @@ func TestCodexResponsesRejectsFixedPriceModelBeforeInnerRequest(t *testing.T) {
+ 	require.Contains(t, recorder.Body.String(), "not a Codex conversation model")
+ }
+ 
+-func TestCodexResponsesRejectsStatefulInputBeforeInnerRequest(t *testing.T) {
++func TestCodexResponsesPreservesStatefulInputOnNativeRoute(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	var calls atomic.Int32
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		calls.Add(1)
+-		w.WriteHeader(http.StatusInternalServerError)
++		require.Equal(t, "/responses", r.URL.Path)
++		var request dto.OpenAIResponsesRequest
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.Equal(t, "resp_1", request.PreviousResponseID)
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"id":"resp-stateful","object":"response","status":"completed","model":"gpt-test","output":[]}`)
+ 	}), "gpt-test")
+ 
+ 	recorder := httptest.NewRecorder()
+@@ -484,9 +399,8 @@ func TestCodexResponsesRejectsStatefulInputBeforeInnerRequest(t *testing.T) {
+ 
+ 	CodexResponses(c)
+ 
+-	require.Equal(t, int32(0), calls.Load())
+-	require.Equal(t, http.StatusBadRequest, recorder.Code)
+-	require.Contains(t, recorder.Body.String(), "previous_response_id")
++	require.Equal(t, int32(1), calls.Load())
++	require.Equal(t, http.StatusOK, recorder.Code)
+ }
+ 
+ func TestCodexResponsesPreservesInnerErrorWithoutCompatibilityRetry(t *testing.T) {
+@@ -512,47 +426,37 @@ func TestCodexResponsesPreservesInnerErrorWithoutCompatibilityRetry(t *testing.T
+ 	require.JSONEq(t, `{"error":{"message":"upstream unavailable","type":"upstream_error"}}`, recorder.Body.String())
+ }
+ 
+-func TestCodexInternalResponseHeaderTimeoutIsLongEnoughForSlowTextModels(t *testing.T) {
+-	transport, ok := codexInternalHTTPClient.Transport.(*http.Transport)
+-	require.True(t, ok)
+-	require.Equal(t, 360*time.Second, transport.ResponseHeaderTimeout)
+-}
++func TestCodexResponsesCompactUsesNativeCompactRoute(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		require.Equal(t, "/responses/compact", r.URL.Path)
++		var request dto.OpenAIResponsesCompactionRequest
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.Equal(t, "gpt-test", request.Model)
++		require.Equal(t, "resp_previous", request.PreviousResponseID)
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"id":"resp_compact","object":"response.compaction","status":"completed"}`)
++	}), "gpt-test")
+ 
+-func TestCodexStreamWritesFailureWhenUpstreamEndsWithoutDone(t *testing.T) {
+ 	recorder := httptest.NewRecorder()
+ 	c, _ := gin.CreateTestContext(recorder)
+-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", nil)
+-
+-	upstream := strings.Join([]string{
+-		`data: {"id":"chatcmpl-truncated","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}`,
+-		"",
+-	}, "\n")
+-	resp := &http.Response{Body: io.NopCloser(strings.NewReader(upstream)), Header: make(http.Header)}
+-
+-	err := streamCodexCPAResponse(c, resp, "gpt-test", []byte(`{"model":"gpt-test","stream":true}`), nil)
+-	require.NoError(t, err)
+-	require.Contains(t, recorder.Body.String(), "event: response.failed")
+-	require.Contains(t, recorder.Body.String(), `"code":"upstream_stream_ended"`)
+-	require.NotContains(t, recorder.Body.String(), "event: response.completed")
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses/compact", strings.NewReader(`{"model":"gpt-test","input":[],"previous_response_id":"resp_previous"}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponsesCompact(c)
++
++	require.Equal(t, int32(1), calls.Load())
++	require.Equal(t, http.StatusOK, recorder.Code)
++	require.Contains(t, recorder.Body.String(), "resp_compact")
+ }
+ 
+-func TestCodexStreamKeepsNormalCompletedTerminalEvent(t *testing.T) {
+-	recorder := httptest.NewRecorder()
+-	c, _ := gin.CreateTestContext(recorder)
+-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", nil)
+-
+-	upstream := strings.Join([]string{
+-		`data: {"id":"chatcmpl-complete","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`,
+-		"",
+-		"data: [DONE]",
+-		"",
+-	}, "\n")
+-	resp := &http.Response{Body: io.NopCloser(strings.NewReader(upstream)), Header: make(http.Header)}
+-
+-	err := streamCodexCPAResponse(c, resp, "gpt-test", []byte(`{"model":"gpt-test","stream":true}`), nil)
+-	require.NoError(t, err)
+-	require.Contains(t, recorder.Body.String(), "event: response.completed")
+-	require.NotContains(t, recorder.Body.String(), "event: response.failed")
++func TestCodexInternalResponseHeaderTimeoutIsLongEnoughForSlowTextModels(t *testing.T) {
++	transport, ok := codexInternalHTTPClient.Transport.(*http.Transport)
++	require.True(t, ok)
++	require.Equal(t, 360*time.Second, transport.ResponseHeaderTimeout)
+ }
+ 
+ func TestCopyCodexTraceHeaders(t *testing.T) {
+diff --git a/router/relay-router.go b/router/relay-router.go
+index d04d757..ea286f4 100644
+--- a/router/relay-router.go
++++ b/router/relay-router.go
+@@ -15,15 +15,15 @@ func SetRelayRouter(router *gin.Engine) {
+ 	router.Use(middleware.DecompressRequestMiddleware())
+ 	router.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
+ 	router.Use(middleware.StatsMiddleware())
+-	// Codex Desktop needs a richer catalog than the standard OpenAI model list.
+-	// Requests are normalized once, then delegated to the existing chat route so
+-	// channel selection and protocol conversion continue to follow channel type.
++	// Codex Desktop uses a richer catalog and a native Responses transport.
++	// Authentication, distribution and billing remain in the existing relay.
+ 	codexRouter := router.Group("/codex/v1")
+ 	codexRouter.Use(middleware.RouteTag("codex_compat"))
+ 	codexRouter.Use(middleware.TokenAuth())
+ 	{
+ 		codexRouter.GET("/models", controller.CodexListModels)
+ 		codexRouter.POST("/responses", controller.CodexResponses)
++		codexRouter.POST("/responses/compact", controller.CodexResponsesCompact)
+ 	}
+ 
+ 	// https://platform.openai.com/docs/api-reference/introduction
+diff --git a/service/relayconvert/cpa_responses_compat.go b/service/relayconvert/cpa_responses_compat.go
+index 1ac98c9..5ea7947 100644
+--- a/service/relayconvert/cpa_responses_compat.go
++++ b/service/relayconvert/cpa_responses_compat.go
+@@ -1,23 +1,11 @@
+ package relayconvert
+ 
+-import (
+-	"context"
++import cparesponses "github.com/QuantumNous/new-api/service/relayconvert/internal/cpa_responses"
+ 
+-	cparesponses "github.com/QuantumNous/new-api/service/relayconvert/internal/cpa_responses"
+-)
+-
+-func ConvertCPAResponsesRequestToChat(modelName string, rawJSON []byte, stream bool) []byte {
+-	return cparesponses.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName, rawJSON, stream)
+-}
+-
+-func ConvertCPAChatResponseToResponsesNonStream(ctx context.Context, modelName string, originalRequest, convertedRequest, response []byte) []byte {
+-	return cparesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(
+-		ctx, modelName, originalRequest, convertedRequest, response, nil,
+-	)
++func NormalizeCPAResponsesRequest(rawJSON []byte) ([]byte, error) {
++	return cparesponses.NormalizeOpenAIResponsesRequest(rawJSON)
+ }
+ 
+-func ConvertCPAChatResponseToResponsesStream(ctx context.Context, modelName string, originalRequest, convertedRequest, response []byte, state *any) [][]byte {
+-	return cparesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponses(
+-		ctx, modelName, originalRequest, convertedRequest, response, state,
+-	)
++func RestoreCPAResponsesPayload(originalRequest, rawJSON []byte) ([]byte, error) {
++	return cparesponses.RestoreOpenAIResponsesPayload(originalRequest, rawJSON)
+ }
+diff --git a/service/relayconvert/internal/cpa_responses/native.go b/service/relayconvert/internal/cpa_responses/native.go
+new file mode 100644
+index 0000000..9b2429a
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/native.go
+@@ -0,0 +1,225 @@
++package cparesponses
++
++import (
++	"encoding/json"
++	"fmt"
++	"strings"
++)
++
++// NormalizeOpenAIResponsesRequest keeps the Responses protocol intact while
++// flattening Codex namespace declarations into provider-safe tool names.
++func NormalizeOpenAIResponsesRequest(rawJSON []byte) ([]byte, error) {
++	var root map[string]any
++	if err := json.Unmarshal(rawJSON, &root); err != nil {
++		return nil, fmt.Errorf("invalid Responses request: %w", err)
++	}
++
++	tools := make([]any, 0)
++	appendTools := func(value any) {
++		for _, tool := range anySlice(value) {
++			for _, normalized := range normalizeNativeTool(tool, "") {
++				tools = append(tools, normalized)
++			}
++		}
++	}
++	appendTools(root["tools"])
++
++	if input, ok := root["input"].([]any); ok {
++		normalizedInput := make([]any, 0, len(input))
++		for _, value := range input {
++			item, ok := value.(map[string]any)
++			if !ok {
++				normalizedInput = append(normalizedInput, value)
++				continue
++			}
++			if strings.TrimSpace(stringValue(item["type"])) == "additional_tools" {
++				appendTools(item["tools"])
++				continue
++			}
++			normalizeNativeHistoryItem(item)
++			normalizedInput = append(normalizedInput, item)
++		}
++		root["input"] = normalizedInput
++	}
++
++	if len(tools) > 0 {
++		root["tools"] = tools
++	} else {
++		delete(root, "tools")
++	}
++	if choice, ok := root["tool_choice"].(map[string]any); ok {
++		normalizeNativeToolChoice(choice)
++	}
++
++	return json.Marshal(root)
++}
++
++// RestoreOpenAIResponsesPayload restores Codex namespace and custom-tool
++// semantics on a native Responses JSON object or SSE event payload.
++func RestoreOpenAIResponsesPayload(originalRequest, rawJSON []byte) ([]byte, error) {
++	var root map[string]any
++	if err := json.Unmarshal(rawJSON, &root); err != nil {
++		return nil, err
++	}
++	customTools := responsesCustomToolNames(originalRequest)
++	restoreNativeResponseObject(root, originalRequest, customTools)
++	return json.Marshal(root)
++}
++
++func normalizeNativeTool(value any, namespace string) []any {
++	tool, ok := value.(map[string]any)
++	if !ok {
++		return []any{value}
++	}
++	toolType := strings.TrimSpace(stringValue(tool["type"]))
++	if toolType != "namespace" {
++		copyTool := cloneMap(tool)
++		name := nativeToolName(copyTool)
++		if namespace != "" && name != "" {
++			setNativeToolName(copyTool, qualifyResponsesNamespaceToolName(namespace, name))
++		}
++		delete(copyTool, "namespace")
++		return []any{copyTool}
++	}
++
++	namespaceName := strings.TrimSpace(stringValue(tool["name"]))
++	if namespace != "" {
++		namespaceName = qualifyResponsesNamespaceToolName(namespace, namespaceName)
++	}
++	children := make([]any, 0)
++	for _, child := range anySlice(tool["tools"]) {
++		children = append(children, normalizeNativeTool(child, namespaceName)...)
++	}
++	return children
++}
++
++func normalizeNativeHistoryItem(item map[string]any) {
++	itemType := strings.TrimSpace(stringValue(item["type"]))
++	if itemType != "function_call" && itemType != "custom_tool_call" {
++		return
++	}
++	name := strings.TrimSpace(stringValue(item["name"]))
++	namespace := strings.TrimSpace(stringValue(item["namespace"]))
++	if namespace != "" && name != "" {
++		item["name"] = qualifyResponsesNamespaceToolName(namespace, name)
++	}
++	delete(item, "namespace")
++}
++
++func normalizeNativeToolChoice(choice map[string]any) {
++	name := strings.TrimSpace(stringValue(choice["name"]))
++	namespace := strings.TrimSpace(stringValue(choice["namespace"]))
++	if namespace != "" && name != "" {
++		choice["name"] = qualifyResponsesNamespaceToolName(namespace, name)
++		delete(choice, "namespace")
++	}
++	if allowed, ok := choice["tools"].([]any); ok {
++		for _, value := range allowed {
++			if tool, ok := value.(map[string]any); ok {
++				normalizeNativeToolChoice(tool)
++			}
++		}
++	}
++}
++
++func restoreNativeResponseObject(root map[string]any, originalRequest []byte, customTools map[string]struct{}) {
++	for _, key := range []string{"item"} {
++		if item, ok := root[key].(map[string]any); ok {
++			restoreNativeResponseItem(item, originalRequest, customTools)
++		}
++	}
++	for _, key := range []string{"output"} {
++		if output, ok := root[key].([]any); ok {
++			for _, value := range output {
++				if item, ok := value.(map[string]any); ok {
++					restoreNativeResponseItem(item, originalRequest, customTools)
++				}
++			}
++		}
++	}
++	if response, ok := root["response"].(map[string]any); ok {
++		restoreNativeResponseObject(response, originalRequest, customTools)
++	}
++
++	eventType := strings.TrimSpace(stringValue(root["type"]))
++	if _, singleCustomTool := responsesSingleCustomToolName(originalRequest); singleCustomTool {
++		switch eventType {
++		case "response.function_call_arguments.delta":
++			root["type"] = "response.custom_tool_call_input.delta"
++		case "response.function_call_arguments.done":
++			root["type"] = "response.custom_tool_call_input.done"
++			if arguments, ok := root["arguments"]; ok {
++				root["input"] = unwrapCustomToolInput(stringValue(arguments))
++				delete(root, "arguments")
++			}
++		}
++	}
++}
++
++func restoreNativeResponseItem(item map[string]any, originalRequest []byte, customTools map[string]struct{}) {
++	itemType := strings.TrimSpace(stringValue(item["type"]))
++	if itemType != "function_call" && itemType != "custom_tool_call" {
++		return
++	}
++	qualifiedName := strings.TrimSpace(stringValue(item["name"]))
++	if qualifiedName == "" {
++		return
++	}
++	if _, ok := customTools[qualifiedName]; ok {
++		item["type"] = "custom_tool_call"
++		if arguments, exists := item["arguments"]; exists {
++			item["input"] = unwrapCustomToolInput(stringValue(arguments))
++			delete(item, "arguments")
++		}
++	}
++	name, namespace := splitResponsesQualifiedFunctionCallFromRequest(originalRequest, qualifiedName)
++	item["name"] = name
++	if namespace != "" {
++		item["namespace"] = namespace
++	} else {
++		delete(item, "namespace")
++	}
++}
++
++func nativeToolName(tool map[string]any) string {
++	if name := strings.TrimSpace(stringValue(tool["name"])); name != "" {
++		return name
++	}
++	if function, ok := tool["function"].(map[string]any); ok {
++		return strings.TrimSpace(stringValue(function["name"]))
++	}
++	return ""
++}
++
++func setNativeToolName(tool map[string]any, name string) {
++	if function, ok := tool["function"].(map[string]any); ok && stringValue(tool["name"]) == "" {
++		function["name"] = name
++		return
++	}
++	tool["name"] = name
++}
++
++func anySlice(value any) []any {
++	if values, ok := value.([]any); ok {
++		return values
++	}
++	return nil
++}
++
++func stringValue(value any) string {
++	if value == nil {
++		return ""
++	}
++	if text, ok := value.(string); ok {
++		return text
++	}
++	return fmt.Sprint(value)
++}
++
++func cloneMap(input map[string]any) map[string]any {
++	output := make(map[string]any, len(input))
++	for key, value := range input {
++		output[key] = value
++	}
++	return output
++}
+diff --git a/service/relayconvert/internal/cpa_responses/native_test.go b/service/relayconvert/internal/cpa_responses/native_test.go
+new file mode 100644
+index 0000000..8b06808
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/native_test.go
+@@ -0,0 +1,109 @@
++package cparesponses
++
++import (
++	"testing"
++
++	"github.com/tidwall/gjson"
++)
++
++func TestNormalizeOpenAIResponsesRequestKeepsNativeFieldsAndFlattensNamespaces(t *testing.T) {
++	raw := []byte(`{
++		"model":"gpt-test",
++		"previous_response_id":"resp_previous",
++		"reasoning":{"effort":"high","summary":"auto"},
++		"input":[
++			{"role":"user","content":"hello"},
++			{"type":"function_call","call_id":"call_1","name":"get_me","namespace":"mcp__github","arguments":"{}"},
++			{"type":"additional_tools","tools":[{"type":"namespace","name":"terminal","tools":[{"type":"custom","name":"exec","description":"Run command"}]}]}
++		],
++		"tools":[
++			{"type":"web_search","search_context_size":"high"},
++			{"type":"namespace","name":"mcp__github","tools":[{"type":"function","name":"get_me","parameters":{"type":"object"}}]}
++		],
++		"tool_choice":{"type":"allowed_tools","tools":[{"type":"function","name":"get_me","namespace":"mcp__github"}]}
++	}`)
++
++	out, err := NormalizeOpenAIResponsesRequest(raw)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := gjson.GetBytes(out, "previous_response_id").String(); got != "resp_previous" {
++		t.Fatalf("previous_response_id = %q", got)
++	}
++	if got := gjson.GetBytes(out, "reasoning.effort").String(); got != "high" {
++		t.Fatalf("reasoning effort = %q", got)
++	}
++	if got := gjson.GetBytes(out, "tools.0.type").String(); got != "web_search" {
++		t.Fatalf("tools.0.type = %q", got)
++	}
++	if got := gjson.GetBytes(out, "tools.1.name").String(); got != "mcp__github__get_me" {
++		t.Fatalf("tools.1.name = %q", got)
++	}
++	if got := gjson.GetBytes(out, "tools.2.name").String(); got != "terminal__exec" {
++		t.Fatalf("tools.2.name = %q", got)
++	}
++	if got := gjson.GetBytes(out, "input.#").Int(); got != 2 {
++		t.Fatalf("input count = %d", got)
++	}
++	if got := gjson.GetBytes(out, "input.1.name").String(); got != "mcp__github__get_me" {
++		t.Fatalf("history function name = %q", got)
++	}
++	if got := gjson.GetBytes(out, "tool_choice.tools.0.name").String(); got != "mcp__github__get_me" {
++		t.Fatalf("allowed tool name = %q", got)
++	}
++}
++
++func TestRestoreOpenAIResponsesPayloadRestoresNamespaceAndCustomTool(t *testing.T) {
++	request := []byte(`{
++		"tools":[
++			{"type":"namespace","name":"mcp__github","tools":[{"type":"function","name":"get_me","parameters":{"type":"object"}}]},
++			{"type":"namespace","name":"terminal","tools":[{"type":"custom","name":"exec"}]}
++		]
++	}`)
++	response := []byte(`{
++		"id":"resp_1","object":"response","status":"completed",
++		"output":[
++			{"type":"function_call","call_id":"call_1","name":"mcp__github__get_me","arguments":"{}"},
++			{"type":"function_call","call_id":"call_2","name":"terminal__exec","arguments":"{\"input\":\"dir\"}"}
++		]
++	}`)
++
++	out, err := RestoreOpenAIResponsesPayload(request, response)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := gjson.GetBytes(out, "output.0.name").String(); got != "get_me" {
++		t.Fatalf("function name = %q", got)
++	}
++	if got := gjson.GetBytes(out, "output.0.namespace").String(); got != "mcp__github" {
++		t.Fatalf("function namespace = %q", got)
++	}
++	if got := gjson.GetBytes(out, "output.1.type").String(); got != "custom_tool_call" {
++		t.Fatalf("custom type = %q", got)
++	}
++	if got := gjson.GetBytes(out, "output.1.name").String(); got != "exec" {
++		t.Fatalf("custom name = %q", got)
++	}
++	if got := gjson.GetBytes(out, "output.1.namespace").String(); got != "terminal" {
++		t.Fatalf("custom namespace = %q", got)
++	}
++	if got := gjson.GetBytes(out, "output.1.input").String(); got != "dir" {
++		t.Fatalf("custom input = %q", got)
++	}
++}
++
++func TestRestoreOpenAIResponsesPayloadMapsSingleCustomToolDelta(t *testing.T) {
++	request := []byte(`{"tools":[{"type":"custom","name":"apply_patch"}]}`)
++	payload := []byte(`{"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"arguments":"{\"input\":\"patch\"}"}`)
++
++	out, err := RestoreOpenAIResponsesPayload(request, payload)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := gjson.GetBytes(out, "type").String(); got != "response.custom_tool_call_input.done" {
++		t.Fatalf("event type = %q", got)
++	}
++	if got := gjson.GetBytes(out, "input").String(); got != "patch" {
++		t.Fatalf("input = %q", got)
++	}
++}
+diff --git a/service/relayconvert/internal/oai_responses/native_tools_test.go b/service/relayconvert/internal/oai_responses/native_tools_test.go
+new file mode 100644
+index 0000000..969edbe
+--- /dev/null
++++ b/service/relayconvert/internal/oai_responses/native_tools_test.go
+@@ -0,0 +1,74 @@
++package oairesponses
++
++import (
++	"encoding/json"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/QuantumNous/new-api/dto"
++	"github.com/gin-gonic/gin"
++)
++
++func nativeResponsesTestContext() *gin.Context {
++	recorder := httptest.NewRecorder()
++	context, _ := gin.CreateTestContext(recorder)
++	return context
++}
++
++func TestOpenAIResponsesToClaudePreservesNativeWebSearch(t *testing.T) {
++	request := &dto.OpenAIResponsesRequest{
++		Model:              "claude-test",
++		Input:              json.RawMessage(`"search"`),
++		PreviousResponseID: "resp_previous",
++		Tools:              json.RawMessage(`[{"type":"web_search","search_context_size":"high","user_location":{"type":"approximate","country":"CN"}}]`),
++	}
++
++	out, err := OpenAIResponsesRequestToClaudeMessages(nativeResponsesTestContext(), request)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(out.Tools) != 1 {
++		t.Fatalf("tools length = %d", len(out.Tools))
++	}
++	search, ok := out.Tools[0].(*dto.ClaudeWebSearchTool)
++	if !ok {
++		t.Fatalf("tool type = %T", out.Tools[0])
++	}
++	if search.Type != "web_search_20250305" || search.MaxUses != 10 {
++		t.Fatalf("search tool = %#v", search)
++	}
++	if search.UserLocation == nil || search.UserLocation.Country != "CN" {
++		t.Fatalf("user location = %#v", search.UserLocation)
++	}
++}
++
++func TestOpenAIResponsesToGeminiPreservesNativeBuiltins(t *testing.T) {
++	request := &dto.OpenAIResponsesRequest{
++		Model:             "gemini-test",
++		Input:             json.RawMessage(`"search"`),
++		ContextManagement: json.RawMessage(`{"type":"compaction"}`),
++		Tools: json.RawMessage(`[
++			{"type":"web_search"},
++			{"type":"code_interpreter"},
++			{"type":"url_context"}
++		]`),
++	}
++
++	out, err := OpenAIResponsesRequestToGeminiChat(nativeResponsesTestContext(), request, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	tools := out.GetTools()
++	if len(tools) != 3 {
++		t.Fatalf("tools length = %d", len(tools))
++	}
++	if tools[0].GoogleSearch == nil {
++		t.Fatal("googleSearch was not preserved")
++	}
++	if tools[1].CodeExecution == nil {
++		t.Fatal("codeExecution was not preserved")
++	}
++	if tools[2].URLContext == nil {
++		t.Fatal("urlContext was not preserved")
++	}
++}
+diff --git a/service/relayconvert/internal/oai_responses/to_claude_messages_req.go b/service/relayconvert/internal/oai_responses/to_claude_messages_req.go
+index d376dce..92ad7e1 100644
+--- a/service/relayconvert/internal/oai_responses/to_claude_messages_req.go
++++ b/service/relayconvert/internal/oai_responses/to_claude_messages_req.go
+@@ -1,6 +1,7 @@
+ package oairesponses
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"strings"
+ 
+@@ -28,10 +29,6 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
+ 	if req.Model == "" {
+ 		return nil, fmt.Errorf("model is required")
+ 	}
+-	if err := ValidateRequestChatUnsupportedFields(req); err != nil {
+-		return nil, err
+-	}
+-
+ 	claudeRequest := &dto.ClaudeRequest{
+ 		Model:       req.Model,
+ 		Temperature: req.Temperature,
+@@ -50,8 +47,12 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	if len(functions) > 0 {
+-		claudeRequest.Tools = responsesFunctionDeclarationsToClaudeTools(functions)
++	claudeTools := responsesFunctionDeclarationsToClaudeTools(functions)
++	if webSearchTool := responsesClaudeWebSearchTool(req.Tools); webSearchTool != nil {
++		claudeTools = append(claudeTools, webSearchTool)
++	}
++	if len(claudeTools) > 0 {
++		claudeRequest.Tools = claudeTools
+ 	}
+ 
+ 	toolChoice, err := RequestToolChoiceToChat(req.ToolChoice)
+@@ -122,6 +123,45 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
+ 	return claudeRequest, nil
+ }
+ 
++func responsesClaudeWebSearchTool(raw json.RawMessage) *dto.ClaudeWebSearchTool {
++	if !RawJSONPresent(raw) {
++		return nil
++	}
++	var tools []map[string]any
++	if common.Unmarshal(raw, &tools) != nil {
++		return nil
++	}
++	for _, tool := range tools {
++		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
++		if toolType != "web_search" && toolType != "web_search_preview" {
++			continue
++		}
++		webSearch := &dto.ClaudeWebSearchTool{Type: "web_search_20250305", Name: "web_search"}
++		switch strings.ToLower(strings.TrimSpace(common.Interface2String(tool["search_context_size"]))) {
++		case "low":
++			webSearch.MaxUses = 1
++		case "medium":
++			webSearch.MaxUses = 5
++		case "high":
++			webSearch.MaxUses = 10
++		}
++		if location, ok := tool["user_location"].(map[string]any); ok {
++			if approximate, ok := location["approximate"].(map[string]any); ok {
++				location = approximate
++			}
++			webSearch.UserLocation = &dto.ClaudeWebSearchUserLocation{
++				Type:     "approximate",
++				Timezone: common.Interface2String(location["timezone"]),
++				Country:  common.Interface2String(location["country"]),
++				Region:   common.Interface2String(location["region"]),
++				City:     common.Interface2String(location["city"]),
++			}
++		}
++		return webSearch
++	}
++	return nil
++}
++
+ func responsesFunctionDeclarationsToClaudeTools(functions []dto.FunctionRequest) []any {
+ 	tools := make([]any, 0, len(functions))
+ 	for _, function := range functions {
+diff --git a/service/relayconvert/internal/oai_responses/to_gemini_chat_req.go b/service/relayconvert/internal/oai_responses/to_gemini_chat_req.go
+index 8810e98..e9fc3c5 100644
+--- a/service/relayconvert/internal/oai_responses/to_gemini_chat_req.go
++++ b/service/relayconvert/internal/oai_responses/to_gemini_chat_req.go
+@@ -1,6 +1,7 @@
+ package oairesponses
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"strings"
+ 
+@@ -34,10 +35,6 @@ func OpenAIResponsesRequestToGeminiChat(c *gin.Context, req *dto.OpenAIResponses
+ 	if req.Model == "" {
+ 		return nil, fmt.Errorf("model is required")
+ 	}
+-	if err := ValidateRequestChatUnsupportedFields(req); err != nil {
+-		return nil, err
+-	}
+-
+ 	geminiRequest := &dto.GeminiChatRequest{
+ 		GenerationConfig: dto.GeminiChatGenerationConfig{
+ 			Temperature: req.Temperature,
+@@ -88,10 +85,12 @@ func OpenAIResponsesRequestToGeminiChat(c *gin.Context, req *dto.OpenAIResponses
+ 		}
+ 		functions[i].Parameters = sharedgemini.CleanFunctionParameters(functions[i].Parameters)
+ 	}
++	geminiTools := responsesGeminiBuiltinTools(req.Tools)
+ 	if len(functions) > 0 {
+-		geminiRequest.SetTools([]dto.GeminiChatTool{
+-			{FunctionDeclarations: functions},
+-		})
++		geminiTools = append(geminiTools, dto.GeminiChatTool{FunctionDeclarations: functions})
++	}
++	if len(geminiTools) > 0 {
++		geminiRequest.SetTools(geminiTools)
+ 	}
+ 
+ 	toolChoice, err := RequestToolChoiceToChat(req.ToolChoice)
+@@ -166,6 +165,39 @@ func OpenAIResponsesRequestToGeminiChat(c *gin.Context, req *dto.OpenAIResponses
+ 	return geminiRequest, nil
+ }
+ 
++func responsesGeminiBuiltinTools(raw json.RawMessage) []dto.GeminiChatTool {
++	if !RawJSONPresent(raw) {
++		return nil
++	}
++	var tools []map[string]any
++	if common.Unmarshal(raw, &tools) != nil {
++		return nil
++	}
++	out := make([]dto.GeminiChatTool, 0, 3)
++	seen := make(map[string]bool)
++	for _, tool := range tools {
++		toolType := strings.ToLower(strings.TrimSpace(common.Interface2String(tool["type"])))
++		switch toolType {
++		case "web_search", "web_search_preview", "google_search":
++			if !seen["search"] {
++				out = append(out, dto.GeminiChatTool{GoogleSearch: map[string]string{}})
++				seen["search"] = true
++			}
++		case "code_interpreter", "code_execution":
++			if !seen["code"] {
++				out = append(out, dto.GeminiChatTool{CodeExecution: map[string]string{}})
++				seen["code"] = true
++			}
++		case "url_context":
++			if !seen["url"] {
++				out = append(out, dto.GeminiChatTool{URLContext: map[string]string{}})
++				seen["url"] = true
++			}
++		}
++	}
++	return out
++}
++
+ func applyResponsesTextToGemini(raw []byte, geminiRequest *dto.GeminiChatRequest) error {
+ 	responseFormat, err := RequestTextToChatResponseFormat(raw)
+ 	if err != nil {

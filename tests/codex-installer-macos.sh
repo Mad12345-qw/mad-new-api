@@ -231,6 +231,7 @@ mkdir -p "$(dirname -- "$fallback_cli")"
 cat > "$fallback_cli" <<'EOF'
 #!/bin/sh
 set -eu
+[ "${1:-}" = '--version' ] && exit 0
 [ "${1:-}" = 'features' ] && [ "${2:-}" = 'list' ]
 EOF
 chmod 700 "$fallback_cli"

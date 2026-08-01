@@ -13,6 +13,7 @@ from pathlib import Path
 # This host keeps sites-enabled as an independent active file rather than a
 # symlink, so update the configuration Nginx actually loads.
 CONFIG_PATH = Path("/etc/nginx/sites-enabled/mad.myddns.me")
+BACKUP_DIR = Path("/opt/new-api/backups/nginx")
 MARKER = "# MadAPI CPA Codex sidecar"
 LOCATION = """    # MadAPI CPA Codex sidecar
     location ^~ /codex/v1/ {
@@ -45,7 +46,10 @@ def main() -> int:
     if source.count(anchor) != 1:
         raise RuntimeError("unable to find a unique MadAPI default Nginx location")
 
-    backup = CONFIG_PATH.with_name(f"mad.myddns.me.before-cpa-codex-{datetime.utcnow():%Y%m%d-%H%M%S}")
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    for legacy_backup in CONFIG_PATH.parent.glob("mad.myddns.me.before-cpa-codex-*"):
+        shutil.move(str(legacy_backup), BACKUP_DIR / legacy_backup.name)
+    backup = BACKUP_DIR / f"mad.myddns.me.before-cpa-codex-{datetime.utcnow():%Y%m%d-%H%M%S}"
     shutil.copy2(CONFIG_PATH, backup)
     CONFIG_PATH.write_text(source.replace(anchor, LOCATION + anchor), encoding="utf-8")
     check = subprocess.run(["nginx", "-t"], text=True, capture_output=True, check=False)

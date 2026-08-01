@@ -72,6 +72,9 @@ model_provider = "custom"
 model = "old-model"
 model_catalog_json = "$catalogFixture"
 model_reasoning_effort = "medium"
+disable_response_storage = true
+
+[model_providers]
 
 [features]
 memories = true
@@ -120,7 +123,7 @@ args = []
     Assert-True (-not $installed.Contains('model_catalog_json')) 'A static model catalog remained configured.'
     Assert-True (-not $installed.Contains('[model_providers.custom.auth]')) 'Command-backed authentication remained configured.'
     Assert-True (-not $installed.Contains('supports_websockets')) 'Unverified WebSocket support was enabled.'
-    Assert-True (-not $installed.Contains('disable_response_storage')) 'Optional response storage policy was added.'
+    Assert-True ($installed.Contains('disable_response_storage = true')) 'CC Switch response-storage preference was not preserved.'
     Assert-True ($installed.Contains('stream_idle_timeout_ms = 360000')) 'Stable 360 second stream timeout was not configured.'
     Assert-True ($installed.Contains('request_max_retries = 3')) 'Stable request retry count was not configured.'
     Assert-True ($installed.Contains('requires_openai_auth = true')) 'Remote model catalog authentication was not enabled.'
@@ -193,6 +196,8 @@ requires_openai_auth = true
     Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh install did not use the proven custom provider identity.'
     Assert-True ($freshConfig.Contains('name = "custom"')) 'Fresh install did not use the proven custom provider display name.'
     Assert-True ($freshConfig.Contains('experimental_bearer_token = "sk-windows-fresh-key"')) 'Fresh install did not configure the MadAPI key.'
+    Assert-True (-not $freshConfig.Contains('disable_response_storage')) 'Fresh install added an optional response-storage policy.'
+    Assert-True (-not $freshConfig.Contains('model_catalog_json')) 'Fresh install added a static model catalog.'
     $oldHome = [string]$env:CODEX_HOME
     try {
         $env:CODEX_HOME = $freshHome

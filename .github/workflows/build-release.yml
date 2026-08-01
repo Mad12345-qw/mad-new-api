@@ -78,6 +78,15 @@ jobs:
             middleware/distributor.go
             middleware/playground_path.go
             middleware/playground_path_test.go
+            relay/channel/claude/adaptor.go
+            relay/channel/claude/adaptor_responses_test.go
+            relay/channel/claude/responses_via_messages.go
+            relay/channel/deepseek/adaptor.go
+            relay/channel/deepseek/adaptor_responses_test.go
+            relay/channel/moonshot/adaptor.go
+            relay/channel/moonshot/adaptor_test.go
+            relay/channel/openai/cpa_responses_via_chat.go
+            relay/channel/openai/cpa_responses_via_chat_test.go
             relay/common/relay_info.go
             model/main.go
             model/task.go
@@ -98,6 +107,8 @@ jobs:
             router/relay-router.go
             service/quota.go
             service/quota_audio_test.go
+            service/relayconvert/cpa_channel_compat.go
+            service/relayconvert/cpa_channel_compat_test.go
             service/relayconvert/cpa_responses_compat.go
             service/relayconvert/request_compat.go
             service/relayconvert/internal/cpa_common/bytes.go
@@ -123,7 +134,7 @@ jobs:
 
       - name: Test backend paths
         working-directory: source
-        run: go test ./controller ./middleware ./relay/common ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
+        run: go test ./controller ./middleware ./relay/common ./relay/channel/claude ./relay/channel/deepseek ./relay/channel/moonshot ./relay/channel/openai ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
 
       - name: Verify playground frontend
         working-directory: source/web/default

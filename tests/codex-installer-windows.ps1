@@ -122,8 +122,8 @@ args = []
     Assert-True ($installed.Contains('[mcp_servers.node_repl]')) 'MCP configuration was not preserved.'
     Assert-True ($installed.Contains('model_reasoning_effort = "medium"')) 'Existing reasoning effort was overwritten.'
     Assert-True (-not $installed.Contains('old-secret')) 'Old MadAPI secret remained in config.toml.'
-    Assert-True ($installed.Contains('experimental_bearer_token = "sk-windows-first-key"')) 'API key was not written into the active provider.'
-    Assert-True (([regex]::Matches($installed, '(?m)^experimental_bearer_token = "sk-windows-first-key"\r?$')).Count -eq 1) 'API key was written more than once.'
+    Assert-True (-not $installed.Contains('experimental_bearer_token')) 'Conflicting direct bearer authentication remained configured.'
+    Assert-True (-not $installed.Contains('requires_openai_auth')) 'Conflicting OpenAI authentication remained configured.'
     Assert-True ($installed.Contains('[model_providers.custom.auth]')) 'Dynamic catalog command authentication was not configured.'
     Assert-True ($installed.Contains('madapi.key')) 'Dynamic catalog authentication does not read the protected MadAPI key.'
     Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-first-key') 'Protected dynamic catalog key was not written correctly.'
@@ -134,7 +134,6 @@ args = []
     Assert-True ($installed.Contains('disable_response_storage = true')) 'The existing response-storage preference was not preserved.'
     Assert-True ($installed.Contains('stream_idle_timeout_ms = 360000')) 'Stable 360 second stream timeout was not configured.'
     Assert-True ($installed.Contains('request_max_retries = 3')) 'Stable request retry count was not configured.'
-    Assert-True ($installed.Contains('requires_openai_auth = true')) 'Remote model catalog authentication was not enabled.'
     Assert-True ((Get-Hash $sessionPath) -eq $sessionHash) 'Session data changed.'
 
     $backup = @(Get-ChildItem -LiteralPath $testHome -Filter 'config.toml.madapi-backup-*' -File)
@@ -161,8 +160,7 @@ args = []
     Assert-True ($second.ExitCode -eq 0) 'Repeat install failed.'
     $reinstalled = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8)
     Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.custom\]\r?$')).Count -eq 1) 'Duplicate provider section was created.'
-    Assert-True (([regex]::Matches($reinstalled, '(?m)^experimental_bearer_token = "sk-windows-second-key"\r?$')).Count -eq 1) 'Repeat install did not replace the API key exactly once.'
-    Assert-True (-not $reinstalled.Contains('sk-windows-first-key')) 'Repeat install retained the previous API key.'
+    Assert-True (-not $reinstalled.Contains('experimental_bearer_token')) 'Repeat install restored conflicting direct bearer authentication.'
     Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-second-key') 'Repeat install did not update the protected dynamic catalog key.'
     Assert-True (-not $reinstalled.Contains('supports_websockets')) 'Repeat install enabled unverified WebSocket support.'
 
@@ -205,7 +203,7 @@ requires_openai_auth = true
     $freshConfig = [IO.File]::ReadAllText((Join-Path $freshHome 'config.toml'), [Text.Encoding]::UTF8)
     Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh install did not use the proven custom provider identity.'
     Assert-True ($freshConfig.Contains('name = "custom"')) 'Fresh install did not use the proven custom provider display name.'
-    Assert-True ($freshConfig.Contains('experimental_bearer_token = "sk-windows-fresh-key"')) 'Fresh install did not configure the MadAPI key.'
+    Assert-True (-not $freshConfig.Contains('experimental_bearer_token')) 'Fresh install added conflicting direct bearer authentication.'
     Assert-True ($freshConfig.Contains('[model_providers.custom.auth]')) 'Fresh install did not enable dynamic catalog refresh for API-key users.'
     Assert-True (([IO.File]::ReadAllText((Join-Path $freshHome 'madapi.key'))) -eq 'sk-windows-fresh-key') 'Fresh install did not create the protected dynamic catalog key.'
     Assert-True (-not $freshConfig.Contains('disable_response_storage')) 'Fresh install added an optional response-storage policy.'

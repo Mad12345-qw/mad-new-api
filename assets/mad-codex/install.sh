@@ -237,8 +237,6 @@ trap 'exit 1' HUP INT TERM
   printf 'name = %s\n' "$(toml_string "$provider_name")"
   printf '%s\n' 'base_url = "https://mad.myddns.me/codex/v1"'
   printf '%s\n' 'wire_api = "responses"'
-  printf '%s\n' 'requires_openai_auth = true'
-  printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 3'
   printf '%s\n\n' 'context_window_override = 1048576'

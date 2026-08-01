@@ -29,7 +29,7 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 mkdir -p "$sandbox"
-printf '%s' '{"models":[]}' > "$catalog_fixture"
+cp "$script_dir/fixtures/codex-models.json" "$catalog_fixture"
 codex_cli=$(command -v codex)
 [ -x "$codex_cli" ] || fail 'Latest Codex CLI is unavailable.'
 

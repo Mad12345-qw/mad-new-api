@@ -67,7 +67,7 @@ try {
     $project = ([char]0x9879).ToString() + ([char]0x76ee)
     $projectPath = "D:\$desktop\$project"
     $catalogFixture = Join-Path $sandbox 'catalog from any external tool.json'
-    Write-Utf8NoBom $catalogFixture '{"models":[]}'
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures\codex-models.json') -Destination $catalogFixture
     $catalogTomlPath = $catalogFixture.Replace('\', '/')
     $config = @"
 model_provider = "custom"

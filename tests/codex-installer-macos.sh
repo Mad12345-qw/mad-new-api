@@ -106,51 +106,6 @@ run_installer "$home" 'sk-macos-second-key' "$codex_cli"
 ! grep -Fq 'sk-macos-first-key' "$config_path" || fail 'Repeat install retained the previous API key.'
 ! grep -Fq 'supports_websockets' "$config_path" || fail 'Repeat install enabled unverified WebSocket support.'
 
-legacy_home="$sandbox/legacy-script-defaults"
-mkdir -p "$legacy_home"
-cat > "$legacy_home/config.toml" <<'EOF'
-model_provider = "custom"
-model = "gpt-5.6-sol"
-disable_response_storage = true
-
-[model_providers.custom]
-name = "custom"
-base_url = "https://mad.myddns.me/codex/v1"
-wire_api = "responses"
-requires_openai_auth = true
-experimental_bearer_token = "sk-legacy-key"
-stream_idle_timeout_ms = 360000
-request_max_retries = 0
-context_window_override = 1048576
-EOF
-cat > "$legacy_home/config.toml.madapi-backup-20260801-010101-001" <<'EOF'
-model_provider = "custom"
-model = "deepseek-v4-flash"
-
-[model_providers.custom]
-name = "custom"
-base_url = "https://example.invalid/v1"
-wire_api = "responses"
-EOF
-run_installer "$legacy_home" 'sk-macos-legacy-migrated-key' "$codex_cli"
-! grep -Fq 'disable_response_storage' "$legacy_home/config.toml" || fail 'Legacy injected response-storage setting was not removed.'
-grep -Fq 'request_max_retries = 3' "$legacy_home/config.toml" || fail 'Legacy retry count was not migrated.'
-
-preserve_storage_home="$sandbox/preserve-user-storage"
-mkdir -p "$preserve_storage_home"
-cat > "$preserve_storage_home/config.toml" <<'EOF'
-model_provider = "custom"
-model = "gpt-5.6-sol"
-disable_response_storage = true
-
-[model_providers.custom]
-name = "custom"
-base_url = "https://example.invalid/v1"
-wire_api = "responses"
-EOF
-run_installer "$preserve_storage_home" 'sk-macos-preserve-storage-key' "$codex_cli"
-grep -Fq 'disable_response_storage = true' "$preserve_storage_home/config.toml" || fail 'User-owned response-storage setting was removed.'
-
 recovery_home="$sandbox/recover-provider"
 mkdir -p "$recovery_home"
 cat > "$recovery_home/config.toml" <<'EOF'

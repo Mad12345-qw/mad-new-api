@@ -34,33 +34,6 @@ function Get-ProviderDisplayName([string[]]$Lines, [string]$ProviderId) {
     return $null
 }
 
-function Test-RootTomlAssignment([string[]]$Lines, [string]$Key, [string]$ValuePattern) {
-    foreach ($line in $Lines) {
-        if ($line -match '^\s*\[') {
-            break
-        }
-        if ($line -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*' + $ValuePattern + '\s*(?:#.*)?$')) {
-            return $true
-        }
-    }
-    return $false
-}
-
-function Test-ProviderTomlAssignment([string[]]$Lines, [string]$ProviderId, [string]$Key, [string]$ValuePattern) {
-    $targetSection = 'model_providers.' + $ProviderId
-    $currentSection = ''
-    foreach ($line in $Lines) {
-        if ($line -match '^\s*\[([^]]+)\]\s*(?:#.*)?$') {
-            $currentSection = $Matches[1].Trim()
-            continue
-        }
-        if ($currentSection -eq $targetSection -and $line -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*' + $ValuePattern + '\s*(?:#.*)?$')) {
-            return $true
-        }
-    }
-    return $false
-}
-
 function Get-CodexCandidates {
     $candidates = New-Object 'System.Collections.Generic.List[string]'
 
@@ -209,23 +182,6 @@ if ($hadConfig) {
 
 $providerSourceLines = $sourceLines
 $providerId = Get-RootTomlString $sourceLines 'model_provider'
-$legacyInjectedStorage = $false
-if (
-    $hadConfig -and
-    -not [string]::IsNullOrWhiteSpace($providerId) -and
-    (Test-RootTomlAssignment $sourceLines 'disable_response_storage' 'true') -and
-    (Test-ProviderTomlAssignment $sourceLines $providerId 'base_url' '"https://mad\.myddns\.me/codex/v1"') -and
-    (Test-ProviderTomlAssignment $sourceLines $providerId 'request_max_retries' '0')
-) {
-    $backupPattern = ([IO.Path]::GetFileName($configPath)) + '.madapi-backup-*'
-    foreach ($backup in @(Get-ChildItem -LiteralPath $codexHome -Filter $backupPattern -File -ErrorAction SilentlyContinue)) {
-        $backupLines = @([IO.File]::ReadAllLines($backup.FullName, $utf8Strict))
-        if (-not (Test-RootTomlAssignment $backupLines 'disable_response_storage' 'true')) {
-            $legacyInjectedStorage = $true
-            break
-        }
-    }
-}
 if ([string]::IsNullOrWhiteSpace($providerId) -or $providerId -eq 'madapi') {
     $backupPattern = ([IO.Path]::GetFileName($configPath)) + '.madapi-backup-*'
     foreach ($backup in @(Get-ChildItem -LiteralPath $codexHome -Filter $backupPattern -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
@@ -277,9 +233,6 @@ foreach ($line in $sourceLines) {
     }
 
     if ($currentSection -eq '') {
-        if ($legacyInjectedStorage -and $line -match '^\s*disable_response_storage\s*=') {
-            continue
-        }
         if ($line -match '^\s*(model_provider|model|model_catalog_json)\s*=') {
             continue
         }

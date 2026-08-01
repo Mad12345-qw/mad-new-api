@@ -153,57 +153,6 @@ args = []
     Assert-True (-not $reinstalled.Contains('sk-windows-first-key')) 'Repeat install retained the previous API key.'
     Assert-True (-not $reinstalled.Contains('supports_websockets')) 'Repeat install enabled unverified WebSocket support.'
 
-    $legacyHome = Join-Path $sandbox 'legacy-script-defaults'
-    New-Item -ItemType Directory -Path $legacyHome -Force | Out-Null
-    $legacyConfigPath = Join-Path $legacyHome 'config.toml'
-    Write-Utf8NoBom $legacyConfigPath @'
-model_provider = "custom"
-model = "gpt-5.6-sol"
-disable_response_storage = true
-
-[model_providers.custom]
-name = "custom"
-base_url = "https://mad.myddns.me/codex/v1"
-wire_api = "responses"
-requires_openai_auth = true
-experimental_bearer_token = "sk-legacy-key"
-stream_idle_timeout_ms = 360000
-request_max_retries = 0
-context_window_override = 1048576
-'@
-    Write-Utf8NoBom ($legacyConfigPath + '.madapi-backup-20260801-010101-001') @'
-model_provider = "custom"
-model = "deepseek-v4-flash"
-
-[model_providers.custom]
-name = "custom"
-base_url = "https://example.invalid/v1"
-wire_api = "responses"
-'@
-    $legacy = Invoke-TestInstaller $legacyHome 'sk-windows-legacy-migrated-key' $codexCli
-    Assert-True ($legacy.ExitCode -eq 0) 'Legacy script-default migration failed.'
-    $legacyMigrated = [IO.File]::ReadAllText($legacyConfigPath, [Text.Encoding]::UTF8)
-    Assert-True (-not $legacyMigrated.Contains('disable_response_storage')) 'Legacy injected response-storage setting was not removed.'
-    Assert-True ($legacyMigrated.Contains('request_max_retries = 3')) 'Legacy retry count was not migrated.'
-
-    $preserveStorageHome = Join-Path $sandbox 'preserve-user-storage'
-    New-Item -ItemType Directory -Path $preserveStorageHome -Force | Out-Null
-    $preserveStorageConfigPath = Join-Path $preserveStorageHome 'config.toml'
-    Write-Utf8NoBom $preserveStorageConfigPath @'
-model_provider = "custom"
-model = "gpt-5.6-sol"
-disable_response_storage = true
-
-[model_providers.custom]
-name = "custom"
-base_url = "https://example.invalid/v1"
-wire_api = "responses"
-'@
-    $preservedStorage = Invoke-TestInstaller $preserveStorageHome 'sk-windows-preserve-storage-key' $codexCli
-    Assert-True ($preservedStorage.ExitCode -eq 0) 'User storage preference preservation failed.'
-    $preservedStorageConfig = [IO.File]::ReadAllText($preserveStorageConfigPath, [Text.Encoding]::UTF8)
-    Assert-True ($preservedStorageConfig.Contains('disable_response_storage = true')) 'User-owned response-storage setting was removed.'
-
     $recoveryHome = Join-Path $sandbox 'recover-provider'
     New-Item -ItemType Directory -Path $recoveryHome -Force | Out-Null
     $recoveryConfigPath = Join-Path $recoveryHome 'config.toml'

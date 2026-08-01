@@ -73,13 +73,12 @@ fi
 
 has_root_key() {
   key=$1
-  file=${2:-$config_path}
   awk -v key="$key" '
     BEGIN { found = 0 }
     /^[[:space:]]*\[/ { exit }
     $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { found = 1 }
     END { exit(found ? 0 : 1) }
-  ' "$file"
+  ' "$config_path"
 }
 
 root_string_value() {
@@ -118,29 +117,6 @@ provider_display_name() {
   ' "$file"
 }
 
-provider_has_assignment() {
-  provider=$1
-  key=$2
-  expected=$3
-  file=$4
-  awk -v target="model_providers.$provider" -v key="$key" -v expected="$expected" '
-    /^[[:space:]]*\[[^]]+\][[:space:]]*(#.*)?$/ {
-      section = $0
-      sub(/^[[:space:]]*\[/, "", section)
-      sub(/\].*$/, "", section)
-      current = section
-      next
-    }
-    current == target && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
-      value = $0
-      sub(/^[^=]*=[[:space:]]*/, "", value)
-      sub(/[[:space:]]*(#.*)?$/, "", value)
-      exit(value == expected ? 0 : 1)
-    }
-    END { if (current != target) exit 1 }
-  ' "$file"
-}
-
 toml_string() {
   printf '%s' "$1" | awk '{ gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); printf "\"%s\"", $0 }'
 }
@@ -149,21 +125,8 @@ has_reasoning=0
 has_compact=0
 provider_source=$config_path
 provider_id=
-legacy_injected_storage=0
 if [ "$had_config" -eq 1 ]; then
   provider_id=$(root_string_value model_provider "$config_path")
-  if [ -n "$provider_id" ] &&
-     has_root_key disable_response_storage "$config_path" &&
-     provider_has_assignment "$provider_id" base_url '"https://mad.myddns.me/codex/v1"' "$config_path" &&
-     provider_has_assignment "$provider_id" request_max_retries '0' "$config_path"; then
-    for recovery_path in "$config_path".madapi-backup-*; do
-      [ -f "$recovery_path" ] || continue
-      if ! has_root_key disable_response_storage "$recovery_path"; then
-        legacy_injected_storage=1
-        break
-      fi
-    done
-  fi
   if [ -z "$provider_id" ] || [ "$provider_id" = 'madapi' ]; then
     for recovery_path in "$config_path".madapi-backup-*; do
       [ -f "$recovery_path" ] || continue
@@ -209,10 +172,9 @@ if [ "$had_config" -eq 1 ]; then
       if (skip) next
     }
     skip { next }
-    current == "" && legacy_storage == 1 && /^[[:space:]]*disable_response_storage[[:space:]]*=/ { next }
     current == "" && /^[[:space:]]*(model_provider|model|model_catalog_json)[[:space:]]*=/ { next }
     { print }
-  ' legacy_storage="$legacy_injected_storage" "$config_path" > "$body_path"
+  ' "$config_path" > "$body_path"
 else
   : > "$body_path"
 fi

@@ -105,11 +105,17 @@ function startCodex() {
       child.stdin.write(`${JSON.stringify({ method, params })}\n`)
     },
     async stop() {
-      child.stdin.end()
-      const exited = new Promise((resolve) => child.once('exit', resolve))
-      const timer = setTimeout(() => child.kill(), 5_000)
-      await exited
-      clearTimeout(timer)
+      if (process.platform === 'win32' && child.pid) {
+        await new Promise((resolve) => {
+          spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+            .once('exit', resolve)
+        })
+      } else {
+        child.kill('SIGTERM')
+      }
+      if (child.exitCode === null) {
+        await new Promise((resolve) => child.once('exit', resolve))
+      }
       lines.close()
     },
   }
@@ -124,10 +130,15 @@ async function verifyVersion(expectedVersion, expectedRequestCount) {
     assert(initialized.result, JSON.stringify(initialized))
     app.notify('initialized')
     await waitForRequestCount(expectedRequestCount)
-    const listed = await app.request(2, 'model/list', { limit: 100, includeHidden: false })
-    assert(listed.result, JSON.stringify(listed))
-    const modelIds = listed.result.data.map((model) => model.model)
-    assert(modelIds.includes(`madapi-dynamic-v${expectedVersion}`), modelIds.join(', '))
+    let modelIds = []
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const listed = await app.request(2 + attempt, 'model/list', { limit: 100, includeHidden: false })
+      assert(listed.result, JSON.stringify(listed))
+      modelIds = listed.result.data.map((model) => model.model)
+      if (modelIds.includes(`madapi-dynamic-v${expectedVersion}`)) return
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+    assert.fail(modelIds.join(', '))
   } finally {
     await app.stop()
   }

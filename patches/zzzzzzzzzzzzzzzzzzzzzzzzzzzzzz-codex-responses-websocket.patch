@@ -1,0 +1,964 @@
+
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+index fd79b80..d83157e 100644
+--- a/controller/codex_compat.go
++++ b/controller/codex_compat.go
+@@ -334,7 +334,7 @@ func buildCodexModel(candidate dto.OpenAIModels, index int) map[string]any {
+ 		"slug":                              candidate.Id,
+ 		"display_name":                      displayName,
+ 		"description":                       "Available through MadAPI: " + displayName,
+-		"prefer_websockets":                 false,
++		"prefer_websockets":                 true,
+ 		"support_verbosity":                 true,
+ 		"default_verbosity":                 "medium",
+ 		"web_search_tool_type":              "text_and_image",
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index 6f53f12..0ff7702 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -13,9 +13,110 @@ import (
+ 
+ 	"github.com/QuantumNous/new-api/dto"
+ 	"github.com/gin-gonic/gin"
++	"github.com/gorilla/websocket"
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++func TestCodexResponsesWebsocketUsesExistingResponsesRouteForEveryTurn(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	var secondInputCount atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		call := calls.Add(1)
++		require.Equal(t, http.MethodPost, r.Method)
++		require.Equal(t, "/responses", r.URL.Path)
++		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
++		var request struct {
++			Model  string            `json:"model"`
++			Input  []json.RawMessage `json:"input"`
++			Stream bool              `json:"stream"`
++		}
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.Equal(t, "gpt-test", request.Model)
++		require.True(t, request.Stream)
++		if call == 2 {
++			secondInputCount.Store(int32(len(request.Input)))
++		}
++		w.Header().Set("Content-Type", "text/event-stream")
++		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-%d\",\"status\":\"in_progress\"}}\n\n", call)
++		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"id\":\"assistant-%d\",\"content\":[]}}\n\n", call)
++		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-%d\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"id\":\"assistant-%d\",\"content\":[]}]}}\n\n", call, call)
++	}), "gpt-test")
++
++	router := gin.New()
++	router.GET("/codex/v1/responses", func(c *gin.Context) {
++		c.Set("token_id", 123)
++		CodexResponsesWebsocket(c)
++	})
++	server := httptest.NewServer(router)
++	defer server.Close()
++	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/codex/v1/responses"
++	header := make(http.Header)
++	header.Set("Authorization", "Bearer test-token")
++	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
++	require.NoError(t, err)
++	defer conn.Close()
++
++	require.NoError(t, conn.WriteJSON(gin.H{
++		"type":  "response.create",
++		"model": "gpt-test",
++		"input": []any{gin.H{"type": "message", "role": "user", "id": "user-1", "content": "hello"}},
++	}))
++	readCodexWebsocketUntilCompleted(t, conn)
++	require.NoError(t, conn.WriteJSON(gin.H{
++		"type":                 "response.append",
++		"previous_response_id": "resp-1",
++		"input":                []any{gin.H{"type": "message", "role": "user", "id": "user-2", "content": "next"}},
++	}))
++	readCodexWebsocketUntilCompleted(t, conn)
++	require.Equal(t, int32(2), calls.Load())
++	require.Equal(t, int32(3), secondInputCount.Load())
++}
++
++func TestCodexResponsesWebsocketPrewarmDoesNotCallOrBillInnerRoute(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		w.WriteHeader(http.StatusInternalServerError)
++	}), "gpt-test")
++
++	router := gin.New()
++	router.GET("/codex/v1/responses", func(c *gin.Context) {
++		c.Set("token_id", 456)
++		CodexResponsesWebsocket(c)
++	})
++	server := httptest.NewServer(router)
++	defer server.Close()
++	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/codex/v1/responses"
++	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
++	require.NoError(t, err)
++	defer conn.Close()
++
++	require.NoError(t, conn.WriteJSON(gin.H{
++		"type": "response.create", "model": "gpt-test", "input": []any{}, "generate": false,
++	}))
++	readCodexWebsocketUntilCompleted(t, conn)
++	require.Equal(t, int32(0), calls.Load())
++}
++
++func readCodexWebsocketUntilCompleted(t *testing.T, conn *websocket.Conn) {
++	t.Helper()
++	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
++	for {
++		_, payload, err := conn.ReadMessage()
++		require.NoError(t, err)
++		var event struct {
++			Type string `json:"type"`
++		}
++		require.NoError(t, json.Unmarshal(payload, &event))
++		require.NotEqual(t, "error", event.Type, string(payload))
++		if event.Type == "response.completed" {
++			return
++		}
++	}
++}
++
+ func withCodexCompatibilityTestServer(t *testing.T, handler http.Handler, textModels ...string) string {
+ 	t.Helper()
+ 	server := httptest.NewServer(handler)
+@@ -67,7 +168,7 @@ func TestCodexListModelsUsesExistingTextPricingAndEndpointMetadata(t *testing.T)
+ 	model := payload.Models[0]
+ 	require.Equal(t, "claude-opus-test", model["slug"])
+ 	require.Equal(t, "list", model["visibility"])
+-	require.Equal(t, false, model["prefer_websockets"])
++	require.Equal(t, true, model["prefer_websockets"])
+ 	require.Equal(t, "high", model["default_reasoning_level"])
+ 	require.Equal(t, true, model["support_verbosity"])
+ 	require.Equal(t, "medium", model["default_verbosity"])
+@@ -112,7 +213,7 @@ func TestBuildCodexModelUsesHighEndDefaultsForUnknownModels(t *testing.T) {
+ 	require.Equal(t, true, model["support_verbosity"])
+ 	require.Equal(t, "medium", model["default_verbosity"])
+ 	require.Equal(t, false, model["supports_search_tool"])
+-	require.Equal(t, false, model["prefer_websockets"])
++	require.Equal(t, true, model["prefer_websockets"])
+ 	require.Empty(t, model["service_tiers"])
+ }
+ 
+diff --git a/controller/codex_websocket.go b/controller/codex_websocket.go
+new file mode 100644
+index 0000000..1b87da3
+--- /dev/null
++++ b/controller/codex_websocket.go
+@@ -0,0 +1,336 @@
++package controller
++
++import (
++	"bufio"
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/QuantumNous/new-api/dto"
++	"github.com/QuantumNous/new-api/service/relayconvert"
++	"github.com/gin-gonic/gin"
++	"github.com/gorilla/websocket"
++)
++
++const (
++	codexWebsocketConnectionLimit = 64
++	codexWebsocketPerTokenLimit   = 4
++	codexWebsocketMessageLimit    = 16 << 20
++	codexWebsocketStateLimit      = 16 << 20
++	codexWebsocketIdleTimeout     = 10 * time.Minute
++	codexWebsocketWriteTimeout    = 30 * time.Second
++)
++
++var (
++	codexWebsocketSlots = make(chan struct{}, codexWebsocketConnectionLimit)
++	codexWebsocketUsers = struct {
++		sync.Mutex
++		active map[int]int
++	}{active: make(map[int]int)}
++	codexWebsocketUpgrader = websocket.Upgrader{
++		ReadBufferSize:  4096,
++		WriteBufferSize: 4096,
++		CheckOrigin: func(_ *http.Request) bool {
++			return true
++		},
++	}
++)
++
++// CodexResponsesWebsocket implements CPA's Responses websocket contract on
++// the isolated /codex route. Every generated turn is still submitted through
++// the existing local /v1/responses route, preserving its routing and billing.
++func CodexResponsesWebsocket(c *gin.Context) {
++	release, ok := acquireCodexWebsocket(c.GetInt("token_id"))
++	if !ok {
++		codexCompatibilityError(c, http.StatusTooManyRequests, fmt.Errorf("Codex websocket connection capacity is busy; retry shortly"))
++		return
++	}
++	defer release()
++
++	conn, err := codexWebsocketUpgrader.Upgrade(c.Writer, c.Request, codexWebsocketUpgradeHeaders(c.Request))
++	if err != nil {
++		return
++	}
++	defer conn.Close()
++	conn.SetReadLimit(codexWebsocketMessageLimit)
++	_ = conn.SetReadDeadline(time.Now().Add(codexWebsocketIdleTimeout))
++	conn.SetPongHandler(func(string) error {
++		return conn.SetReadDeadline(time.Now().Add(codexWebsocketIdleTimeout))
++	})
++
++	state := &relayconvert.CPAResponsesWebsocketState{}
++	for {
++		messageType, payload, readErr := conn.ReadMessage()
++		if readErr != nil {
++			return
++		}
++		_ = conn.SetReadDeadline(time.Now().Add(codexWebsocketIdleTimeout))
++		if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
++			continue
++		}
++
++		snapshot := state.Snapshot()
++		prewarm := !state.HasRequest() && isCodexWebsocketPrewarm(payload)
++		requestBody, normalizeErr := state.NormalizeWebsocketRequest(payload, codexWebsocketStateLimit)
++		if normalizeErr != nil {
++			if writeCodexWebsocketError(conn, http.StatusBadRequest, "invalid_request_error", normalizeErr) != nil {
++				return
++			}
++			continue
++		}
++		var requestMeta struct {
++			Model string `json:"model"`
++		}
++		if json.Unmarshal(requestBody, &requestMeta) != nil || !isCodexConversationModel(dto.OpenAIModels{Id: requestMeta.Model}, codexTextPricingProvider()) {
++			state.Restore(snapshot)
++			if writeCodexWebsocketError(conn, http.StatusBadRequest, "model_not_supported", fmt.Errorf("model %q is not a Codex conversation model", requestMeta.Model)) != nil {
++				return
++			}
++			continue
++		}
++		if prewarm {
++			if writeCodexWebsocketPrewarm(conn, state, requestBody) != nil {
++				return
++			}
++			continue
++		}
++
++		if processErr := processCodexWebsocketTurn(c, conn, state, requestBody); processErr != nil {
++			state.Restore(snapshot)
++			if writeCodexWebsocketError(conn, processErr.status, processErr.code, processErr.err) != nil {
++				return
++			}
++			continue
++		}
++		if state.StateBytes() > codexWebsocketStateLimit {
++			_ = conn.WriteControl(
++				websocket.CloseMessage,
++				websocket.FormatCloseMessage(websocket.CloseMessageTooBig, "conversation state requires compaction"),
++				time.Now().Add(codexWebsocketWriteTimeout),
++			)
++			return
++		}
++	}
++}
++
++func isCodexWebsocketPrewarm(payload []byte) bool {
++	var request struct {
++		Type     string `json:"type"`
++		Generate *bool  `json:"generate"`
++	}
++	return json.Unmarshal(payload, &request) == nil && request.Type == "response.create" && request.Generate != nil && !*request.Generate
++}
++
++func writeCodexWebsocketPrewarm(conn *websocket.Conn, state *relayconvert.CPAResponsesWebsocketState, requestBody []byte) error {
++	var request struct {
++		Model string `json:"model"`
++	}
++	_ = json.Unmarshal(requestBody, &request)
++	responseID := fmt.Sprintf("resp_prewarm_%d", time.Now().UnixNano())
++	createdAt := time.Now().Unix()
++	created, _ := json.Marshal(gin.H{
++		"type": "response.created", "sequence_number": 0,
++		"response": gin.H{"id": responseID, "object": "response", "created_at": createdAt, "status": "in_progress", "model": request.Model, "output": []any{}},
++	})
++	completed, _ := json.Marshal(gin.H{
++		"type": "response.completed", "sequence_number": 1,
++		"response": gin.H{"id": responseID, "object": "response", "created_at": createdAt, "status": "completed", "model": request.Model, "output": []any{}, "usage": gin.H{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}},
++	})
++	if err := writeCodexWebsocketPayload(conn, created); err != nil {
++		return err
++	}
++	state.ObserveWebsocketEvent(completed, make(map[int]json.RawMessage), &[]json.RawMessage{})
++	return writeCodexWebsocketPayload(conn, completed)
++}
++
++type codexWebsocketTurnError struct {
++	status int
++	code   string
++	err    error
++}
++
++func processCodexWebsocketTurn(c *gin.Context, conn *websocket.Conn, state *relayconvert.CPAResponsesWebsocketState, requestBody []byte) *codexWebsocketTurnError {
++	select {
++	case codexCompatibilitySlots <- struct{}{}:
++		defer func() { <-codexCompatibilitySlots }()
++	default:
++		return &codexWebsocketTurnError{http.StatusTooManyRequests, "capacity_busy", fmt.Errorf("Codex generation capacity is busy; retry shortly")}
++	}
++
++	upstreamBody, err := relayconvert.NormalizeCPAResponsesRequest(requestBody)
++	if err != nil {
++		return &codexWebsocketTurnError{http.StatusBadRequest, "invalid_request_error", err}
++	}
++	innerReq, err := newCodexInternalRequest(c, http.MethodPost, "/responses", bytes.NewReader(upstreamBody))
++	if err != nil {
++		return &codexWebsocketTurnError{http.StatusInternalServerError, "internal_request_failed", err}
++	}
++	innerReq.Header.Set("Content-Type", "application/json")
++
++	resp, err := codexInternalHTTPClient.Do(innerReq)
++	if err != nil {
++		return &codexWebsocketTurnError{http.StatusBadGateway, "upstream_request_failed", fmt.Errorf("native Responses request failed: %w", err)}
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		return codexWebsocketHTTPError(resp)
++	}
++
++	if strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
++		return forwardCodexWebsocketSSE(conn, state, requestBody, resp.Body)
++	}
++	body, err := io.ReadAll(io.LimitReader(resp.Body, codexWebsocketMessageLimit+1))
++	if err != nil {
++		return &codexWebsocketTurnError{http.StatusBadGateway, "invalid_upstream_response", err}
++	}
++	if len(body) > codexWebsocketMessageLimit {
++		return &codexWebsocketTurnError{http.StatusBadGateway, "response_too_large", fmt.Errorf("upstream response exceeds websocket message limit")}
++	}
++	restored, err := relayconvert.RestoreCPAResponsesPayload(requestBody, body)
++	if err != nil {
++		return &codexWebsocketTurnError{http.StatusBadGateway, "invalid_upstream_response", err}
++	}
++	state.ObserveWebsocketEvent(restored, make(map[int]json.RawMessage), &[]json.RawMessage{})
++	if err = writeCodexWebsocketPayload(conn, restored); err != nil {
++		return &codexWebsocketTurnError{http.StatusBadGateway, "client_write_failed", err}
++	}
++	return nil
++}
++
++func forwardCodexWebsocketSSE(conn *websocket.Conn, state *relayconvert.CPAResponsesWebsocketState, originalRequest []byte, body io.Reader) *codexWebsocketTurnError {
++	scanner := bufio.NewScanner(body)
++	scanner.Buffer(make([]byte, 64*1024), codexWebsocketMessageLimit)
++	outputItems := make(map[int]json.RawMessage)
++	fallbackItems := make([]json.RawMessage, 0, 4)
++	seenPayload := false
++	completed := false
++	for scanner.Scan() {
++		line := scanner.Bytes()
++		if !bytes.HasPrefix(line, []byte("data:")) {
++			continue
++		}
++		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
++		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
++			continue
++		}
++		restored, err := relayconvert.RestoreCPAResponsesPayload(originalRequest, payload)
++		if err != nil {
++			return &codexWebsocketTurnError{http.StatusBadGateway, "invalid_upstream_response", err}
++		}
++		seenPayload = true
++		if state.ObserveWebsocketEvent(restored, outputItems, &fallbackItems) {
++			completed = true
++		}
++		if err = writeCodexWebsocketPayload(conn, restored); err != nil {
++			return &codexWebsocketTurnError{http.StatusBadGateway, "client_write_failed", err}
++		}
++	}
++	if err := scanner.Err(); err != nil {
++		return &codexWebsocketTurnError{http.StatusBadGateway, "upstream_stream_failed", err}
++	}
++	if !seenPayload {
++		return &codexWebsocketTurnError{http.StatusBadGateway, "empty_upstream_response", fmt.Errorf("upstream returned no Responses events")}
++	}
++	if !completed {
++		return &codexWebsocketTurnError{http.StatusBadGateway, "incomplete_upstream_response", fmt.Errorf("upstream stream ended before response.completed")}
++	}
++	return nil
++}
++
++func writeCodexWebsocketPayload(conn *websocket.Conn, payload []byte) error {
++	if err := conn.SetWriteDeadline(time.Now().Add(codexWebsocketWriteTimeout)); err != nil {
++		return err
++	}
++	return conn.WriteMessage(websocket.TextMessage, payload)
++}
++
++func writeCodexWebsocketError(conn *websocket.Conn, status int, code string, err error) error {
++	if status < http.StatusBadRequest {
++		status = http.StatusInternalServerError
++	}
++	if strings.TrimSpace(code) == "" {
++		code = "codex_websocket_error"
++	}
++	payload, _ := json.Marshal(gin.H{
++		"type": "error",
++		"error": gin.H{
++			"type":    "codex_websocket_error",
++			"code":    code,
++			"message": err.Error(),
++			"status":  status,
++		},
++	})
++	return writeCodexWebsocketPayload(conn, payload)
++}
++
++func codexWebsocketHTTPError(resp *http.Response) *codexWebsocketTurnError {
++	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
++	if err != nil {
++		return &codexWebsocketTurnError{resp.StatusCode, "upstream_error", err}
++	}
++	var envelope struct {
++		Error struct {
++			Message string `json:"message"`
++			Code    string `json:"code"`
++		} `json:"error"`
++	}
++	_ = json.Unmarshal(body, &envelope)
++	message := strings.TrimSpace(envelope.Error.Message)
++	if message == "" {
++		message = strings.TrimSpace(string(body))
++	}
++	if message == "" {
++		message = http.StatusText(resp.StatusCode)
++	}
++	code := strings.TrimSpace(envelope.Error.Code)
++	if code == "" {
++		code = "upstream_error"
++	}
++	return &codexWebsocketTurnError{resp.StatusCode, code, fmt.Errorf("%s", message)}
++}
++
++func codexWebsocketUpgradeHeaders(request *http.Request) http.Header {
++	headers := make(http.Header)
++	if request == nil {
++		return headers
++	}
++	if turnState := strings.TrimSpace(request.Header.Get("x-codex-turn-state")); turnState != "" {
++		headers.Set("x-codex-turn-state", turnState)
++	}
++	return headers
++}
++
++func acquireCodexWebsocket(tokenID int) (func(), bool) {
++	select {
++	case codexWebsocketSlots <- struct{}{}:
++	default:
++		return nil, false
++	}
++	codexWebsocketUsers.Lock()
++	if codexWebsocketUsers.active[tokenID] >= codexWebsocketPerTokenLimit {
++		codexWebsocketUsers.Unlock()
++		<-codexWebsocketSlots
++		return nil, false
++	}
++	codexWebsocketUsers.active[tokenID]++
++	codexWebsocketUsers.Unlock()
++
++	var once sync.Once
++	return func() {
++		once.Do(func() {
++			codexWebsocketUsers.Lock()
++			if codexWebsocketUsers.active[tokenID] <= 1 {
++				delete(codexWebsocketUsers.active, tokenID)
++			} else {
++				codexWebsocketUsers.active[tokenID]--
++			}
++			codexWebsocketUsers.Unlock()
++			<-codexWebsocketSlots
++		})
++	}, true
++}
+diff --git a/router/relay-router.go b/router/relay-router.go
+index ea286f4..57e8fbb 100644
+--- a/router/relay-router.go
++++ b/router/relay-router.go
+@@ -22,6 +22,7 @@ func SetRelayRouter(router *gin.Engine) {
+ 	codexRouter.Use(middleware.TokenAuth())
+ 	{
+ 		codexRouter.GET("/models", controller.CodexListModels)
++		codexRouter.GET("/responses", controller.CodexResponsesWebsocket)
+ 		codexRouter.POST("/responses", controller.CodexResponses)
+ 		codexRouter.POST("/responses/compact", controller.CodexResponsesCompact)
+ 	}
+diff --git a/service/relayconvert/cpa_responses_compat.go b/service/relayconvert/cpa_responses_compat.go
+index 5ea7947..41b0582 100644
+--- a/service/relayconvert/cpa_responses_compat.go
++++ b/service/relayconvert/cpa_responses_compat.go
+@@ -2,6 +2,8 @@ package relayconvert
+ 
+ import cparesponses "github.com/QuantumNous/new-api/service/relayconvert/internal/cpa_responses"
+ 
++type CPAResponsesWebsocketState = cparesponses.WebsocketState
++
+ func NormalizeCPAResponsesRequest(rawJSON []byte) ([]byte, error) {
+ 	return cparesponses.NormalizeOpenAIResponsesRequest(rawJSON)
+ }
+diff --git a/service/relayconvert/internal/cpa_responses/websocket.go b/service/relayconvert/internal/cpa_responses/websocket.go
+new file mode 100644
+index 0000000..c5c8c78
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/websocket.go
+@@ -0,0 +1,353 @@
++package cparesponses
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"strings"
++)
++
++const (
++	websocketRequestTypeCreate = "response.create"
++	websocketRequestTypeAppend = "response.append"
++)
++
++// WebsocketState retains only the transcript needed to translate CPA's
++// incremental websocket protocol into self-contained Responses requests.
++// It deliberately contains no credentials, channel state, or billing state.
++type WebsocketState struct {
++	lastRequest  []byte
++	lastOutput   []json.RawMessage
++	lastResponse string
++}
++
++type WebsocketStateSnapshot struct {
++	lastRequest  []byte
++	lastOutput   []json.RawMessage
++	lastResponse string
++}
++
++func (s *WebsocketState) Snapshot() WebsocketStateSnapshot {
++	return WebsocketStateSnapshot{
++		lastRequest:  bytes.Clone(s.lastRequest),
++		lastOutput:   cloneRawMessages(s.lastOutput),
++		lastResponse: s.lastResponse,
++	}
++}
++
++func (s *WebsocketState) Restore(snapshot WebsocketStateSnapshot) {
++	s.lastRequest = bytes.Clone(snapshot.lastRequest)
++	s.lastOutput = cloneRawMessages(snapshot.lastOutput)
++	s.lastResponse = snapshot.lastResponse
++}
++
++// NormalizeWebsocketRequest implements CPA's HTTP-fallback websocket model:
++// response.append is rebuilt as a normal, self-contained Responses request so
++// the existing New API relay remains the sole channel and billing authority.
++func (s *WebsocketState) NormalizeWebsocketRequest(payload []byte, maxStateBytes int) ([]byte, error) {
++	if !json.Valid(payload) {
++		return nil, fmt.Errorf("invalid websocket request JSON")
++	}
++
++	var request map[string]json.RawMessage
++	if err := json.Unmarshal(payload, &request); err != nil {
++		return nil, fmt.Errorf("invalid websocket request: %w", err)
++	}
++	requestType, err := rawJSONString(request["type"])
++	if err != nil {
++		return nil, fmt.Errorf("invalid websocket request type")
++	}
++	switch requestType {
++	case websocketRequestTypeCreate:
++	case websocketRequestTypeAppend:
++		if len(s.lastRequest) == 0 {
++			return nil, fmt.Errorf("websocket request received before response.create")
++		}
++	default:
++		return nil, fmt.Errorf("unsupported websocket request type: %s", requestType)
++	}
++
++	delete(request, "type")
++	request["stream"] = json.RawMessage("true")
++	if len(s.lastRequest) == 0 {
++		if previous, exists := request["previous_response_id"]; exists {
++			if value, previousErr := rawJSONString(previous); previousErr == nil && strings.TrimSpace(value) != "" {
++				return nil, fmt.Errorf("previous response is not available on this websocket; resend the full conversation input")
++			}
++		}
++		modelName, modelErr := rawJSONString(request["model"])
++		if modelErr != nil || strings.TrimSpace(modelName) == "" {
++			return nil, fmt.Errorf("missing model in response.create request")
++		}
++		if _, exists := request["input"]; !exists {
++			request["input"] = json.RawMessage("[]")
++		}
++		return s.commitRequest(request, maxStateBytes)
++	}
++
++	var previous map[string]json.RawMessage
++	if err = json.Unmarshal(s.lastRequest, &previous); err != nil {
++		return nil, fmt.Errorf("invalid websocket session state")
++	}
++	inheritWebsocketRequestFields(request, previous)
++
++	nextInput, err := rawJSONArray(request["input"])
++	if err != nil {
++		return nil, fmt.Errorf("websocket request requires array field: input")
++	}
++
++	if shouldReplaceWebsocketTranscript(requestType, request, nextInput) {
++		delete(request, "previous_response_id")
++		request["input"] = mustMarshalRawMessages(nextInput)
++		return s.commitRequest(request, maxStateBytes)
++	}
++
++	existingInput, err := rawJSONArray(previous["input"])
++	if err != nil {
++		return nil, fmt.Errorf("invalid previous websocket input")
++	}
++	appendInput := removeCompactionItems(nextInput)
++	merged := make([]json.RawMessage, 0, len(existingInput)+len(s.lastOutput)+len(appendInput))
++	merged = append(merged, cloneRawMessages(existingInput)...)
++	merged = append(merged, cloneRawMessages(s.lastOutput)...)
++	merged = append(merged, cloneRawMessages(appendInput)...)
++	merged = dedupeWebsocketInput(merged)
++
++	delete(request, "previous_response_id")
++	request["input"] = mustMarshalRawMessages(merged)
++	return s.commitRequest(request, maxStateBytes)
++}
++
++func (s *WebsocketState) HasRequest() bool {
++	return len(s.lastRequest) > 0
++}
++
++// ObserveWebsocketEvent records the completed response output required by the
++// next response.append. Delta payloads are never retained.
++func (s *WebsocketState) ObserveWebsocketEvent(payload []byte, outputItems map[int]json.RawMessage, fallback *[]json.RawMessage) bool {
++	var event struct {
++		Type        string          `json:"type"`
++		OutputIndex *int            `json:"output_index"`
++		Item        json.RawMessage `json:"item"`
++		Response    struct {
++			ID     string            `json:"id"`
++			Output []json.RawMessage `json:"output"`
++		} `json:"response"`
++	}
++	if err := json.Unmarshal(payload, &event); err != nil {
++		return false
++	}
++	if event.Type == "response.output_item.done" && len(event.Item) > 0 {
++		item := bytes.Clone(event.Item)
++		if event.OutputIndex != nil {
++			outputItems[*event.OutputIndex] = item
++		} else {
++			*fallback = append(*fallback, item)
++		}
++	}
++	if event.Type != "response.completed" && event.Type != "response.done" {
++		return false
++	}
++
++	s.lastResponse = event.Response.ID
++	if len(event.Response.Output) > 0 {
++		s.lastOutput = cloneRawMessages(event.Response.Output)
++	} else {
++		s.lastOutput = orderedWebsocketOutput(outputItems, *fallback)
++	}
++	return true
++}
++
++func (s *WebsocketState) StateBytes() int {
++	total := len(s.lastRequest) + len(s.lastResponse)
++	for _, item := range s.lastOutput {
++		total += len(item)
++	}
++	return total
++}
++
++func (s *WebsocketState) commitRequest(request map[string]json.RawMessage, maxStateBytes int) ([]byte, error) {
++	normalized, err := json.Marshal(request)
++	if err != nil {
++		return nil, fmt.Errorf("failed to normalize websocket request: %w", err)
++	}
++	if maxStateBytes > 0 && len(normalized) > maxStateBytes {
++		return nil, fmt.Errorf("websocket conversation state exceeds %d bytes; compact or start a new session", maxStateBytes)
++	}
++	s.lastRequest = bytes.Clone(normalized)
++	return normalized, nil
++}
++
++func inheritWebsocketRequestFields(next map[string]json.RawMessage, previous map[string]json.RawMessage) {
++	for _, key := range []string{"model", "instructions", "tools", "tool_choice", "parallel_tool_calls", "reasoning", "text", "include"} {
++		if _, exists := next[key]; exists {
++			continue
++		}
++		if value, exists := previous[key]; exists {
++			next[key] = bytes.Clone(value)
++		}
++	}
++}
++
++func shouldReplaceWebsocketTranscript(requestType string, request map[string]json.RawMessage, input []json.RawMessage) bool {
++	if previous, exists := request["previous_response_id"]; exists {
++		if value, err := rawJSONString(previous); err == nil && strings.TrimSpace(value) != "" {
++			return false
++		}
++	}
++	if requestType == websocketRequestTypeCreate && containsCodexLocalCompactionSummary(input) {
++		return true
++	}
++	for _, item := range input {
++		var metadata struct {
++			Type string `json:"type"`
++			Role string `json:"role"`
++		}
++		if json.Unmarshal(item, &metadata) != nil {
++			continue
++		}
++		if metadata.Type == "function_call" || metadata.Type == "custom_tool_call" {
++			return true
++		}
++		if metadata.Type == "message" && metadata.Role == "assistant" {
++			return true
++		}
++	}
++	return false
++}
++
++func containsCodexLocalCompactionSummary(input []json.RawMessage) bool {
++	const prefix = "Another language model started to solve this problem and produced a summary of its thinking process."
++	for _, item := range input {
++		var message struct {
++			Role    string `json:"role"`
++			Content any    `json:"content"`
++		}
++		if json.Unmarshal(item, &message) != nil || message.Role != "user" {
++			continue
++		}
++		switch content := message.Content.(type) {
++		case string:
++			if strings.HasPrefix(content, prefix) {
++				return true
++			}
++		case []any:
++			for _, part := range content {
++				object, ok := part.(map[string]any)
++				if ok && object["type"] == "input_text" {
++					if text, ok := object["text"].(string); ok && strings.HasPrefix(text, prefix) {
++						return true
++					}
++				}
++			}
++		}
++	}
++	return false
++}
++
++func removeCompactionItems(input []json.RawMessage) []json.RawMessage {
++	filtered := make([]json.RawMessage, 0, len(input))
++	for _, item := range input {
++		var metadata struct {
++			Type string `json:"type"`
++		}
++		if json.Unmarshal(item, &metadata) == nil && (metadata.Type == "compaction" || metadata.Type == "compaction_summary") {
++			continue
++		}
++		filtered = append(filtered, item)
++	}
++	return filtered
++}
++
++func dedupeWebsocketInput(input []json.RawMessage) []json.RawMessage {
++	lastByID := make(map[string]int)
++	seenCallID := make(map[string]struct{})
++	keep := make([]bool, len(input))
++	for index, item := range input {
++		var metadata struct {
++			Type   string `json:"type"`
++			ID     string `json:"id"`
++			CallID string `json:"call_id"`
++		}
++		if json.Unmarshal(item, &metadata) != nil {
++			keep[index] = true
++			continue
++		}
++		if metadata.Type == "function_call" || metadata.Type == "custom_tool_call" {
++			if metadata.CallID != "" {
++				if _, exists := seenCallID[metadata.CallID]; exists {
++					continue
++				}
++				seenCallID[metadata.CallID] = struct{}{}
++			}
++		}
++		keep[index] = true
++		if metadata.ID != "" {
++			if previous, exists := lastByID[metadata.ID]; exists {
++				keep[previous] = false
++			}
++			lastByID[metadata.ID] = index
++		}
++	}
++	result := make([]json.RawMessage, 0, len(input))
++	for index, item := range input {
++		if keep[index] {
++			result = append(result, item)
++		}
++	}
++	return result
++}
++
++func orderedWebsocketOutput(indexed map[int]json.RawMessage, fallback []json.RawMessage) []json.RawMessage {
++	result := make([]json.RawMessage, 0, len(indexed)+len(fallback))
++	for index := 0; len(indexed) > 0; index++ {
++		item, exists := indexed[index]
++		if !exists {
++			if index > len(indexed)+len(fallback)+1024 {
++				break
++			}
++			continue
++		}
++		result = append(result, bytes.Clone(item))
++		delete(indexed, index)
++	}
++	for _, item := range fallback {
++		result = append(result, bytes.Clone(item))
++	}
++	return result
++}
++
++func rawJSONString(raw json.RawMessage) (string, error) {
++	if len(raw) == 0 {
++		return "", fmt.Errorf("missing string")
++	}
++	var value string
++	if err := json.Unmarshal(raw, &value); err != nil {
++		return "", err
++	}
++	return value, nil
++}
++
++func rawJSONArray(raw json.RawMessage) ([]json.RawMessage, error) {
++	if len(raw) == 0 {
++		return nil, fmt.Errorf("missing array")
++	}
++	var value []json.RawMessage
++	if err := json.Unmarshal(raw, &value); err != nil {
++		return nil, err
++	}
++	return value, nil
++}
++
++func mustMarshalRawMessages(items []json.RawMessage) json.RawMessage {
++	value, _ := json.Marshal(items)
++	return value
++}
++
++func cloneRawMessages(items []json.RawMessage) []json.RawMessage {
++	cloned := make([]json.RawMessage, 0, len(items))
++	for _, item := range items {
++		cloned = append(cloned, bytes.Clone(item))
++	}
++	return cloned
++}
+diff --git a/service/relayconvert/internal/cpa_responses/websocket_test.go b/service/relayconvert/internal/cpa_responses/websocket_test.go
+new file mode 100644
+index 0000000..b93a674
+--- /dev/null
++++ b/service/relayconvert/internal/cpa_responses/websocket_test.go
+@@ -0,0 +1,85 @@
++package cparesponses
++
++import (
++	"encoding/json"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestWebsocketStateRejectsAppendBeforeCreate(t *testing.T) {
++	state := &WebsocketState{}
++	_, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.append","input":[]}`), 1<<20)
++	require.ErrorContains(t, err, "before response.create")
++}
++
++func TestWebsocketStateMergesHTTPFallbackTranscript(t *testing.T) {
++	state := &WebsocketState{}
++	first, err := state.NormalizeWebsocketRequest([]byte(`{
++		"type":"response.create",
++		"model":"gpt-test",
++		"instructions":"be concise",
++		"input":[{"type":"message","role":"user","id":"user-1","content":"hello"}]
++	}`), 1<<20)
++	require.NoError(t, err)
++	require.NotContains(t, string(first), `"type":"response.create"`)
++	require.Contains(t, string(first), `"stream":true`)
++
++	completed := []byte(`{
++		"type":"response.completed",
++		"response":{"id":"resp-1","output":[{"type":"message","role":"assistant","id":"assistant-1","content":"hi"}]}
++	}`)
++	require.True(t, state.ObserveWebsocketEvent(completed, make(map[int]json.RawMessage), &[]json.RawMessage{}))
++
++	second, err := state.NormalizeWebsocketRequest([]byte(`{
++		"type":"response.append",
++		"previous_response_id":"resp-1",
++		"input":[{"type":"message","role":"user","id":"user-2","content":"next"}]
++	}`), 1<<20)
++	require.NoError(t, err)
++	var request struct {
++		Model        string            `json:"model"`
++		Instructions string            `json:"instructions"`
++		Input        []json.RawMessage `json:"input"`
++	}
++	require.NoError(t, json.Unmarshal(second, &request))
++	require.Equal(t, "gpt-test", request.Model)
++	require.Equal(t, "be concise", request.Instructions)
++	require.Len(t, request.Input, 3)
++	require.Contains(t, string(request.Input[0]), `"id":"user-1"`)
++	require.Contains(t, string(request.Input[1]), `"id":"assistant-1"`)
++	require.Contains(t, string(request.Input[2]), `"id":"user-2"`)
++	require.NotContains(t, string(second), "previous_response_id")
++}
++
++func TestWebsocketStateReplacesExplicitTranscript(t *testing.T) {
++	state := &WebsocketState{}
++	_, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.create","model":"gpt-test","input":[{"type":"message","role":"user","id":"old"}]}`), 1<<20)
++	require.NoError(t, err)
++
++	next, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.append","input":[{"type":"message","role":"assistant","id":"replacement"}]}`), 1<<20)
++	require.NoError(t, err)
++	require.Contains(t, string(next), `"id":"replacement"`)
++	require.NotContains(t, string(next), `"id":"old"`)
++}
++
++func TestWebsocketStateEnforcesMemoryLimit(t *testing.T) {
++	state := &WebsocketState{}
++	_, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.create","model":"gpt-test","input":[{"type":"message","role":"user","content":"payload"}]}`), 32)
++	require.ErrorContains(t, err, "exceeds")
++}
++
++func TestWebsocketStateSnapshotRestoresFailedTurn(t *testing.T) {
++	state := &WebsocketState{}
++	snapshot := state.Snapshot()
++	_, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.create","model":"gpt-test","input":[{"type":"message","role":"user","id":"failed"}]}`), 1<<20)
++	require.NoError(t, err)
++	require.True(t, state.HasRequest())
++
++	state.Restore(snapshot)
++	require.False(t, state.HasRequest())
++	next, err := state.NormalizeWebsocketRequest([]byte(`{"type":"response.create","model":"gpt-test","input":[{"type":"message","role":"user","id":"retry"}]}`), 1<<20)
++	require.NoError(t, err)
++	require.Contains(t, string(next), `"id":"retry"`)
++	require.NotContains(t, string(next), `"id":"failed"`)
++}

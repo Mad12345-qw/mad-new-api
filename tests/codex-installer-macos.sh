@@ -77,6 +77,7 @@ grep -Fq 'model_reasoning_effort = "medium"' "$config_path" || fail 'Existing re
 ! grep -Fq 'old-secret' "$config_path" || fail 'Old MadAPI secret remained in config.toml.'
 ! grep -Fq 'sk-macos-first-key' "$config_path" || fail 'API key was written into config.toml.'
 grep -Fq 'madapi.key' "$config_path" || fail 'Protected key-file auth was not configured.'
+grep -Fq 'supports_websockets = true' "$config_path" || fail 'MadAPI WebSocket support was not enabled.'
 [ "$(hash_file "$session_path")" = "$session_hash" ] || fail 'Session data changed.'
 
 backup=$(find "$home" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
@@ -90,6 +91,7 @@ sleep 1
 run_installer "$home" 'sk-macos-second-key' "$codex_cli"
 [ "$(grep -c '^\[model_providers\.madapi\]$' "$config_path")" -eq 1 ] || fail 'Duplicate provider section was created.'
 [ "$(grep -c '^\[model_providers\.madapi\.auth\]$' "$config_path")" -eq 1 ] || fail 'Duplicate auth section was created.'
+[ "$(grep -c '^supports_websockets = true$' "$config_path")" -eq 1 ] || fail 'Duplicate WebSocket setting was created.'
 [ "$(cat "$home/madapi.key")" = 'sk-macos-second-key' ] || fail 'Repeat install did not rotate the key.'
 
 fresh_home="$sandbox/fresh"

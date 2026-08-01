@@ -110,6 +110,7 @@ jobs:
             controller/codex_catalog.go
             controller/codex_compat.go
             controller/codex_compat_test.go
+            controller/codex_websocket.go
             controller/playground.go
             controller/relay.go
             controller/relay_task_retry_test.go
@@ -157,6 +158,8 @@ jobs:
             service/relayconvert/internal/cpa_responses/response.go
             service/relayconvert/internal/cpa_responses/response_test.go
             service/relayconvert/internal/cpa_responses/tools.go
+            service/relayconvert/internal/cpa_responses/websocket.go
+            service/relayconvert/internal/cpa_responses/websocket_test.go
             service/relayconvert/internal/oai_chat/to_oai_responses_req.go
             service/relayconvert/internal/oai_chat/to_oai_responses_req_test.go
             service/relayconvert/internal/oai_responses/native_tools_test.go

@@ -111,6 +111,7 @@ args = []
     Assert-True (-not $installed.Contains('old-secret')) 'Old MadAPI secret remained in config.toml.'
     Assert-True (-not $installed.Contains('sk-windows-first-key')) 'API key was written into config.toml.'
     Assert-True ($installed.Contains('madapi.key')) 'Protected key-file auth was not configured.'
+    Assert-True ($installed.Contains('supports_websockets = true')) 'MadAPI WebSocket support was not enabled.'
     Assert-True ((Get-Hash $sessionPath) -eq $sessionHash) 'Session data changed.'
 
     $backup = @(Get-ChildItem -LiteralPath $testHome -Filter 'config.toml.madapi-backup-*' -File)
@@ -139,6 +140,7 @@ args = []
     $reinstalled = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8)
     Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\]\r?$')).Count -eq 1) 'Duplicate provider section was created.'
     Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\.auth\]\r?$')).Count -eq 1) 'Duplicate auth section was created.'
+    Assert-True (([regex]::Matches($reinstalled, '(?m)^supports_websockets = true\r?$')).Count -eq 1) 'Duplicate WebSocket setting was created.'
     Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-second-key') 'Repeat install did not rotate the key.'
 
     $freshHome = Join-Path $sandbox 'fresh'

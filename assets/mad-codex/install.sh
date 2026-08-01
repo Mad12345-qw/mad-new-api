@@ -145,6 +145,7 @@ trap 'exit 1' HUP INT TERM
   printf '%s\n' 'name = "MadAPI"'
   printf '%s\n' 'base_url = "https://mad.myddns.me/codex/v1"'
   printf '%s\n' 'wire_api = "responses"'
+  printf '%s\n' 'supports_websockets = true'
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 0'
   printf '%s\n\n' 'context_window_override = 1048576'

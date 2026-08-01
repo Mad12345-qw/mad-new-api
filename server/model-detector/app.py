@@ -95,6 +95,7 @@ class RunInput(BaseModel):
 
 
 class SettingsInput(BaseModel):
+    scheduler_enabled: bool = False
     interval_minutes: int = Field(ge=10, le=1440)
     scheduled_mode: str = "safe"
     webhook_url: str = ""
@@ -662,13 +663,15 @@ async def scheduler_loop() -> None:
     await asyncio.sleep(5)
     while not scheduler_stop.is_set():
         settings = db.settings()
+        enabled = bool(settings.get("scheduler_enabled", False))
         interval = max(10, int(settings.get("interval_minutes", 15)))
+        if enabled:
+            try:
+                await execute_batch(None, str(settings.get("scheduled_mode", "safe")), "schedule")
+            except Exception:
+                pass
         try:
-            await execute_batch(None, str(settings.get("scheduled_mode", "safe")), "schedule")
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(scheduler_stop.wait(), timeout=interval * 60)
+            await asyncio.wait_for(scheduler_stop.wait(), timeout=interval * 60 if enabled else 60)
         except asyncio.TimeoutError:
             continue
 
@@ -688,7 +691,11 @@ app = FastAPI(title="Model Provenance Detector", docs_url=None, redoc_url=None, 
 
 @app.get("/healthz")
 def health() -> dict[str, Any]:
-    return {"ok": True, "rule_version": RULE_VERSION}
+    return {
+        "ok": True,
+        "rule_version": RULE_VERSION,
+        "scheduler_enabled": bool(db.settings().get("scheduler_enabled", False)),
+    }
 
 
 @app.get("/detector/")
@@ -865,6 +872,7 @@ def run_detail(run_id: int) -> dict[str, Any]:
 
 @app.put("/detector/api/settings", dependencies=[Depends(require_admin)])
 def update_settings(value: SettingsInput) -> dict[str, Any]:
+    db.set_setting("scheduler_enabled", value.scheduler_enabled)
     db.set_setting("interval_minutes", value.interval_minutes)
     db.set_setting("scheduled_mode", value.scheduled_mode)
     db.set_setting("webhook_url", value.webhook_url)

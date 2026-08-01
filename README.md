@@ -28,7 +28,7 @@ GitHub Actions applies and verifies every patch, runs backend, frontend, and ima
 
 `build-detector-release.yml` builds an isolated deployment edition from the same pinned New API baseline. It deliberately excludes the old site logo, avatar, promotion, Telegram, email-branding, and AdForge patches, then adds a same-origin `模型真伪检测` entry backed by a separate detector container.
 
-The detector stores upstream keys encrypted at rest, runs a six-request non-billing protocol suite by default, requires at least 80% probe coverage, and only reports an alternate channel when two independent evidence categories reach the confidence threshold. Active model-output probes are disabled per upstream until an administrator explicitly enables them. Fable 5, Opus 5, and GPT-5.6-sol names are treated as unverified aliases unless a trusted paired reference and stronger evidence are present.
+The detector stores upstream keys encrypted at rest, runs a low-output protocol and contract suite, requires at least 80% probe coverage, and only reports an alternate channel when independent evidence reaches the channel-specific confidence threshold. Active model-output probes are disabled per upstream until an administrator explicitly enables them. Scheduled checks have a separate master switch and remain disabled by default until the operator enables them. Frontier model names are treated as unverified aliases unless stronger transport, contract, tokenizer, or calibrated reference evidence is present.
 
 The detector accepts the existing same-origin New API session only after an internal `/api/user/self` check confirms role `10` or `100`. A separate detector token remains available as an emergency fallback; neither path exposes credentials to the browser application state.
 

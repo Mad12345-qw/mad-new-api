@@ -1,0 +1,4796 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-08-01T10:30:45.265568+00:00",
+  "provider": "Anthropic official API",
+  "base_url": "https://api.anthropic.com",
+  "anthropic_version": "2023-06-01",
+  "credential_redacted": true,
+  "raw_record_count": 891,
+  "raw_evidence_sha256": "6783693ca4116c7f2a370975aef6061749a78f012f11f1e7b580fcbbafa3c417",
+  "global_probes": {
+    "models_list": {
+      "http_status": 200,
+      "http_version": "HTTP/1.1",
+      "elapsed_ms": 1413.49,
+      "request_id_present": true
+    },
+    "invalid_model": {
+      "http_status": 404,
+      "http_version": "HTTP/1.1",
+      "elapsed_ms": 325.91,
+      "request_id_present": true,
+      "type": "error",
+      "error": {
+        "type": "not_found_error",
+        "message": "model: claude-model-detector-does-not-exist"
+      }
+    },
+    "invalid_version": {
+      "http_status": 400,
+      "http_version": "HTTP/1.1",
+      "elapsed_ms": 306.33,
+      "request_id_present": true,
+      "type": "error",
+      "error": {
+        "type": "invalid_request_error",
+        "message": "anthropic-version: \"1900-01-01\" is not a valid version"
+      }
+    },
+    "invalid_api_key": {
+      "http_status": 401,
+      "http_version": "HTTP/1.1",
+      "elapsed_ms": 263.13,
+      "request_id_present": true,
+      "type": "error",
+      "error": {
+        "type": "authentication_error",
+        "message": "invalid x-api-key"
+      }
+    }
+  },
+  "transport": {
+    "header_sets": [
+      {
+        "count": 569,
+        "headers": [
+          "anthropic-organization-id",
+          "anthropic-ratelimit-input-tokens-limit",
+          "anthropic-ratelimit-input-tokens-remaining",
+          "anthropic-ratelimit-input-tokens-reset",
+          "anthropic-ratelimit-output-tokens-limit",
+          "anthropic-ratelimit-output-tokens-remaining",
+          "anthropic-ratelimit-output-tokens-reset",
+          "anthropic-ratelimit-requests-limit",
+          "anthropic-ratelimit-requests-remaining",
+          "anthropic-ratelimit-requests-reset",
+          "anthropic-ratelimit-tokens-limit",
+          "anthropic-ratelimit-tokens-remaining",
+          "anthropic-ratelimit-tokens-reset",
+          "cf-cache-status",
+          "cf-ray",
+          "content-encoding",
+          "content-type",
+          "date",
+          "request-id",
+          "server",
+          "transfer-encoding",
+          "x-robots-tag"
+        ]
+      },
+      {
+        "count": 307,
+        "headers": [
+          "anthropic-organization-id",
+          "cf-cache-status",
+          "cf-ray",
+          "content-encoding",
+          "content-type",
+          "date",
+          "request-id",
+          "server",
+          "transfer-encoding",
+          "x-robots-tag"
+        ]
+      },
+      {
+        "count": 12,
+        "headers": [
+          "anthropic-organization-id",
+          "cf-cache-status",
+          "cf-ray",
+          "content-encoding",
+          "content-type",
+          "date",
+          "request-id",
+          "retry-after",
+          "server",
+          "transfer-encoding",
+          "x-robots-tag"
+        ]
+      },
+      {
+        "count": 1,
+        "headers": [
+          "cf-cache-status",
+          "cf-ray",
+          "content-encoding",
+          "content-type",
+          "date",
+          "request-id",
+          "server",
+          "transfer-encoding",
+          "x-robots-tag"
+        ]
+      },
+      {
+        "count": 1,
+        "headers": [
+          "anthropic-organization-id",
+          "cf-cache-status",
+          "cf-ray",
+          "content-length",
+          "content-type",
+          "date",
+          "request-id",
+          "server",
+          "x-robots-tag"
+        ]
+      }
+    ],
+    "request_id_header": "request-id",
+    "rate_limit_header_prefix": "anthropic-ratelimit-"
+  },
+  "models": {
+    "claude-fable-5": {
+      "probes": {
+        "model_get": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 486.05,
+          "request_id_present": true,
+          "id": "claude-fable-5",
+          "type": "model",
+          "display_name": "Claude Fable 5",
+          "created_at": "2026-06-07T00:00:00Z"
+        },
+        "count_tokens": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 287.15,
+          "request_id_present": true,
+          "input_tokens": 15
+        },
+        "minimal_max_1": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3247.1,
+          "request_id_present": true,
+          "id": "msg_011CdbkP8SQPXfS5dDWHbRtc",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "O"
+            }
+          ]
+        },
+        "normal_max_32": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3524.62,
+          "request_id_present": true,
+          "id": "msg_011CdbkPPkevn96aqW2t5KpR",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "stream_sse": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 4156.53,
+          "request_id_present": true,
+          "event_names": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_stop",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "event_types": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_stop",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "delta_types": [
+            "signature_delta",
+            "text_delta"
+          ]
+        },
+        "system_prompt": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3340.31,
+          "request_id_present": true,
+          "id": "msg_011CdbkQ1YwpP9fKtNvhHapr",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 32,
+            "output_tokens_details": {
+              "thinking_tokens": 23
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "thinking",
+              "keys": [
+                "signature",
+                "thinking",
+                "type"
+              ],
+              "thinking": {
+                "present": true,
+                "utf8Bytes": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "signature": {
+                "present": true,
+                "utf8Bytes": 396,
+                "sha256": "8add95906893a8577336b1dae6b3a48a6a7c5dd85e45db95b9baab4cb7444265"
+              }
+            },
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "SYSTEM_OK"
+            }
+          ]
+        },
+        "tool_auto": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 6671.98,
+          "request_id_present": true,
+          "id": "msg_011CdbkQHJVCmtnabdsrDDQh",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 380,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 50,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        "tool_forced": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3481.32,
+          "request_id_present": true,
+          "id": "msg_011CdbkQoRiaKWE8pqQUExeu",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 506,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 36,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Tokyo"
+              }
+            }
+          ]
+        },
+        "inline_image": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 4368.38,
+          "request_id_present": true,
+          "id": "msg_011CdbkR6QfsimbSsJTS6448",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 32,
+            "output_tokens_details": {
+              "thinking_tokens": 32
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "thinking",
+              "keys": [
+                "signature",
+                "thinking",
+                "type"
+              ],
+              "thinking": {
+                "present": true,
+                "utf8Bytes": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "signature": {
+                "present": true,
+                "utf8Bytes": 444,
+                "sha256": "19ac1578a313e275022137da723fb62cdbc057f95ddf9ea7d4233a0117da7e95"
+              }
+            }
+          ]
+        },
+        "stop_sequence": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3492.09,
+          "request_id_present": true,
+          "id": "msg_011CdbkRSH1vc5b92HMkXXii",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 19,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 32,
+            "output_tokens_details": {
+              "thinking_tokens": 32
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "thinking",
+              "keys": [
+                "signature",
+                "thinking",
+                "type"
+              ],
+              "thinking": {
+                "present": true,
+                "utf8Bytes": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "signature": {
+                "present": true,
+                "utf8Bytes": 424,
+                "sha256": "f29ef5a5cde7425b0cd54feb61e5f4909883cd56231a9217d0950f4261c84b08"
+              }
+            }
+          ]
+        },
+        "invalid_unknown_field": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 299.44,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "model_detector_invalid: Extra inputs are not permitted"
+          }
+        },
+        "invalid_max_tokens_zero": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3048.52,
+          "request_id_present": true,
+          "id": "msg_011CdbkRm6bYnZ5HqJ5MrEYW",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 0,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        },
+        "invalid_metadata_type": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 303.12,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "metadata.user_id: Input should be a valid string"
+          }
+        },
+        "temperature_and_top_p": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 441.43,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "`temperature` is deprecated for this model."
+          }
+        },
+        "json_schema": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 6819.86,
+          "request_id_present": true,
+          "id": "msg_011CdbkSLKro1Q5EPq6AnrLM",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 228,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 15,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "{\"ok\": true, \"n\": 7}"
+            }
+          ]
+        },
+        "thinking_disabled": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 326.56,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "\"thinking.type.disabled\" is not supported for this model. Thinking defaults to adaptive mode when not specified; use \"thinking.type.enabled\" with \"budget_tokens\" for extended thinking."
+          }
+        },
+        "thinking_enabled_budget_1024": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 315.68,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "\"thinking.type.enabled\" is not supported for this model. Use \"thinking.type.adaptive\" and \"output_config.effort\" to control thinking behavior."
+          }
+        },
+        "thinking_adaptive_low": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 5236.34,
+          "request_id_present": true,
+          "id": "msg_011CdbknM2qRkiQsvFps2zyb",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_adaptive_low_display_omitted": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3530.78,
+          "request_id_present": true,
+          "id": "msg_011CdbknhRvTRsRq5kgggzSp",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "cache_write": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 6268.12,
+          "request_id_present": true,
+          "id": "msg_011CdbkpizVHqdkekaExmoQP",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "refusal",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "cache_creation_input_tokens": 20703,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 20703,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        },
+        "cache_read": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3561.67,
+          "request_id_present": true,
+          "id": "msg_011CdbkqCA7pFHdoftgJsKKw",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "refusal",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "cache_creation_input_tokens": 20703,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 20703,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        },
+        "context_64k_words_count": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1501.62,
+          "request_id_present": true,
+          "input_tokens": 168028
+        },
+        "context_64k_words": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 7436.92,
+          "request_id_present": true,
+          "id": "msg_011Cdbm2H8KZgFGwFmwp2DCr",
+          "type": "message",
+          "model": "claude-fable-5",
+          "role": "assistant",
+          "stop_reason": "refusal",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 168028,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        }
+      },
+      "observed_usage_totals": {
+        "input_tokens": 180115,
+        "output_tokens": 3682,
+        "cache_creation_input_tokens": 84072,
+        "cache_read_input_tokens": 0
+      },
+      "estimated_cost_usd": 3.03615
+    },
+    "claude-opus-5": {
+      "probes": {
+        "model_get": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 422.02,
+          "request_id_present": true,
+          "id": "claude-opus-5",
+          "type": "model",
+          "display_name": "Claude Opus 5",
+          "created_at": "2026-07-24T00:00:00Z"
+        },
+        "count_tokens": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 288.68,
+          "request_id_present": true,
+          "input_tokens": 15
+        },
+        "minimal_max_1": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1637.82,
+          "request_id_present": true,
+          "id": "msg_011CdbkSun215k56Q3Cw7SCu",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "O"
+            }
+          ]
+        },
+        "normal_max_32": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1636.6,
+          "request_id_present": true,
+          "id": "msg_011CdbkT4EWXxVKhQGLEi3Qv",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "stream_sse": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1639.94,
+          "request_id_present": true,
+          "event_names": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_stop",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "event_types": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_stop",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "delta_types": [
+            "signature_delta",
+            "text_delta"
+          ]
+        },
+        "system_prompt": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1398.64,
+          "request_id_present": true,
+          "id": "msg_011CdbkTMGh4MrzdrgDPLvWK",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "SYSTEM_OK"
+            }
+          ]
+        },
+        "tool_auto": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2028.23,
+          "request_id_present": true,
+          "id": "msg_011CdbkTUifKvvKuuXxqMWdp",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 376,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 63,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "I'll get the weather for Paris."
+            },
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        "tool_forced": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1418.35,
+          "request_id_present": true,
+          "id": "msg_011CdbkTeuLiRuvvbBVURuKF",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 502,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 36,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Tokyo"
+              }
+            }
+          ]
+        },
+        "inline_image": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1569.24,
+          "request_id_present": true,
+          "id": "msg_011CdbkTo9S9WLFabn2V184c",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 10,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "IMAGE_OK"
+            }
+          ]
+        },
+        "stop_sequence": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1967.32,
+          "request_id_present": true,
+          "id": "msg_011CdbkTvxjF8Hk3KtLedBgV",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "stop_sequence",
+          "stop_sequence": "STOP",
+          "usage": {
+            "input_tokens": 19,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 31,
+            "output_tokens_details": {
+              "thinking_tokens": 26
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "thinking",
+              "keys": [
+                "signature",
+                "thinking",
+                "type"
+              ],
+              "thinking": {
+                "present": true,
+                "utf8Bytes": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "signature": {
+                "present": true,
+                "utf8Bytes": 408,
+                "sha256": "c91c58eab1566f1d94749a85a2f1872291b41d9180f261f9842201245210e6fe"
+              }
+            },
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "A|"
+            }
+          ]
+        },
+        "invalid_unknown_field": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 307.32,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "model_detector_invalid: Extra inputs are not permitted"
+          }
+        },
+        "invalid_max_tokens_zero": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1951.44,
+          "request_id_present": true,
+          "id": "msg_011CdbkU9GekUDhQ7RmNVhYP",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 0,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        },
+        "invalid_metadata_type": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 300.49,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "metadata.user_id: Input should be a valid string"
+          }
+        },
+        "temperature_and_top_p": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 351.26,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "`temperature` is deprecated for this model."
+          }
+        },
+        "json_schema": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1807.06,
+          "request_id_present": true,
+          "id": "msg_011CdbkURmaqDefXGuVojJTH",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 228,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 14,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "{\"ok\":true,\"n\":7}"
+            }
+          ]
+        },
+        "thinking_disabled": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1363.19,
+          "request_id_present": true,
+          "id": "msg_011CdbkUd5UnhmcuYSqWx7SY",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_enabled_budget_1024": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 348.19,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "\"thinking.type.enabled\" is not supported for this model. Use \"thinking.type.adaptive\" and \"output_config.effort\" to control thinking behavior."
+          }
+        },
+        "thinking_adaptive_low": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2085.09,
+          "request_id_present": true,
+          "id": "msg_011CdbknzKRJRXmzUnjkgg6x",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_adaptive_low_display_omitted": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1624.74,
+          "request_id_present": true,
+          "id": "msg_011CdbkoAcJ6CJvefyKQWUff",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "cache_write": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2772.22,
+          "request_id_present": true,
+          "id": "msg_011CdbkqVDHg9XXahStigFV5",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "cache_creation_input_tokens": 20703,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 20703,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "cache_read": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2622.42,
+          "request_id_present": true,
+          "id": "msg_011CdbkqiN4Zc9GBrXd6uvg8",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 20703,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "context_64k_words_count": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 358.71,
+          "request_id_present": true,
+          "input_tokens": 168027
+        },
+        "context_64k_words": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3323.43,
+          "request_id_present": true,
+          "id": "msg_011Cdbm2tqARREes7cHL471e",
+          "type": "message",
+          "model": "claude-opus-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 168027,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        }
+      },
+      "observed_usage_totals": {
+        "input_tokens": 181100,
+        "output_tokens": 21244,
+        "cache_creation_input_tokens": 42666,
+        "cache_read_input_tokens": 41406
+      },
+      "estimated_cost_usd": 1.723966
+    },
+    "claude-sonnet-5": {
+      "probes": {
+        "model_get": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 323.48,
+          "request_id_present": true,
+          "id": "claude-sonnet-5",
+          "type": "model",
+          "display_name": "Claude Sonnet 5",
+          "created_at": "2026-06-29T00:00:00Z"
+        },
+        "count_tokens": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 306.6,
+          "request_id_present": true,
+          "input_tokens": 15
+        },
+        "minimal_max_1": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1166.05,
+          "request_id_present": true,
+          "id": "msg_011CdbkUts17pAt2cZkQogug",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "O"
+            }
+          ]
+        },
+        "normal_max_32": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1305.75,
+          "request_id_present": true,
+          "id": "msg_011CdbkV1j1Ari1CjGwTRz7T",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "stream_sse": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2109.78,
+          "request_id_present": true,
+          "event_names": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "event_types": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "delta_types": [
+            "text_delta",
+            "text_delta"
+          ]
+        },
+        "system_prompt": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2569.54,
+          "request_id_present": true,
+          "id": "msg_011CdbkVKmhounY1iDg8Hwhg",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "SYSTEM_OK"
+            }
+          ]
+        },
+        "tool_auto": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1438.01,
+          "request_id_present": true,
+          "id": "msg_011CdbkVXeaTWppwVA6wGp3g",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 444,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 50,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        "tool_forced": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2764.41,
+          "request_id_present": true,
+          "id": "msg_011CdbkVi3uFcSqChZG2bJn2",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 570,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 36,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Tokyo"
+              }
+            }
+          ]
+        },
+        "inline_image": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1705.31,
+          "request_id_present": true,
+          "id": "msg_011CdbkVuCNhhXJUbQFzPZAZ",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 32,
+            "output_tokens_details": {
+              "thinking_tokens": 31
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "thinking",
+              "keys": [
+                "signature",
+                "thinking",
+                "type"
+              ],
+              "thinking": {
+                "present": true,
+                "utf8Bytes": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "signature": {
+                "present": true,
+                "utf8Bytes": 484,
+                "sha256": "8b5b5d905f789a29bec9205e9c672dec378ca792ddfc3ad51b5dd94aba398b18"
+              }
+            }
+          ]
+        },
+        "stop_sequence": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3797.11,
+          "request_id_present": true,
+          "id": "msg_011CdbkW6PZyaQh8VjRPu47K",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "stop_sequence",
+          "stop_sequence": "STOP",
+          "usage": {
+            "input_tokens": 19,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 5,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "A|"
+            }
+          ]
+        },
+        "invalid_unknown_field": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 287.39,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "model_detector_invalid: Extra inputs are not permitted"
+          }
+        },
+        "invalid_max_tokens_zero": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1287.12,
+          "request_id_present": true,
+          "id": "msg_011CdbkWQ7RwaLL6F7k8wA9a",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 0,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        },
+        "invalid_metadata_type": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 300.35,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "metadata.user_id: Input should be a valid string"
+          }
+        },
+        "temperature_and_top_p": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 296.35,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "`temperature` is deprecated for this model."
+          }
+        },
+        "json_schema": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1868.5,
+          "request_id_present": true,
+          "id": "msg_011CdbkWcjhWoQY95VNE2vZB",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 228,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 14,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "{\"ok\":true,\"n\":7}"
+            }
+          ]
+        },
+        "thinking_disabled": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1264.48,
+          "request_id_present": true,
+          "id": "msg_011CdbkWpsCb2EpMYpJeRaKw",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_enabled_budget_1024": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 448.85,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "\"thinking.type.enabled\" is not supported for this model. Use \"thinking.type.adaptive\" and \"output_config.effort\" to control thinking behavior."
+          }
+        },
+        "thinking_adaptive_low": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2493.47,
+          "request_id_present": true,
+          "id": "msg_011CdbkoM75C9PWUquvuSgrR",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_adaptive_low_display_omitted": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1319.09,
+          "request_id_present": true,
+          "id": "msg_011CdbkoXFGaVyuPyNL7b1kr",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "cache_write": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1557.55,
+          "request_id_present": true,
+          "id": "msg_011Cdbkqw5YRJk3ZEPLjenYA",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "cache_creation_input_tokens": 20703,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 20703,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "cache_read": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1591.35,
+          "request_id_present": true,
+          "id": "msg_011Cdbkr5Lda2hHpAMs23eoz",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 20703,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "context_64k_words_count": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 375.6,
+          "request_id_present": true,
+          "input_tokens": 168028
+        },
+        "context_64k_words": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3016.29,
+          "request_id_present": true,
+          "id": "msg_011Cdbm3DZng68QrKZ5EW2Tt",
+          "type": "message",
+          "model": "claude-sonnet-5",
+          "role": "assistant",
+          "stop_reason": "refusal",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 168028,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        }
+      },
+      "observed_usage_totals": {
+        "input_tokens": 1585973,
+        "output_tokens": 3522,
+        "cache_creation_input_tokens": 22026,
+        "cache_read_input_tokens": 22026
+      },
+      "estimated_cost_usd": 3.266636
+    },
+    "claude-haiku-4-5-20251001": {
+      "probes": {
+        "model_get": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 474.2,
+          "request_id_present": true,
+          "id": "claude-haiku-4-5-20251001",
+          "type": "model",
+          "display_name": "Claude Haiku 4.5",
+          "created_at": "2025-10-15T00:00:00Z"
+        },
+        "count_tokens": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 277.09,
+          "request_id_present": true,
+          "input_tokens": 11
+        },
+        "minimal_max_1": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 902.84,
+          "request_id_present": true,
+          "id": "msg_011CdbkX7Q8AAftp53UsM5SB",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "normal_max_32": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 746.78,
+          "request_id_present": true,
+          "id": "msg_011CdbkXCYgS4D9n3UjKYDwL",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "stream_sse": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 703.85,
+          "request_id_present": true,
+          "event_names": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "event_types": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "delta_types": [
+            "text_delta",
+            "text_delta"
+          ]
+        },
+        "system_prompt": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 724.0,
+          "request_id_present": true,
+          "id": "msg_011CdbkXMvzQ1wyPWDgbf39C",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 21,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 7,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "SYSTEM_OK"
+            }
+          ]
+        },
+        "tool_auto": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 928.37,
+          "request_id_present": true,
+          "id": "msg_011CdbkXSTbVnSGnHYp1hoSb",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 564,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 54,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        "tool_forced": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1070.03,
+          "request_id_present": true,
+          "id": "msg_011CdbkXYK5FvEDseMCE1zsh",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 659,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 33,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Tokyo"
+              }
+            }
+          ]
+        },
+        "inline_image": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1281.57,
+          "request_id_present": true,
+          "id": "msg_011CdbkXeNhjt99AxGhFi9eF",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 23,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 6,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "IMAGE_OK"
+            }
+          ]
+        },
+        "stop_sequence": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 720.68,
+          "request_id_present": true,
+          "id": "msg_011CdbkXm7GF5Mzztp78jxXx",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "stop_sequence",
+          "stop_sequence": "STOP",
+          "usage": {
+            "input_tokens": 16,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "A|"
+            }
+          ]
+        },
+        "invalid_unknown_field": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 330.52,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "model_detector_invalid: Extra inputs are not permitted"
+          }
+        },
+        "invalid_max_tokens_zero": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 5412.8,
+          "request_id_present": true,
+          "id": "msg_011CdbkXufTUcj3B7sHFqtrh",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 0,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": []
+        },
+        "invalid_metadata_type": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 348.3,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "metadata.user_id: Input should be a valid string"
+          }
+        },
+        "temperature_and_top_p": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 318.21,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "`temperature` and `top_p` cannot both be specified for this model. Please use only one."
+          }
+        },
+        "json_schema": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1324.96,
+          "request_id_present": true,
+          "id": "msg_011CdbkYTabAgk8rDhwXtge1",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 178,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 12,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "{\"ok\":true,\"n\":7}"
+            }
+          ]
+        },
+        "thinking_disabled": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 664.9,
+          "request_id_present": true,
+          "id": "msg_011CdbkYakh5wRWhVurNcd8D",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_enabled_budget_1024": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1856.33,
+          "request_id_present": true,
+          "id": "msg_011CdbkYfctNSKUKXga1Hi3h",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 48,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 166,
+            "output_tokens_details": {
+              "thinking_tokens": 159
+            },
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "thinking",
+              "keys": [
+                "signature",
+                "thinking",
+                "type"
+              ],
+              "thinking": {
+                "present": true,
+                "utf8Bytes": 231,
+                "sha256": "8e2374d03a2792dd9b17ceff90264829d7721e3ccd3cc62ea6fff5f25a30a3c2"
+              },
+              "signature": {
+                "present": true,
+                "utf8Bytes": 644,
+                "sha256": "97c9b93fe1edc7d30a9197d1454717e6ec7932144a309a144379061aaeff9ae1"
+              }
+            },
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "323"
+            }
+          ]
+        },
+        "thinking_adaptive_low": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 321.63,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "adaptive thinking is not supported on this model"
+          }
+        },
+        "thinking_adaptive_low_display_omitted": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 315.07,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "adaptive thinking is not supported on this model"
+          }
+        },
+        "cache_write": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 829.71,
+          "request_id_present": true,
+          "id": "msg_011CdbkrDQ4Mm7FzZHRDAu35",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 13,
+            "cache_creation_input_tokens": 10801,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 10801,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 7,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "cache_read": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3688.71,
+          "request_id_present": true,
+          "id": "msg_011CdbkrUuDinoi5PgfEp2Ma",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 13,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 10801,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 8,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK."
+            }
+          ]
+        },
+        "context_64k_words_count": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 322.89,
+          "request_id_present": true,
+          "input_tokens": 72017
+        },
+        "context_64k_words": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1516.95,
+          "request_id_present": true,
+          "id": "msg_011Cdbm3WQK1JGSv2ibQjQwB",
+          "type": "message",
+          "model": "claude-haiku-4-5-20251001",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 72017,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "service_tier": "standard",
+            "inference_geo": "not_available"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "I"
+            }
+          ]
+        }
+      },
+      "observed_usage_totals": {
+        "input_tokens": 99772,
+        "output_tokens": 5351,
+        "cache_creation_input_tokens": 26913,
+        "cache_read_input_tokens": 26913
+      },
+      "estimated_cost_usd": 0.16286
+    },
+    "claude-opus-4-8": {
+      "probes": {
+        "model_get": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 764.6,
+          "request_id_present": true,
+          "id": "claude-opus-4-8",
+          "type": "model",
+          "display_name": "Claude Opus 4.8",
+          "created_at": "2026-05-28T00:00:00Z"
+        },
+        "count_tokens": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 297.72,
+          "request_id_present": true,
+          "input_tokens": 15
+        },
+        "minimal_max_1": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 854.0,
+          "request_id_present": true,
+          "id": "msg_011CdbkYxLxrhoRUbg4m2gzp",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "O"
+            }
+          ]
+        },
+        "normal_max_32": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 912.83,
+          "request_id_present": true,
+          "id": "msg_011CdbkZ3WWw5H2fFQXvv6fF",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "stream_sse": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1645.09,
+          "request_id_present": true,
+          "event_names": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "event_types": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "delta_types": [
+            "text_delta",
+            "text_delta"
+          ]
+        },
+        "system_prompt": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1440.22,
+          "request_id_present": true,
+          "id": "msg_011CdbkZHbM3w8WtJLpCcBQz",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "SYSTEM_OK"
+            }
+          ]
+        },
+        "tool_auto": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1408.17,
+          "request_id_present": true,
+          "id": "msg_011CdbkZR9mPt4ZW3cx1hrZS",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 380,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 65,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "I'll get the weather for Paris for you."
+            },
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        "tool_forced": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1520.46,
+          "request_id_present": true,
+          "id": "msg_011CdbkZYdUa6FRDjGZdrg8C",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 506,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 36,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Tokyo"
+              }
+            }
+          ]
+        },
+        "inline_image": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1373.97,
+          "request_id_present": true,
+          "id": "msg_011CdbkZhL6uBwHu4NrT7ku8",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 10,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "IMAGE_OK"
+            }
+          ]
+        },
+        "stop_sequence": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 871.18,
+          "request_id_present": true,
+          "id": "msg_011CdbkZouzHENhNdHBLHPnE",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "stop_sequence",
+          "stop_sequence": "STOP",
+          "usage": {
+            "input_tokens": 19,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 5,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "A|"
+            }
+          ]
+        },
+        "invalid_unknown_field": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 443.7,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "model_detector_invalid: Extra inputs are not permitted"
+          }
+        },
+        "invalid_max_tokens_zero": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1525.11,
+          "request_id_present": true,
+          "id": "msg_011CdbkZxkJi4NctvERApmqv",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 0,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        },
+        "invalid_metadata_type": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 364.86,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "metadata.user_id: Input should be a valid string"
+          }
+        },
+        "temperature_and_top_p": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 426.81,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "`temperature` is deprecated for this model."
+          }
+        },
+        "json_schema": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1455.41,
+          "request_id_present": true,
+          "id": "msg_011CdbkaErB3dCZs5cFbDqRn",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 228,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 13,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "{\"ok\":true,\"n\":7}"
+            }
+          ]
+        },
+        "thinking_disabled": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 809.56,
+          "request_id_present": true,
+          "id": "msg_011CdbkaPdmEukkGDuGNELMM",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_enabled_budget_1024": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 357.03,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "\"thinking.type.enabled\" is not supported for this model. Use \"thinking.type.adaptive\" and \"output_config.effort\" to control thinking behavior."
+          }
+        },
+        "thinking_adaptive_low": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1168.73,
+          "request_id_present": true,
+          "id": "msg_011Cdbkok7gSiK35hF467NNv",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_adaptive_low_display_omitted": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1576.84,
+          "request_id_present": true,
+          "id": "msg_011Cdbkorc6qvgZxWMhh91p6",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 15,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "cache_write": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2598.29,
+          "request_id_present": true,
+          "id": "msg_011CdbkrcBmHGPxFmU8Uk2ye",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "cache_creation_input_tokens": 20703,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 20703,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "cache_read": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1973.18,
+          "request_id_present": true,
+          "id": "msg_011CdbkrpUwWHVJpfrAfvdmB",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 18,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 20703,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 9,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "context_64k_words_count": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 341.28,
+          "request_id_present": true,
+          "input_tokens": 168028
+        },
+        "context_64k_words": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2980.52,
+          "request_id_present": true,
+          "id": "msg_011Cdbm3imhnbjRQPfU1k83X",
+          "type": "message",
+          "model": "claude-opus-4-8",
+          "role": "assistant",
+          "stop_reason": "refusal",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 168028,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        }
+      },
+      "observed_usage_totals": {
+        "input_tokens": 185655,
+        "output_tokens": 3569,
+        "cache_creation_input_tokens": 22026,
+        "cache_read_input_tokens": 22026
+      },
+      "estimated_cost_usd": 1.166176
+    },
+    "claude-opus-4-7": {
+      "probes": {
+        "model_get": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 371.2,
+          "request_id_present": true,
+          "id": "claude-opus-4-7",
+          "type": "model",
+          "display_name": "Claude Opus 4.7",
+          "created_at": "2026-04-14T00:00:00Z"
+        },
+        "count_tokens": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 273.0,
+          "request_id_present": true,
+          "input_tokens": 20
+        },
+        "minimal_max_1": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1505.8,
+          "request_id_present": true,
+          "id": "msg_011CdbkadjLbbLH1Jqpt8XB2",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "O"
+            }
+          ]
+        },
+        "normal_max_32": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1545.26,
+          "request_id_present": true,
+          "id": "msg_011CdbkamLyq4Y4uLgDdF6Z9",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "stream_sse": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1318.54,
+          "request_id_present": true,
+          "event_names": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "event_types": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "delta_types": [
+            "text_delta"
+          ]
+        },
+        "system_prompt": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1484.38,
+          "request_id_present": true,
+          "id": "msg_011Cdbkb38FkLqWXC9oJczn4",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 35,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 13,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "SYSTEM_OK"
+            }
+          ]
+        },
+        "tool_auto": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1674.38,
+          "request_id_present": true,
+          "id": "msg_011CdbkbASJ97d2LanYHwAHH",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 770,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 66,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        "tool_forced": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1793.2,
+          "request_id_present": true,
+          "id": "msg_011CdbkbKeS2Agc9QmNv3ET7",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 905,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 44,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Tokyo"
+              }
+            }
+          ]
+        },
+        "inline_image": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3281.75,
+          "request_id_present": true,
+          "id": "msg_011CdbkbYRsnYrBEMywKNzTD",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 36,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 12,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "IMAGE_OK"
+            }
+          ]
+        },
+        "stop_sequence": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1338.0,
+          "request_id_present": true,
+          "id": "msg_011CdbkbjqUeTgB43XrmLpp9",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "stop_sequence",
+          "stop_sequence": "STOP",
+          "usage": {
+            "input_tokens": 24,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 5,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "A|"
+            }
+          ]
+        },
+        "invalid_unknown_field": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 370.44,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "model_detector_invalid: Extra inputs are not permitted"
+          }
+        },
+        "invalid_max_tokens_zero": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1423.75,
+          "request_id_present": true,
+          "id": "msg_011CdbkbvB5Vb3opy3cbiB4Z",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 0,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        },
+        "invalid_metadata_type": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 300.42,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "metadata.user_id: Input should be a valid string"
+          }
+        },
+        "temperature_and_top_p": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 347.53,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "`temperature` is deprecated for this model."
+          }
+        },
+        "json_schema": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2039.23,
+          "request_id_present": true,
+          "id": "msg_011CdbkcBkhMKCi21pjftEWo",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 233,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 16,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "{\"ok\":true,\"n\":7}"
+            }
+          ]
+        },
+        "thinking_disabled": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1632.95,
+          "request_id_present": true,
+          "id": "msg_011CdbkcPSQqVcEk5aXXVxRz",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_enabled_budget_1024": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 354.14,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "\"thinking.type.enabled\" is not supported for this model. Use \"thinking.type.adaptive\" and \"output_config.effort\" to control thinking behavior."
+          }
+        },
+        "thinking_adaptive_low": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1616.49,
+          "request_id_present": true,
+          "id": "msg_011Cdbkp14bcY6x6Vt5aPhDm",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_adaptive_low_display_omitted": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1973.16,
+          "request_id_present": true,
+          "id": "msg_011CdbkpA3qtYsfN6JHZBfKs",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 20,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 6,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "cache_write": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 4848.07,
+          "request_id_present": true,
+          "id": "msg_011CdbksDMMsSH7F7SekKwHJ",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 24,
+            "cache_creation_input_tokens": 20702,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 20702,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "cache_read": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1558.7,
+          "request_id_present": true,
+          "id": "msg_011CdbksNajaQAej82TcZitF",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 24,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 20702,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 11,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "context_64k_words_count": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 358.22,
+          "request_id_present": true,
+          "input_tokens": 168033
+        },
+        "context_64k_words": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2997.63,
+          "request_id_present": true,
+          "id": "msg_011Cdbm414VLdV9j2L6wTr9A",
+          "type": "message",
+          "model": "claude-opus-4-7",
+          "role": "assistant",
+          "stop_reason": "refusal",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 168033,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        }
+      },
+      "observed_usage_totals": {
+        "input_tokens": 198574,
+        "output_tokens": 3337,
+        "cache_creation_input_tokens": 23344,
+        "cache_read_input_tokens": 23344
+      },
+      "estimated_cost_usd": 1.233867
+    },
+    "claude-opus-4-6": {
+      "probes": {
+        "model_get": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 322.03,
+          "request_id_present": true,
+          "id": "claude-opus-4-6",
+          "type": "model",
+          "display_name": "Claude Opus 4.6",
+          "created_at": "2026-02-04T00:00:00Z"
+        },
+        "count_tokens": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 279.92,
+          "request_id_present": true,
+          "input_tokens": 11
+        },
+        "minimal_max_1": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1598.55,
+          "request_id_present": true,
+          "id": "msg_011CdbkcfU5LBUF7nsasqYFe",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "normal_max_32": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1841.12,
+          "request_id_present": true,
+          "id": "msg_011CdbkcokQByjnZooDFUEg1",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "stream_sse": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1580.99,
+          "request_id_present": true,
+          "event_names": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "event_types": [
+            "message_start",
+            "content_block_start",
+            "ping",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+          ],
+          "delta_types": [
+            "text_delta"
+          ]
+        },
+        "system_prompt": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1835.89,
+          "request_id_present": true,
+          "id": "msg_011Cdbkd8DQAamTdrAzcjhXY",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 22,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 7,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "SYSTEM_OK"
+            }
+          ]
+        },
+        "tool_auto": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2318.39,
+          "request_id_present": true,
+          "id": "msg_011CdbkdJFQ297kEtM2FdPwp",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 565,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 54,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Paris"
+              }
+            }
+          ]
+        },
+        "tool_forced": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2553.34,
+          "request_id_present": true,
+          "id": "msg_011CdbkdUFutQceyf77YMfVp",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "tool_use",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 660,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 33,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "tool_use",
+              "keys": [
+                "caller",
+                "id",
+                "input",
+                "name",
+                "type"
+              ],
+              "name": "get_weather",
+              "input": {
+                "city": "Tokyo"
+              }
+            }
+          ]
+        },
+        "inline_image": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3445.27,
+          "request_id_present": true,
+          "id": "msg_011Cdbkdic7QVnQDaCooDvu2",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 23,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 6,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "IMAGE_OK"
+            }
+          ]
+        },
+        "stop_sequence": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2774.66,
+          "request_id_present": true,
+          "id": "msg_011Cdbkdyc1LkfzmpE4ZnHSS",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "stop_sequence",
+          "stop_sequence": "STOP",
+          "usage": {
+            "input_tokens": 16,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "A|"
+            }
+          ]
+        },
+        "invalid_unknown_field": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 308.36,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "model_detector_invalid: Extra inputs are not permitted"
+          }
+        },
+        "invalid_max_tokens_zero": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1671.3,
+          "request_id_present": true,
+          "id": "msg_011CdbkeF7AdDaTrgbLqaCDt",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 0,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": []
+        },
+        "invalid_metadata_type": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 467.54,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "metadata.user_id: Input should be a valid string"
+          }
+        },
+        "temperature_and_top_p": {
+          "http_status": 400,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 372.94,
+          "request_id_present": true,
+          "type": "error",
+          "error": {
+            "type": "invalid_request_error",
+            "message": "`temperature` and `top_p` cannot both be specified for this model. Please use only one."
+          }
+        },
+        "json_schema": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3716.05,
+          "request_id_present": true,
+          "id": "msg_011CdbkeX5MGe2WRpLdvTrkX",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 179,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 12,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "{\"ok\":true,\"n\":7}"
+            }
+          ]
+        },
+        "thinking_disabled": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1708.68,
+          "request_id_present": true,
+          "id": "msg_011CdbkerZsX6ne2BcGzfc8D",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_enabled_budget_1024": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2105.03,
+          "request_id_present": true,
+          "id": "msg_011Cdbkf1W8svHPRe4aUM9iM",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 48,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 41,
+            "output_tokens_details": {
+              "thinking_tokens": 35
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "thinking",
+              "keys": [
+                "signature",
+                "thinking",
+                "type"
+              ],
+              "thinking": {
+                "present": true,
+                "utf8Bytes": 39,
+                "sha256": "afd9c1a80f0d535cab7ac479acab903abfcc2a57519f8f1e632dfd2c7a5e705f"
+              },
+              "signature": {
+                "present": true,
+                "utf8Bytes": 376,
+                "sha256": "25a3ec5216d0d240652de3779bcc8cfeace687de0b413710b413da69e9a6a943"
+              }
+            },
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "323"
+            }
+          ]
+        },
+        "thinking_adaptive_low": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 2780.18,
+          "request_id_present": true,
+          "id": "msg_011CdbkpMMVA6vsx9tKiEmdt",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "thinking_adaptive_low_display_omitted": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 1816.89,
+          "request_id_present": true,
+          "id": "msg_011CdbkpYTUXnjasKKtCbBqk",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 11,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 4,
+            "output_tokens_details": {
+              "thinking_tokens": 0
+            },
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "OK"
+            }
+          ]
+        },
+        "cache_write": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3253.91,
+          "request_id_present": true,
+          "id": "msg_011CdbksWdBD84uQMtNPYYip",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 13,
+            "cache_creation_input_tokens": 10802,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 10802,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 8,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK."
+            }
+          ]
+        },
+        "cache_read": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 4297.82,
+          "request_id_present": true,
+          "id": "msg_011Cdbksn6bpEXAfjvRFW3NH",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 13,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 10802,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 7,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "CACHE_OK"
+            }
+          ]
+        },
+        "context_64k_words_count": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 347.06,
+          "request_id_present": true,
+          "input_tokens": 72017
+        },
+        "context_64k_words": {
+          "http_status": 200,
+          "http_version": "HTTP/1.1",
+          "elapsed_ms": 3537.19,
+          "request_id_present": true,
+          "id": "msg_011Cdbm4JB8nHszMQY7AiUHE",
+          "type": "message",
+          "model": "claude-opus-4-6",
+          "role": "assistant",
+          "stop_reason": "max_tokens",
+          "stop_sequence": null,
+          "usage": {
+            "input_tokens": 72017,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "service_tier": "standard",
+            "inference_geo": "global"
+          },
+          "content": [
+            {
+              "type": "text",
+              "keys": [
+                "text",
+                "type"
+              ],
+              "text": "I"
+            }
+          ]
+        }
+      },
+      "observed_usage_totals": {
+        "input_tokens": 100383,
+        "output_tokens": 3673,
+        "cache_creation_input_tokens": 26916,
+        "cache_read_input_tokens": 26916
+      },
+      "estimated_cost_usd": 0.775423
+    }
+  },
+  "estimated_total_cost_usd": 11.365077,
+  "pricing_assumption": {
+    "source": "operator-provided current pricing screenshot and prior test plan",
+    "cache_write_multiplier": 1.25,
+    "cache_read_multiplier": 0.1,
+    "prices_per_million_tokens": {
+      "claude-fable-5": {
+        "input": 10,
+        "output": 50
+      },
+      "claude-opus-5": {
+        "input": 5,
+        "output": 25
+      },
+      "claude-sonnet-5": {
+        "input": 2,
+        "output": 10
+      },
+      "claude-haiku-4-5-20251001": {
+        "input": 1,
+        "output": 5
+      },
+      "claude-opus-4-8": {
+        "input": 5,
+        "output": 25
+      },
+      "claude-opus-4-7": {
+        "input": 5,
+        "output": 25
+      },
+      "claude-opus-4-6": {
+        "input": 5,
+        "output": 25
+      }
+    },
+    "warning": "Estimated cost is not an authoritative billing statement."
+  },
+  "interpretation_guardrails": [
+    "Matching a model name or msg_ identifier alone does not prove official origin.",
+    "Thinking signatures are recorded only as presence, size, and hash; they are not treated as cryptographic origin proof.",
+    "A relay can normalize headers, errors, model names, usage, streaming chunks, and stop reasons.",
+    "Direct-channel confidence requires multiple independent contract matches and no contradictory Bedrock, Vertex, Claude Code, or compatibility-layer fingerprints.",
+    "Long-context token counts are model-specific in this capture and must not be generalized to unrelated prompts."
+  ]
+}

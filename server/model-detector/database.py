@@ -125,6 +125,7 @@ class Database:
             if "model" not in evidence_columns:
                 db.execute("ALTER TABLE evidence ADD COLUMN model TEXT")
             for key, value in (
+                ("scheduler_enabled", False),
                 ("interval_minutes", 15),
                 ("scheduled_mode", "safe"),
                 ("webhook_url", ""),

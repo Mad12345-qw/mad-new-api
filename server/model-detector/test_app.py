@@ -28,6 +28,13 @@ class AppTests(unittest.TestCase):
         response = self.client.post("/detector/api/login", json={"token": os.environ["DETECTOR_ADMIN_TOKEN"]})
         self.assertEqual(response.status_code, 200)
 
+    def test_health_reports_rule_and_scheduler_state(self) -> None:
+        response = self.client.get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertIn("rule_version", response.json())
+        self.assertIn("scheduler_enabled", response.json())
+
     def test_auth_and_secret_redaction(self) -> None:
         self.assertEqual(self.client.get("/detector/api/state").status_code, 401)
         self.assertEqual(self.client.post("/detector/api/login", json={"token": "wrong-token-value"}).status_code, 401)
@@ -50,6 +57,23 @@ class AppTests(unittest.TestCase):
         self.assertNotIn("api_key_encrypted", payload)
         stored = service.db.row("SELECT api_key_encrypted FROM upstreams WHERE id=?", (payload["id"],))
         self.assertNotIn("sk-unit-test-secret", stored["api_key_encrypted"])
+
+    def test_scheduler_requires_explicit_enable(self) -> None:
+        self.login()
+        response = self.client.put(
+            "/detector/api/settings",
+            json={
+                "scheduler_enabled": False,
+                "interval_minutes": 30,
+                "scheduled_mode": "active",
+                "webhook_url": "",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["scheduler_enabled"])
+        self.assertEqual(response.json()["interval_minutes"], 30)
+        state = self.client.get("/detector/api/state").json()
+        self.assertFalse(state["settings"]["scheduler_enabled"])
 
     def test_discovery_returns_routed_models_without_storing_key(self) -> None:
         self.login()

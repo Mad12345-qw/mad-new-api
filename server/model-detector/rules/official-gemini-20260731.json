@@ -1,0 +1,286 @@
+{
+  "schema_version": "1.0",
+  "captured_at": "2026-07-31",
+  "provider": "Google Gemini Developer API",
+  "base_url": "https://generativelanguage.googleapis.com",
+  "api_versions_tested": ["v1", "v1beta"],
+  "credential_redacted": true,
+  "transport": {
+    "observed_http_version": "HTTP/1.1",
+    "server": "scaffolding on HTTPServer2",
+    "stable_header_names": [
+      "alt-svc",
+      "content-encoding",
+      "content-type",
+      "date",
+      "server",
+      "transfer-encoding",
+      "vary",
+      "x-content-type-options"
+    ],
+    "request_id_header_observed": false,
+    "alt_svc_pattern": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+  },
+  "authentication_error": {
+    "http_status": 400,
+    "error_status": "INVALID_ARGUMENT",
+    "reason": "API_KEY_INVALID",
+    "domain": "googleapis.com",
+    "service": "generativelanguage.googleapis.com"
+  },
+  "validation_contract": {
+    "unknown_json_field": {
+      "http_status": 400,
+      "error_status": "INVALID_ARGUMENT",
+      "message_pattern": "Invalid JSON payload received. Unknown name"
+    },
+    "zero_max_output_tokens": {
+      "http_status": 400,
+      "error_status": "INVALID_ARGUMENT",
+      "message_pattern": "max_output_tokens must be positive"
+    },
+    "missing_contents": {
+      "http_status": 400,
+      "error_status": "INVALID_ARGUMENT",
+      "message_pattern": "contents is not specified"
+    },
+    "invalid_safety_category": {
+      "http_status": 400,
+      "error_status": "INVALID_ARGUMENT",
+      "protobuf_type_contains": "google.ai.generativelanguage.v1beta.HarmCategory"
+    },
+    "validation_precedes_model_lookup_for_invalid_payloads": true,
+    "unknown_model_with_valid_payload": {
+      "http_status": 404,
+      "error_status": "NOT_FOUND",
+      "message_mentions_api_version": true,
+      "message_mentions_list_models": true
+    }
+  },
+  "models": {
+    "gemini-3.6-flash": {
+      "availability": {"v1": true, "v1beta": true},
+      "version": "3.6-flash-07-2026",
+      "display_name": "Gemini 3.6 Flash",
+      "input_token_limit": 1048576,
+      "output_token_limit": 65536,
+      "supported_generation_methods": ["generateContent", "countTokens", "createCachedContent", "batchGenerateContent"],
+      "sampling_defaults": {"temperature": 1, "max_temperature": 2, "top_p": 0.95, "top_k": 64},
+      "count_tokens_fixed_prompt": 5,
+      "minimal_generation": {
+        "prompt_tokens": 5,
+        "thoughts_tokens": 29,
+        "finish_reason": "MAX_TOKENS",
+        "visible_output_absent_at_max_output_tokens_32": true,
+        "max_output_tokens_128_sample": {
+          "visible_text": "OK",
+          "candidate_tokens": 1,
+          "thoughts_tokens": 79,
+          "finish_reason": "STOP",
+          "thought_signature_present": true
+        },
+        "service_tier": "standard"
+      },
+      "streaming": {
+        "content_type": "text/event-stream",
+        "event_count_in_fixed_probe": 2,
+        "usage_repeated_in_events": true,
+        "final_part_has_thought_signature": true
+      },
+      "thinking": {
+        "thinking_budget_zero": {"http_status": 400, "error_status": "INVALID_ARGUMENT"},
+        "thinking_level_low_accepted": true,
+        "low_probe_thoughts_tokens": 29,
+        "max_output_tokens_128_samples": {
+          "LOW": 62,
+          "MEDIUM": 74,
+          "HIGH": 64
+        },
+        "level_token_counts_are_not_monotonic_in_single_samples": true
+      },
+      "tools": {
+        "auto_probe_exhausted_output_in_thoughts": true,
+        "automatic_function_call_succeeded_at_max_output_tokens_128": true,
+        "automatic_probe_thoughts_tokens_at_128": 87,
+        "forced_function_call_succeeded": true,
+        "function_call_fields": ["name", "args", "id"],
+        "thought_signature_present": true
+      },
+      "inline_image_input": {
+        "accepted": true,
+        "one_pixel_png_image_tokens": 1089,
+        "text_prompt_tokens": 12
+      },
+      "json_schema": {
+        "response_json_schema_accepted": true,
+        "max_output_tokens_128_exhausted_in_thinking_before_valid_json": true,
+        "max_output_tokens_512_fixed_output": {"ok": true, "n": 7},
+        "max_output_tokens_512_thoughts_tokens": 245,
+        "max_output_tokens_512_candidate_tokens": 9,
+        "thought_signature_present": true
+      },
+      "seed_repeatability": {
+        "seed": 424242,
+        "temperature": 1,
+        "max_output_tokens": 128,
+        "outputs": ["BLUE", "BLUE", "RED"],
+        "same_seed_not_strictly_deterministic": true,
+        "thoughts_tokens": [120, 120, 122]
+      }
+    },
+    "gemini-3.5-flash-lite": {
+      "availability": {"v1": true, "v1beta": true},
+      "version": "3.5-flash-lite-07-2026",
+      "display_name": "Gemini 3.5 Flash Lite",
+      "input_token_limit": 1048576,
+      "output_token_limit": 65536,
+      "supported_generation_methods": ["generateContent", "countTokens", "createCachedContent", "batchGenerateContent"],
+      "sampling_defaults": {"temperature": 1, "max_temperature": 2, "top_p": 0.95, "top_k": 64},
+      "count_tokens_fixed_prompt": 5,
+      "minimal_generation": {
+        "prompt_tokens": 5,
+        "candidate_tokens": 1,
+        "total_tokens": 6,
+        "visible_text": "OK",
+        "finish_reason": "STOP",
+        "thought_signature_present": true,
+        "service_tier": "standard"
+      },
+      "streaming": {
+        "content_type": "text/event-stream",
+        "event_count_in_fixed_probe": 3,
+        "cumulative_candidate_token_counts": [2, 3, 3],
+        "usage_repeated_in_events": true,
+        "final_part_has_thought_signature": true
+      },
+      "thinking": {
+        "thinking_budget_zero": {"http_status": 400, "error_status": "INVALID_ARGUMENT"},
+        "thinking_level_low_accepted": true,
+        "low_probe_thoughts_tokens": 27,
+        "low_probe_finish_reason": "MAX_TOKENS"
+      },
+      "tools": {
+        "automatic_function_call_succeeded": true,
+        "forced_function_call_succeeded": true,
+        "function_call_fields": ["name", "args", "id"],
+        "thought_signature_present": true
+      },
+      "json_schema": {
+        "response_json_schema_accepted": true,
+        "response_mime_type": "application/json",
+        "fixed_output": {"ok": true, "n": 7}
+      },
+      "seed_repeatability": {
+        "seed": 424242,
+        "temperature": 1,
+        "outputs": ["BLUE", "BLUE", "BLUE"],
+        "thought_signatures_changed_between_runs": true
+      },
+      "stop_sequence": {
+        "requested_stop": "STOP",
+        "visible_text": "A|",
+        "finish_reason": "STOP"
+      },
+      "inline_image_input": {
+        "accepted": true,
+        "one_pixel_png_image_tokens": 1089,
+        "text_prompt_tokens": 12,
+        "visible_text": "IMAGE_OK"
+      }
+    },
+    "gemini-3.1-pro": {
+      "availability": {"v1": false, "v1beta": false},
+      "exact_requested_id_is_officially_absent": true,
+      "normal_request": {"http_status": 404, "error_status": "NOT_FOUND"},
+      "invalid_payload_still_returns_contract_400_before_model_404": true
+    },
+    "gemini-3.1-pro-preview": {
+      "availability": {"v1": false, "v1beta": true},
+      "version": "3.1-pro-preview-01-2026",
+      "display_name": "Gemini 3.1 Pro Preview",
+      "input_token_limit": 1048576,
+      "output_token_limit": 65536,
+      "supported_generation_methods": ["generateContent", "countTokens", "createCachedContent", "batchGenerateContent"],
+      "count_tokens_fixed_prompt": 5,
+      "generation_for_this_project": {"http_status": 429, "error_status": "RESOURCE_EXHAUSTED"},
+      "contract_validation_still_available_under_zero_generation_quota": true
+    },
+    "gemini-3-pro-image": {
+      "availability": {"v1": false, "v1beta": true},
+      "version": "3.0",
+      "display_name": "Nano Banana Pro",
+      "input_token_limit": 131072,
+      "output_token_limit": 32768,
+      "supported_generation_methods": ["generateContent", "countTokens", "batchGenerateContent"],
+      "count_tokens_fixed_prompt": 6,
+      "generation_for_this_project": {"http_status": 429, "error_status": "RESOURCE_EXHAUSTED"},
+      "valid_aspect_ratios_from_error_contract": ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
+    },
+    "gemini-3.1-flash-image": {
+      "availability": {"v1": true, "v1beta": true},
+      "version": "3.0",
+      "display_name": "Nano Banana 2",
+      "input_token_limit": 65536,
+      "output_token_limit": 65536,
+      "supported_generation_methods": ["generateContent", "countTokens", "batchGenerateContent"],
+      "count_tokens_fixed_prompt": 6,
+      "text_generation": {
+        "accepted": true,
+        "model_version": "gemini-3.1-flash-image",
+        "prompt_tokens": 9,
+        "candidate_tokens": 5,
+        "visible_text": "IMAGE_MODEL_OK",
+        "thought_signature_present": true
+      },
+      "image_generation": {
+        "mime_type": "image/jpeg",
+        "service_tier": "standard",
+        "sizes": {
+          "1K": {"width": 1024, "height": 1024, "image_tokens": 1120, "candidate_tokens": 1451, "bytes": 344913, "sha256": "579a9c02b2a529280e4d65385d164bb31e58d5bf0897bf19132dc12d1a9f6c1c"},
+          "2K": {"width": 2048, "height": 2048, "image_tokens": 1680, "candidate_tokens": 2034, "bytes": 2033457, "sha256": "ec8ae232cecc111611ecfd60db60e4ed5a9e575bdadb55d6295236c39909a2e1"},
+          "4K": {"width": 4096, "height": 4096, "image_tokens": 2520, "candidate_tokens": 2827, "bytes": 7630201, "sha256": "9da3e73964a94c665aefad2e244089eeba04a6c0b325df5798495103f769df6b"}
+        },
+        "aspect_ratio_samples": {
+          "16:9_1K": {"width": 1376, "height": 768, "image_tokens": 1120, "candidate_tokens": 1419, "bytes": 39743, "sha256": "3776b474446e0b1e405296f2e6dbb91e96a2dd1655c4c205183bf3801c3d3295"}
+        },
+        "image_edit_sample": {
+          "accepted": true,
+          "input_text_tokens": 24,
+          "input_image_tokens": 258,
+          "output_image_tokens": 1120,
+          "output_width": 1024,
+          "output_height": 1024,
+          "output_bytes": 334081,
+          "output_sha256": "a246a8d7c9420a746b2dce5c6e3d31be73c59a8803a086de53dbc46a3f2152c5",
+          "elapsed_ms": 9013.18,
+          "semantic_edit_verified": "red circle changed to blue while composition remained stable"
+        },
+        "mixed_text_image_modalities_sample": {
+          "accepted": true,
+          "requested_modalities": ["TEXT", "IMAGE"],
+          "returned_part_types": ["inlineData"],
+          "visible_text_part_present": false,
+          "thought_signature_present": true,
+          "thought_signature_utf8_bytes": 1063280,
+          "prompt_tokens": 15,
+          "output_image_tokens": 1120,
+          "candidate_tokens": 1429,
+          "output_width": 1024,
+          "output_height": 1024,
+          "output_bytes": 551672,
+          "output_sha256": "01edc180d03356431604d8a5356c0752f4c6b3e5bc9f6439e5322dbfbc474729",
+          "finish_reason": "STOP"
+        },
+        "cooldown_observation": "4K first returned 429 after 1K and 2K; retry after cooldown succeeded",
+        "valid_aspect_ratios_from_error_contract": ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
+      }
+    }
+  },
+  "interpretation_guardrails": [
+    "A matching model name alone does not prove Gemini Developer API origin.",
+    "Thought signatures are observable fields but are not treated as cryptographic origin proof.",
+    "A relay may normalize headers, errors, usage, streaming chunks, or modelVersion.",
+    "Direct-channel confidence should require multiple independent transport and contract matches without contradictory provider fingerprints.",
+    "RESOURCE_EXHAUSTED proves model routing and project quota behavior only when model metadata or countTokens independently confirms the model."
+  ]
+}

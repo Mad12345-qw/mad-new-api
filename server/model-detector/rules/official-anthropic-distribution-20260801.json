@@ -1,0 +1,5263 @@
+{
+  "schemaVersion": "1.0",
+  "provider": "Anthropic official API",
+  "capturedAt": "2026-08-01T10:30:45.359979+00:00",
+  "protocol": "fpverify-compatible categorical distribution; default Claude sampling; temperature omitted",
+  "sourceMethod": [
+    "https://arxiv.org/abs/2607.10252",
+    "https://github.com/ToseaAI/llm-fingerprint-detector",
+    "https://github.com/Mohamed7415/fpverify",
+    "https://arxiv.org/abs/2607.20860"
+  ],
+  "rawEvidenceSha256": "6783693ca4116c7f2a370975aef6061749a78f012f11f1e7b580fcbbafa3c417",
+  "rawDistributionRecordCount": 261,
+  "requiredValidSamplesPerCell": 10,
+  "collectionStatus": "partial_credit_exhausted",
+  "models": {
+    "claude-fable-5": {
+      "cells": {
+        "coin_flip::en": {
+          "counts": {
+            "heads": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 3910.5,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_coin_flip_en_01",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 3104.11,
+              "inputTokens": 56,
+              "outputTokens": 14,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_coin_flip_en_02",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 3910.5,
+              "inputTokens": 56,
+              "outputTokens": 15,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_coin_flip_en_03",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 12480.52,
+              "inputTokens": 56,
+              "outputTokens": 14,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 3598.13,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 3473.16,
+              "inputTokens": 51,
+              "outputTokens": 15,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 4246.71,
+              "inputTokens": 50,
+              "outputTokens": 14,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 3670.42,
+              "inputTokens": 50,
+              "outputTokens": 14,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 3525.84,
+              "inputTokens": 51,
+              "outputTokens": 15,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_num::en": {
+          "counts": {
+            "42": 2,
+            "7": 2
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 4352.68,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_num_en_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 2174.24,
+              "inputTokens": 56,
+              "outputTokens": 18,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_num_en_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 5441.63,
+              "inputTokens": 56,
+              "outputTokens": 11,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_num_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 7169.88,
+              "inputTokens": 50,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_num_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 3263.73,
+              "inputTokens": 50,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_animal::en": {
+          "counts": {
+            "elephant": 3,
+            "octopus": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 3376.895,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_animal_en_01",
+              "status": 200,
+              "normalized": "octopus",
+              "validity": "valid",
+              "textSha256": "a7c7b3a28a6194e51867b614cce6ee4ba3b21e25a26ba2200d0231604c854cf6",
+              "elapsedMs": 3575.7,
+              "inputTokens": 47,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_animal_en_02",
+              "status": 200,
+              "normalized": "elephant",
+              "validity": "valid",
+              "textSha256": "d48f07feb6fc19b9d10e75eb9c5d9d69b4548f4deee74cbb3090fb515140aa24",
+              "elapsedMs": 3396.94,
+              "inputTokens": 50,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_animal_en_03",
+              "status": 200,
+              "normalized": "elephant",
+              "validity": "valid",
+              "textSha256": "d48f07feb6fc19b9d10e75eb9c5d9d69b4548f4deee74cbb3090fb515140aa24",
+              "elapsedMs": 3356.85,
+              "inputTokens": 50,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_animal_en_04",
+              "status": 200,
+              "normalized": "elephant",
+              "validity": "valid",
+              "textSha256": "d48f07feb6fc19b9d10e75eb9c5d9d69b4548f4deee74cbb3090fb515140aa24",
+              "elapsedMs": 3339.84,
+              "inputTokens": 50,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_city::en": {
+          "counts": {
+            "tokyo": 1,
+            "kyoto": 1,
+            "marrakech": 1
+          },
+          "samples": 4,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 1,
+          "splitHalfJsd": 1.0,
+          "medianLatencyMs": 3849.74,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_city_en_01",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 3918.88,
+              "inputTokens": 49,
+              "outputTokens": 16,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_city_en_02",
+              "status": 200,
+              "normalized": "kyoto",
+              "validity": "valid",
+              "textSha256": "d2e84058c20a36430329a99366cf3611c964c765a8b914c43ff79f9a54d71799",
+              "elapsedMs": 3780.6,
+              "inputTokens": 49,
+              "outputTokens": 14,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_city_en_03",
+              "status": 200,
+              "normalized": "marrakech",
+              "validity": "valid",
+              "textSha256": "1b387d6cc36af4d887c1b161b7805a367526322e39f4f5a62e5fbfcb3b4ad043",
+              "elapsedMs": 4011.83,
+              "inputTokens": 46,
+              "outputTokens": 29,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_city_en_04",
+              "status": 400,
+              "normalized": "<other>",
+              "validity": "error",
+              "textSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "elapsedMs": 402.79,
+              "inputTokens": null,
+              "outputTokens": null,
+              "stopReason": null
+            }
+          ]
+        },
+        "rand_color::en": {
+          "counts": {
+            "blue": 3,
+            "teal": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 3664.8450000000003,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_color_en_01",
+              "status": 200,
+              "normalized": "teal",
+              "validity": "valid",
+              "textSha256": "fa15a5c1d61010553974997a19c7baef52cedd7f7ba0042d9cdf03aec5105c3d",
+              "elapsedMs": 4212.81,
+              "inputTokens": 46,
+              "outputTokens": 12,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 3565.66,
+              "inputTokens": 46,
+              "outputTokens": 12,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 3493.57,
+              "inputTokens": 46,
+              "outputTokens": 15,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 3764.03,
+              "inputTokens": 48,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_letter::en": {
+          "counts": {
+            "q": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 3566.9750000000004,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_letter_en_01",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 3832.05,
+              "inputTokens": 48,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_letter_en_02",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 3418.61,
+              "inputTokens": 54,
+              "outputTokens": 15,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_letter_en_03",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 3414.26,
+              "inputTokens": 48,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_letter_en_04",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 3715.34,
+              "inputTokens": 54,
+              "outputTokens": 17,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::en": {
+          "counts": {
+            "42": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 3804.64,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_en_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 4764.04,
+              "inputTokens": 53,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_en_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 3563.81,
+              "inputTokens": 53,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_en_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 4045.47,
+              "inputTokens": 58,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_100_en_04",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 3483.85,
+              "inputTokens": 53,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::zh": {
+          "counts": {
+            "42": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 3695.27,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_zh_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 3695.27,
+              "inputTokens": 56,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_zh_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 7237.34,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_zh_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 3190.22,
+              "inputTokens": 56,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_10::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 3312.9849999999997,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_10_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 3412.56,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_10_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 3100.24,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_10_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 3213.41,
+              "inputTokens": 53,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_10_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 4338.58,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        }
+      },
+      "cellCount": 10,
+      "sampleCount": 38,
+      "minimumValidSamplesInAnyCell": 3,
+      "readyForThresholdVerdict": false,
+      "meanSplitHalfJsd": 0.16225562489182654
+    },
+    "claude-opus-5": {
+      "cells": {
+        "coin_flip::en": {
+          "counts": {
+            "heads": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1777.79,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_coin_flip_en_01",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1746.36,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_coin_flip_en_02",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1777.79,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_coin_flip_en_03",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1815.88,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1915.685,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1765.36,
+              "inputTokens": 51,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 9944.8,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1918.87,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1912.5,
+              "inputTokens": 51,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_num::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1865.385,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_num_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1857.65,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_num_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1602.9,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_num_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1873.12,
+              "inputTokens": 50,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_num_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 2001.47,
+              "inputTokens": 50,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_animal::en": {
+          "counts": {
+            "dog": 3,
+            "otter": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 1500.175,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_animal_en_01",
+              "status": 200,
+              "normalized": "otter",
+              "validity": "valid",
+              "textSha256": "f5657b5f8caf6d2294dec872ac8aebc0751c250cb1c3138e1af927812893bf91",
+              "elapsedMs": 1458.85,
+              "inputTokens": 47,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_animal_en_02",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1449.13,
+              "inputTokens": 50,
+              "outputTokens": 12,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_animal_en_03",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1541.5,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_animal_en_04",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 4441.46,
+              "inputTokens": 50,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_city::en": {
+          "counts": {
+            "tokyo": 2,
+            "reykjavik": 1
+          },
+          "samples": 4,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 1,
+          "splitHalfJsd": 0.31127812445913283,
+          "medianLatencyMs": 1702.065,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_city_en_01",
+              "status": 200,
+              "normalized": "reykjavik",
+              "validity": "valid",
+              "textSha256": "c8bf9cc74aceb87e6c044fe95f344efada7c07d2dadc43422ad8ab4e14ab9e38",
+              "elapsedMs": 2238.4,
+              "inputTokens": 49,
+              "outputTokens": 28,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_city_en_02",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1907.5,
+              "inputTokens": 49,
+              "outputTokens": 18,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_city_en_03",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1496.63,
+              "inputTokens": 46,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_city_en_04",
+              "status": 400,
+              "normalized": "<other>",
+              "validity": "error",
+              "textSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "elapsedMs": 303.04,
+              "inputTokens": null,
+              "outputTokens": null,
+              "stopReason": null
+            }
+          ]
+        },
+        "rand_color::en": {
+          "counts": {
+            "blue": 3,
+            "teal": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 2304.995,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_color_en_01",
+              "status": 200,
+              "normalized": "teal",
+              "validity": "valid",
+              "textSha256": "fa15a5c1d61010553974997a19c7baef52cedd7f7ba0042d9cdf03aec5105c3d",
+              "elapsedMs": 1794.25,
+              "inputTokens": 46,
+              "outputTokens": 12,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 6383.17,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 2033.84,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 2576.15,
+              "inputTokens": 48,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_letter::en": {
+          "counts": {
+            "q": 3,
+            "k": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 2322.285,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_letter_en_01",
+              "status": 200,
+              "normalized": "k",
+              "validity": "valid",
+              "textSha256": "86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177",
+              "elapsedMs": 2405.67,
+              "inputTokens": 48,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_letter_en_02",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 3109.57,
+              "inputTokens": 54,
+              "outputTokens": 11,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_letter_en_03",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 1842.78,
+              "inputTokens": 48,
+              "outputTokens": 15,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_letter_en_04",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 2238.9,
+              "inputTokens": 54,
+              "outputTokens": 11,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::en": {
+          "counts": {
+            "73": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1954.37,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_en_01",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 3307.52,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_en_02",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 2035.56,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_en_03",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 1873.18,
+              "inputTokens": 58,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_100_en_04",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 1672.83,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::zh": {
+          "counts": {
+            "37": 1,
+            "73": 1,
+            "42": 1
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 1.0,
+          "medianLatencyMs": 1459.77,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_zh_01",
+              "status": 200,
+              "normalized": "37",
+              "validity": "valid",
+              "textSha256": "7a61b53701befdae0eeeffaecc73f14e20b537bb0f8b91ad7c2936dc63562b25",
+              "elapsedMs": 1459.77,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_zh_02",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 2060.66,
+              "inputTokens": 53,
+              "outputTokens": 13,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_zh_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1309.14,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_10::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1547.94,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_10_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1436.5,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_10_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1537.09,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_10_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1864.6,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_10_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1558.79,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        }
+      },
+      "cellCount": 10,
+      "sampleCount": 38,
+      "minimumValidSamplesInAnyCell": 3,
+      "readyForThresholdVerdict": false,
+      "meanSplitHalfJsd": 0.2245112497836531
+    },
+    "claude-sonnet-5": {
+      "cells": {
+        "coin_flip::en": {
+          "counts": {
+            "heads": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1402.49,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_coin_flip_en_01",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1314.62,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_coin_flip_en_02",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1402.49,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_coin_flip_en_03",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 2587.86,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1426.775,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1309.1,
+              "inputTokens": 51,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1401.75,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1471.81,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1451.8,
+              "inputTokens": 51,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_num::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1386.12,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_num_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1455.22,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_num_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1251.29,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_num_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1317.02,
+              "inputTokens": 50,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_num_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1528.3,
+              "inputTokens": 50,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_animal::en": {
+          "counts": {
+            "dog": 3,
+            "giraffe": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 1457.795,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_animal_en_01",
+              "status": 200,
+              "normalized": "giraffe",
+              "validity": "valid",
+              "textSha256": "56151fd506603705af3ffb8012ff68bc69eb664fa1015db3eec4fc356b12fb53",
+              "elapsedMs": 1597.33,
+              "inputTokens": 47,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_animal_en_02",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1588.49,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_animal_en_03",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1327.1,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_animal_en_04",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1300.25,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_city::en": {
+          "counts": {
+            "paris": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1942.58,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_city_en_01",
+              "status": 200,
+              "normalized": "paris",
+              "validity": "valid",
+              "textSha256": "5dd272b4f316b776a7b8e3d0894b37e1e42be3d5d3b204b8a5836cc50597a6b1",
+              "elapsedMs": 1303.08,
+              "inputTokens": 49,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_city_en_02",
+              "status": 200,
+              "normalized": "paris",
+              "validity": "valid",
+              "textSha256": "5dd272b4f316b776a7b8e3d0894b37e1e42be3d5d3b204b8a5836cc50597a6b1",
+              "elapsedMs": 1942.58,
+              "inputTokens": 49,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_city_en_03",
+              "status": 200,
+              "normalized": "paris",
+              "validity": "valid",
+              "textSha256": "5dd272b4f316b776a7b8e3d0894b37e1e42be3d5d3b204b8a5836cc50597a6b1",
+              "elapsedMs": 2462.12,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1442.145,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1320.1,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1399.02,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1485.27,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 3570.94,
+              "inputTokens": 48,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_letter::en": {
+          "counts": {
+            "k": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1282.75,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_letter_en_01",
+              "status": 200,
+              "normalized": "k",
+              "validity": "valid",
+              "textSha256": "86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177",
+              "elapsedMs": 1253.88,
+              "inputTokens": 48,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_letter_en_02",
+              "status": 200,
+              "normalized": "k",
+              "validity": "valid",
+              "textSha256": "86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177",
+              "elapsedMs": 1211.73,
+              "inputTokens": 54,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_letter_en_03",
+              "status": 200,
+              "normalized": "k",
+              "validity": "valid",
+              "textSha256": "86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177",
+              "elapsedMs": 1311.62,
+              "inputTokens": 48,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_letter_en_04",
+              "status": 200,
+              "normalized": "k",
+              "validity": "valid",
+              "textSha256": "86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177",
+              "elapsedMs": 1639.31,
+              "inputTokens": 54,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::en": {
+          "counts": {
+            "47": 3,
+            "42": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.31127812445913283,
+          "medianLatencyMs": 1490.1149999999998,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_en_01",
+              "status": 200,
+              "normalized": "47",
+              "validity": "valid",
+              "textSha256": "31489056e0916d59fe3add79e63f095af3ffb81604691f21cad442a85c7be617",
+              "elapsedMs": 2108.17,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_en_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1291.12,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_en_03",
+              "status": 200,
+              "normalized": "47",
+              "validity": "valid",
+              "textSha256": "31489056e0916d59fe3add79e63f095af3ffb81604691f21cad442a85c7be617",
+              "elapsedMs": 1689.11,
+              "inputTokens": 58,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_100_en_04",
+              "status": 200,
+              "normalized": "47",
+              "validity": "valid",
+              "textSha256": "31489056e0916d59fe3add79e63f095af3ffb81604691f21cad442a85c7be617",
+              "elapsedMs": 1280.24,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::zh": {
+          "counts": {
+            "47": 2,
+            "57": 1
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 1.0,
+          "medianLatencyMs": 1279.1,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_zh_01",
+              "status": 200,
+              "normalized": "47",
+              "validity": "valid",
+              "textSha256": "31489056e0916d59fe3add79e63f095af3ffb81604691f21cad442a85c7be617",
+              "elapsedMs": 1916.27,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_zh_02",
+              "status": 200,
+              "normalized": "57",
+              "validity": "valid",
+              "textSha256": "c837649cce43f2729138e72cc315207057ac82599a59be72765a477f22d14a54",
+              "elapsedMs": 1255.9,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_zh_03",
+              "status": 200,
+              "normalized": "47",
+              "validity": "valid",
+              "textSha256": "31489056e0916d59fe3add79e63f095af3ffb81604691f21cad442a85c7be617",
+              "elapsedMs": 1279.1,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_10::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1295.2849999999999,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_10_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1281.03,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_10_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1302.08,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_10_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1340.89,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_10_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1288.49,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        }
+      },
+      "cellCount": 10,
+      "sampleCount": 37,
+      "minimumValidSamplesInAnyCell": 3,
+      "readyForThresholdVerdict": false,
+      "meanSplitHalfJsd": 0.16225562489182657
+    },
+    "claude-haiku-4-5-20251001": {
+      "cells": {
+        "coin_flip::en": {
+          "counts": {
+            "heads": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 721.22,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_coin_flip_en_01",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1089.52,
+              "inputTokens": 45,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_coin_flip_en_02",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 701.35,
+              "inputTokens": 45,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_coin_flip_en_03",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 721.22,
+              "inputTokens": 45,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1389.9650000000001,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 677.57,
+              "inputTokens": 41,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1608.71,
+              "inputTokens": 38,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1883.61,
+              "inputTokens": 38,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1171.22,
+              "inputTokens": 41,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_num::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 739.465,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_num_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 705.37,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_num_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 729.98,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_num_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1352.47,
+              "inputTokens": 38,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_num_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 748.95,
+              "inputTokens": 38,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_animal::en": {
+          "counts": {
+            "platypus": 1,
+            "elephant": 1,
+            "dog": 1,
+            "tiger": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 1.0,
+          "medianLatencyMs": 757.19,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_animal_en_01",
+              "status": 200,
+              "normalized": "platypus",
+              "validity": "valid",
+              "textSha256": "d183be7531c53e74b334cb0e885e0fca3f525fcbc24ceb99e4b4fcb045f1a395",
+              "elapsedMs": 1303.81,
+              "inputTokens": 37,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_animal_en_02",
+              "status": 200,
+              "normalized": "elephant",
+              "validity": "valid",
+              "textSha256": "d48f07feb6fc19b9d10e75eb9c5d9d69b4548f4deee74cbb3090fb515140aa24",
+              "elapsedMs": 747.94,
+              "inputTokens": 39,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_animal_en_03",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 737.43,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_animal_en_04",
+              "status": 200,
+              "normalized": "tiger",
+              "validity": "valid",
+              "textSha256": "410f76d01d8a9981298d28eb994b0b6f2edcbee342281fa724f37d524a5bf1b8",
+              "elapsedMs": 766.44,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_city::en": {
+          "counts": {
+            "tokyo": 2,
+            "denver": 1
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.31127812445913283,
+          "medianLatencyMs": 877.73,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_city_en_01",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 877.73,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_city_en_02",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1113.58,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_city_en_03",
+              "status": 200,
+              "normalized": "denver",
+              "validity": "valid",
+              "textSha256": "fcdeb8c07d4a0e1d3b453067c2e819ba1caaf77a2a8a4acd990746e1bf242ec6",
+              "elapsedMs": 844.98,
+              "inputTokens": 37,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 742.375,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1313.88,
+              "inputTokens": 37,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 698.82,
+              "inputTokens": 36,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 717.24,
+              "inputTokens": 36,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 767.51,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_letter::en": {
+          "counts": {
+            "q": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 721.97,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_letter_en_01",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 734.56,
+              "inputTokens": 38,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_letter_en_02",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 686.65,
+              "inputTokens": 41,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_letter_en_03",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 754.01,
+              "inputTokens": 38,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_letter_en_04",
+              "status": 200,
+              "normalized": "q",
+              "validity": "valid",
+              "textSha256": "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260",
+              "elapsedMs": 709.38,
+              "inputTokens": 41,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::en": {
+          "counts": {
+            "42": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1124.35,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_en_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1375.27,
+              "inputTokens": 43,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_en_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1863.09,
+              "inputTokens": 43,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_en_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 873.43,
+              "inputTokens": 48,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_100_en_04",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 638.82,
+              "inputTokens": 43,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::zh": {
+          "counts": {
+            "42": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 719.12,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_zh_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 767.69,
+              "inputTokens": 57,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_zh_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 696.2,
+              "inputTokens": 54,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_zh_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 719.12,
+              "inputTokens": 57,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_10::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 939.6949999999999,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_10_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 2919.14,
+              "inputTokens": 43,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_10_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 661.15,
+              "inputTokens": 43,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_10_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 751.03,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_10_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1128.36,
+              "inputTokens": 43,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        }
+      },
+      "cellCount": 10,
+      "sampleCount": 37,
+      "minimumValidSamplesInAnyCell": 3,
+      "readyForThresholdVerdict": false,
+      "meanSplitHalfJsd": 0.1311278124459133
+    },
+    "claude-opus-4-8": {
+      "cells": {
+        "coin_flip::en": {
+          "counts": {
+            "heads": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1222.14,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_coin_flip_en_01",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1191.52,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_coin_flip_en_02",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1372.4,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_coin_flip_en_03",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1222.14,
+              "inputTokens": 56,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1215.125,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1048.94,
+              "inputTokens": 51,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1771.03,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1381.31,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1017.79,
+              "inputTokens": 51,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_num::en": {
+          "counts": {
+            "42": 2,
+            "7": 2
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1656.275,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_num_en_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1238.4,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_num_en_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 2074.15,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_num_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1024.38,
+              "inputTokens": 50,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_num_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 2519.69,
+              "inputTokens": 50,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_animal::en": {
+          "counts": {
+            "dog": 3,
+            "elephant": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 1414.34,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_animal_en_01",
+              "status": 200,
+              "normalized": "elephant",
+              "validity": "valid",
+              "textSha256": "d48f07feb6fc19b9d10e75eb9c5d9d69b4548f4deee74cbb3090fb515140aa24",
+              "elapsedMs": 1447.09,
+              "inputTokens": 47,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_animal_en_02",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1336.85,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_animal_en_03",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1381.59,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_animal_en_04",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1822.68,
+              "inputTokens": 50,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_city::en": {
+          "counts": {
+            "tokyo": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1173.5,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_city_en_01",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1142.32,
+              "inputTokens": 49,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_city_en_02",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1462.98,
+              "inputTokens": 49,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_city_en_03",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1173.5,
+              "inputTokens": 46,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1240.7350000000001,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 913.63,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1277.47,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1271.44,
+              "inputTokens": 46,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1210.03,
+              "inputTokens": 48,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_letter::en": {
+          "counts": {
+            "m": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1223.87,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_letter_en_01",
+              "status": 200,
+              "normalized": "m",
+              "validity": "valid",
+              "textSha256": "08f271887ce94707da822d5263bae19d5519cb3614e0daedc4c7ce5dab7473f1",
+              "elapsedMs": 1191.49,
+              "inputTokens": 48,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_letter_en_02",
+              "status": 200,
+              "normalized": "m",
+              "validity": "valid",
+              "textSha256": "08f271887ce94707da822d5263bae19d5519cb3614e0daedc4c7ce5dab7473f1",
+              "elapsedMs": 1256.25,
+              "inputTokens": 54,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_letter_en_03",
+              "status": 200,
+              "normalized": "m",
+              "validity": "valid",
+              "textSha256": "08f271887ce94707da822d5263bae19d5519cb3614e0daedc4c7ce5dab7473f1",
+              "elapsedMs": 908.24,
+              "inputTokens": 48,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_letter_en_04",
+              "status": 200,
+              "normalized": "m",
+              "validity": "valid",
+              "textSha256": "08f271887ce94707da822d5263bae19d5519cb3614e0daedc4c7ce5dab7473f1",
+              "elapsedMs": 1496.08,
+              "inputTokens": 54,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::en": {
+          "counts": {
+            "73": 2,
+            "57": 1,
+            "42": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.5,
+          "medianLatencyMs": 1187.04,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_en_01",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 1069.2,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_en_02",
+              "status": 200,
+              "normalized": "57",
+              "validity": "valid",
+              "textSha256": "c837649cce43f2729138e72cc315207057ac82599a59be72765a477f22d14a54",
+              "elapsedMs": 1769.58,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_en_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1301.03,
+              "inputTokens": 58,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_100_en_04",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 1073.05,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::zh": {
+          "counts": {
+            "42": 2,
+            "47": 1
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 1273.08,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_zh_01",
+              "status": 200,
+              "normalized": "47",
+              "validity": "valid",
+              "textSha256": "31489056e0916d59fe3add79e63f095af3ffb81604691f21cad442a85c7be617",
+              "elapsedMs": 1273.08,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_zh_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1286.05,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_zh_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1169.55,
+              "inputTokens": 56,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_10::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1383.47,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_10_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1257.06,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_10_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1668.94,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_10_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1399.69,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_10_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1367.25,
+              "inputTokens": 53,
+              "outputTokens": 3,
+              "stopReason": "end_turn"
+            }
+          ]
+        }
+      },
+      "cellCount": 10,
+      "sampleCount": 37,
+      "minimumValidSamplesInAnyCell": 3,
+      "readyForThresholdVerdict": false,
+      "meanSplitHalfJsd": 0.11225562489182656
+    },
+    "claude-opus-4-7": {
+      "cells": {
+        "coin_flip::en": {
+          "counts": {
+            "heads": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1381.31,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_coin_flip_en_01",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1270.68,
+              "inputTokens": 61,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_coin_flip_en_02",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1381.31,
+              "inputTokens": 61,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_coin_flip_en_03",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "b909fd55895243bf8545f531a96ba9ad8eba7f26200b953ba87c54639e69d64e",
+              "elapsedMs": 1690.22,
+              "inputTokens": 61,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1363.505,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1338.58,
+              "inputTokens": 56,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1376.68,
+              "inputTokens": 55,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1742.23,
+              "inputTokens": 55,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1350.33,
+              "inputTokens": 56,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_num::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1166.88,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_num_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1131.8,
+              "inputTokens": 61,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_num_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1201.96,
+              "inputTokens": 61,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_num_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1012.72,
+              "inputTokens": 55,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_num_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 2162.15,
+              "inputTokens": 55,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_animal::en": {
+          "counts": {
+            "dog": 3,
+            "elephant": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 1189.3049999999998,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_animal_en_01",
+              "status": 200,
+              "normalized": "elephant",
+              "validity": "valid",
+              "textSha256": "d48f07feb6fc19b9d10e75eb9c5d9d69b4548f4deee74cbb3090fb515140aa24",
+              "elapsedMs": 1713.33,
+              "inputTokens": 52,
+              "outputTokens": 8,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_animal_en_02",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1081.97,
+              "inputTokens": 55,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_animal_en_03",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1090.59,
+              "inputTokens": 55,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_animal_en_04",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1288.02,
+              "inputTokens": 55,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_city::en": {
+          "counts": {
+            "tokyo": 2,
+            "lisbon": 1
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.31127812445913283,
+          "medianLatencyMs": 1471.93,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_city_en_01",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1724.76,
+              "inputTokens": 54,
+              "outputTokens": 9,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_city_en_02",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1386.72,
+              "inputTokens": 54,
+              "outputTokens": 9,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_city_en_03",
+              "status": 200,
+              "normalized": "lisbon",
+              "validity": "valid",
+              "textSha256": "92e5dc262be8ca902fc5c4a7694866bcd373c4e77f1e155d980688479cc9877a",
+              "elapsedMs": 1471.93,
+              "inputTokens": 51,
+              "outputTokens": 9,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1211.855,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1643.29,
+              "inputTokens": 51,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 960.01,
+              "inputTokens": 51,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1382.49,
+              "inputTokens": 51,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1041.22,
+              "inputTokens": 53,
+              "outputTokens": 7,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_letter::en": {
+          "counts": {
+            "m": 3,
+            "k": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.31127812445913283,
+          "medianLatencyMs": 1390.345,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_letter_en_01",
+              "status": 200,
+              "normalized": "m",
+              "validity": "valid",
+              "textSha256": "08f271887ce94707da822d5263bae19d5519cb3614e0daedc4c7ce5dab7473f1",
+              "elapsedMs": 1554.21,
+              "inputTokens": 53,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_letter_en_02",
+              "status": 200,
+              "normalized": "m",
+              "validity": "valid",
+              "textSha256": "08f271887ce94707da822d5263bae19d5519cb3614e0daedc4c7ce5dab7473f1",
+              "elapsedMs": 1359.05,
+              "inputTokens": 59,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_letter_en_03",
+              "status": 200,
+              "normalized": "k",
+              "validity": "valid",
+              "textSha256": "86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177",
+              "elapsedMs": 1421.64,
+              "inputTokens": 53,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_letter_en_04",
+              "status": 200,
+              "normalized": "m",
+              "validity": "valid",
+              "textSha256": "08f271887ce94707da822d5263bae19d5519cb3614e0daedc4c7ce5dab7473f1",
+              "elapsedMs": 1157.98,
+              "inputTokens": 59,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::en": {
+          "counts": {
+            "73": 3,
+            "47": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.31127812445913283,
+          "medianLatencyMs": 1430.745,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_en_01",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 13953.06,
+              "inputTokens": 58,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_en_02",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 1538.76,
+              "inputTokens": 58,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_en_03",
+              "status": 200,
+              "normalized": "47",
+              "validity": "valid",
+              "textSha256": "31489056e0916d59fe3add79e63f095af3ffb81604691f21cad442a85c7be617",
+              "elapsedMs": 1322.73,
+              "inputTokens": 63,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_100_en_04",
+              "status": 200,
+              "normalized": "73",
+              "validity": "valid",
+              "textSha256": "96061e92f58e4bdcdee73df36183fe3ac64747c81c26f6c83aada8d2aabb1864",
+              "elapsedMs": 1192.29,
+              "inputTokens": 58,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::zh": {
+          "counts": {
+            "42": 2,
+            "47": 1
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 1392.06,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_zh_01",
+              "status": 200,
+              "normalized": "47",
+              "validity": "valid",
+              "textSha256": "31489056e0916d59fe3add79e63f095af3ffb81604691f21cad442a85c7be617",
+              "elapsedMs": 1392.06,
+              "inputTokens": 62,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_zh_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 2728.07,
+              "inputTokens": 59,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_zh_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1280.74,
+              "inputTokens": 62,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_10::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1423.01,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_10_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1376.15,
+              "inputTokens": 58,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_10_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 975.22,
+              "inputTokens": 58,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_10_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1469.87,
+              "inputTokens": 58,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_10_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1495.73,
+              "inputTokens": 58,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            }
+          ]
+        }
+      },
+      "cellCount": 10,
+      "sampleCount": 37,
+      "minimumValidSamplesInAnyCell": 3,
+      "readyForThresholdVerdict": false,
+      "meanSplitHalfJsd": 0.15563906222956642
+    },
+    "claude-opus-4-6": {
+      "cells": {
+        "coin_flip::en": {
+          "counts": {
+            "heads": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1713.15,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_coin_flip_en_01",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "5c0bc2423c1af18cd0172a4d1f84c01af25a3ee3c5ccd217e8e8a48924fe414e",
+              "elapsedMs": 1713.15,
+              "inputTokens": 46,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_coin_flip_en_02",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "5c0bc2423c1af18cd0172a4d1f84c01af25a3ee3c5ccd217e8e8a48924fe414e",
+              "elapsedMs": 2107.55,
+              "inputTokens": 46,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_coin_flip_en_03",
+              "status": 200,
+              "normalized": "heads",
+              "validity": "valid",
+              "textSha256": "5c0bc2423c1af18cd0172a4d1f84c01af25a3ee3c5ccd217e8e8a48924fe414e",
+              "elapsedMs": 1500.82,
+              "inputTokens": 46,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1618.345,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1529.56,
+              "inputTokens": 42,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "16477688c0e00699c6cfa4497a3612d7e83c532062b64b250fed8908128ed548",
+              "elapsedMs": 1623.21,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "16477688c0e00699c6cfa4497a3612d7e83c532062b64b250fed8908128ed548",
+              "elapsedMs": 1845.6,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1613.48,
+              "inputTokens": 42,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "fav_num::en": {
+          "counts": {
+            "42": 2,
+            "7": 2
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 2858.4849999999997,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_fav_num_en_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 3951.55,
+              "inputTokens": 45,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_fav_num_en_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 2930.64,
+              "inputTokens": 45,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_fav_num_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 2455.17,
+              "inputTokens": 39,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_fav_num_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 2786.33,
+              "inputTokens": 39,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_animal::en": {
+          "counts": {
+            "dog": 3,
+            "pangolin": 1
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 2070.48,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_animal_en_01",
+              "status": 200,
+              "normalized": "pangolin",
+              "validity": "valid",
+              "textSha256": "b05d0e4c7efba77375e125da83885a1b3e91ad4022cf045d4081352c6aa48556",
+              "elapsedMs": 2325.49,
+              "inputTokens": 38,
+              "outputTokens": 6,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_animal_en_02",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1712.55,
+              "inputTokens": 40,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_animal_en_03",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 1815.47,
+              "inputTokens": 40,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_animal_en_04",
+              "status": 200,
+              "normalized": "dog",
+              "validity": "valid",
+              "textSha256": "0eb129bf94594aaeee66e38361d7be212cd927c3df4dd92e3ded2e0da0c7ad88",
+              "elapsedMs": 2504.86,
+              "inputTokens": 40,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_city::en": {
+          "counts": {
+            "tokyo": 2,
+            "prague": 1
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.3112781244591328,
+          "medianLatencyMs": 1792.61,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_city_en_01",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1792.61,
+              "inputTokens": 40,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_city_en_02",
+              "status": 200,
+              "normalized": "tokyo",
+              "validity": "valid",
+              "textSha256": "ec2d191680171ca9603105aa2be38a46228a8e1c75e3ef0383c7ebbd1287110a",
+              "elapsedMs": 1672.87,
+              "inputTokens": 40,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_city_en_03",
+              "status": 200,
+              "normalized": "prague",
+              "validity": "valid",
+              "textSha256": "22331ccb80db36285eed5cec9e5e15014ff2a55530b6581209e380d4ab119bae",
+              "elapsedMs": 2951.25,
+              "inputTokens": 38,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_color::en": {
+          "counts": {
+            "blue": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 2286.59,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_color_en_01",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1779.23,
+              "inputTokens": 38,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_color_en_02",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 1704.6,
+              "inputTokens": 37,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_color_en_03",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 3241.15,
+              "inputTokens": 37,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_color_en_04",
+              "status": 200,
+              "normalized": "blue",
+              "validity": "valid",
+              "textSha256": "ec7d56a01607001e6401366417c5e2eb00ffa0df17ca1a9a831e0b32c8f11bf7",
+              "elapsedMs": 2793.95,
+              "inputTokens": 40,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_letter::en": {
+          "counts": {
+            "k": 2,
+            "g": 2
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 1.0,
+          "medianLatencyMs": 1619.8,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_letter_en_01",
+              "status": 200,
+              "normalized": "k",
+              "validity": "valid",
+              "textSha256": "86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177",
+              "elapsedMs": 1614.37,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_letter_en_02",
+              "status": 200,
+              "normalized": "g",
+              "validity": "valid",
+              "textSha256": "333e0a1e27815d0ceee55c473fe3dc93d56c63e3bee2b3b4aee8eed6d70191a3",
+              "elapsedMs": 1625.23,
+              "inputTokens": 42,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_letter_en_03",
+              "status": 200,
+              "normalized": "k",
+              "validity": "valid",
+              "textSha256": "86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177",
+              "elapsedMs": 1573.5,
+              "inputTokens": 39,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_letter_en_04",
+              "status": 200,
+              "normalized": "g",
+              "validity": "valid",
+              "textSha256": "333e0a1e27815d0ceee55c473fe3dc93d56c63e3bee2b3b4aee8eed6d70191a3",
+              "elapsedMs": 1944.4,
+              "inputTokens": 42,
+              "outputTokens": 4,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::en": {
+          "counts": {
+            "42": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 2153.525,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_en_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 2504.21,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_en_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 2609.75,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_en_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1802.84,
+              "inputTokens": 49,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_100_en_04",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1636.77,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_100::zh": {
+          "counts": {
+            "42": 3
+          },
+          "samples": 3,
+          "valid": 3,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 4124.64,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_100_zh_01",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 4124.64,
+              "inputTokens": 58,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_100_zh_02",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 5293.21,
+              "inputTokens": 55,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_100_zh_03",
+              "status": 200,
+              "normalized": "42",
+              "validity": "valid",
+              "textSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+              "elapsedMs": 1789.12,
+              "inputTokens": 58,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        },
+        "rand_num_10::en": {
+          "counts": {
+            "7": 4
+          },
+          "samples": 4,
+          "valid": 4,
+          "invalid": 0,
+          "empty": 0,
+          "errors": 0,
+          "splitHalfJsd": 0.0,
+          "medianLatencyMs": 1706.79,
+          "sampleEvidence": [
+            {
+              "sample": 1,
+              "probe": "distribution_rand_num_10_en_01",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1780.43,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 2,
+              "probe": "distribution_rand_num_10_en_02",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1589.52,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 3,
+              "probe": "distribution_rand_num_10_en_03",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 6192.98,
+              "inputTokens": 45,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            },
+            {
+              "sample": 4,
+              "probe": "distribution_rand_num_10_en_04",
+              "status": 200,
+              "normalized": "7",
+              "validity": "valid",
+              "textSha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+              "elapsedMs": 1633.15,
+              "inputTokens": 44,
+              "outputTokens": 5,
+              "stopReason": "end_turn"
+            }
+          ]
+        }
+      },
+      "cellCount": 10,
+      "sampleCount": 37,
+      "minimumValidSamplesInAnyCell": 3,
+      "readyForThresholdVerdict": false,
+      "meanSplitHalfJsd": 0.16225562489182654
+    }
+  },
+  "pairwiseModelDistances": [
+    {
+      "left": "claude-fable-5",
+      "right": "claude-opus-5",
+      "comparableCells": 10,
+      "meanJsd": 0.34492035054291625,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.5408520829727551
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.4591479170272448
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-fable-5",
+      "right": "claude-sonnet-5",
+      "comparableCells": 10,
+      "meanJsd": 0.49979984461245613,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.9999999999999999
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.5487949406953987
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.9999999999999999
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-fable-5",
+      "right": "claude-haiku-4-5-20251001",
+      "comparableCells": 10,
+      "meanJsd": 0.15844165261723514,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.5943609377704335
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.5408520829727551
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-fable-5",
+      "right": "claude-opus-4-8",
+      "comparableCells": 10,
+      "meanJsd": 0.29311036810842167,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.5943609377704335
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.4591479170272448
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.5487949406953987
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-fable-5",
+      "right": "claude-opus-4-7",
+      "comparableCells": 10,
+      "meanJsd": 0.3775291030793461,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.5943609377704335
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.5408520829727551
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-fable-5",
+      "right": "claude-opus-4-6",
+      "comparableCells": 10,
+      "meanJsd": 0.2678777463942785,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.5408520829727551
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-opus-5",
+      "right": "claude-sonnet-5",
+      "comparableCells": 10,
+      "meanJsd": 0.39367203216654284,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.9999999999999999
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.5487949406953986
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.9999999999999999
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-opus-5",
+      "right": "claude-haiku-4-5-20251001",
+      "comparableCells": 10,
+      "meanJsd": 0.26626929500710717,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.5943609377704335
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.3333333333333333
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.4591479170272448
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-opus-5",
+      "right": "claude-opus-4-8",
+      "comparableCells": 10,
+      "meanJsd": 0.27422082174821605,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.5408520829727552
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-opus-5",
+      "right": "claude-opus-4-7",
+      "comparableCells": 10,
+      "meanJsd": 0.21500361782461483,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.3333333333333333
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.75
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.5408520829727552
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-opus-5",
+      "right": "claude-opus-4-6",
+      "comparableCells": 10,
+      "meanJsd": 0.31473238180193075,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.3333333333333333
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.6556390622295665
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.4591479170272448
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-sonnet-5",
+      "right": "claude-haiku-4-5-20251001",
+      "comparableCells": 10,
+      "meanJsd": 0.4143155878465832,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.5943609377704335
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.9999999999999999
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.5487949406953986
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.9999999999999999
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-sonnet-5",
+      "right": "claude-opus-4-8",
+      "comparableCells": 10,
+      "meanJsd": 0.3852130207431888,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.75
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.5408520829727551
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-sonnet-5",
+      "right": "claude-opus-4-7",
+      "comparableCells": 10,
+      "meanJsd": 0.2934007961438587,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.5487949406953987
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.5943609377704335
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.5408520829727551
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-sonnet-5",
+      "right": "claude-opus-4-6",
+      "comparableCells": 10,
+      "meanJsd": 0.3421351189613664,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.3112781244591328
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.5487949406953986
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.9999999999999999
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-haiku-4-5-20251001",
+      "right": "claude-opus-4-8",
+      "comparableCells": 10,
+      "meanJsd": 0.2586183012167184,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.3443609377704336
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.5487949406953987
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-haiku-4-5-20251001",
+      "right": "claude-opus-4-7",
+      "comparableCells": 10,
+      "meanJsd": 0.2868568775724877,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.3443609377704336
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.3333333333333333
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-haiku-4-5-20251001",
+      "right": "claude-opus-4-6",
+      "comparableCells": 10,
+      "meanJsd": 0.22389723955628996,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.5943609377704335
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.3333333333333333
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-opus-4-8",
+      "right": "claude-opus-4-7",
+      "comparableCells": 10,
+      "meanJsd": 0.10332338885161045,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.1379253809700299
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.3931558784658321
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-opus-4-8",
+      "right": "claude-opus-4-6",
+      "comparableCells": 10,
+      "meanJsd": 0.21805439499376178,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 0.5487949406953986
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    },
+    {
+      "left": "claude-opus-4-7",
+      "right": "claude-opus-4-6",
+      "comparableCells": 10,
+      "meanJsd": 0.27411250246431423,
+      "diagnosticOnly": true,
+      "cells": [
+        {
+          "cell": "coin_flip::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "fav_num::en",
+          "jsd": 0.31127812445913283
+        },
+        {
+          "cell": "rand_animal::en",
+          "jsd": 0.25
+        },
+        {
+          "cell": "rand_city::en",
+          "jsd": 0.3333333333333333
+        },
+        {
+          "cell": "rand_color::en",
+          "jsd": 0.0
+        },
+        {
+          "cell": "rand_letter::en",
+          "jsd": 0.6556390622295665
+        },
+        {
+          "cell": "rand_num_100::en",
+          "jsd": 1.0
+        },
+        {
+          "cell": "rand_num_100::zh",
+          "jsd": 0.1908745046211096
+        },
+        {
+          "cell": "rand_num_10::en",
+          "jsd": 0.0
+        }
+      ]
+    }
+  ],
+  "guardrails": [
+    "Behavioral distance is model evidence, not channel provenance.",
+    "The system prompt, thinking mode, sampling controls, model snapshot, and API protocol must match between reference and suspect runs.",
+    "A single mismatch must not be called fraud; use repeated runs and protocol evidence.",
+    "Split-half instability can indicate rotating backends but also natural sampling noise at small sample sizes.",
+    "This capture stopped when the official API returned credit-balance-too-low. Pairwise distances are diagnostic only until every compared cell has at least ten valid samples."
+  ]
+}

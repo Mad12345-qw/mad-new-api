@@ -1,5 +1,5 @@
 {
-  "version": "2026.07.29.18",
+  "version": "2026.08.01.3",
   "implementation_rules": {
     "omniroute": {
       "source_urls": [
@@ -88,10 +88,125 @@
         }
       ]
     },
+    "anthropic_messages": {
+      "model_pattern": "^claude-",
+      "captured_at": "2026-08-01",
+      "evidence_file": "rules/official-anthropic-20260801.json",
+      "behavior_evidence_file": "rules/official-anthropic-behavior-20260801.json",
+      "distribution_evidence_file": "rules/official-anthropic-distribution-20260801.json",
+      "models": [
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6"
+      ],
+      "minimal_input_tokens": {
+        "claude-fable-5": 15,
+        "claude-opus-5": 15,
+        "claude-sonnet-5": 15,
+        "claude-haiku-4-5-20251001": 11,
+        "claude-opus-4-8": 15,
+        "claude-opus-4-7": 20,
+        "claude-opus-4-6": 11
+      },
+      "transport_baseline": {
+        "request_id_header": "request-id",
+        "rate_limit_header_prefix": "anthropic-ratelimit-",
+        "invalid_key_status": 401,
+        "invalid_key_error_type": "authentication_error",
+        "invalid_model_status": 404,
+        "invalid_model_error_type": "not_found_error",
+        "invalid_version_status": 400,
+        "invalid_version_error_type": "invalid_request_error"
+      },
+      "contract_baseline": {
+        "max_tokens_zero_status": 200,
+        "max_tokens_zero_output_tokens": 0,
+        "unknown_field_status": 400,
+        "unknown_field_message_pattern": "Extra inputs are not permitted",
+        "invalid_metadata_status": 400,
+        "invalid_metadata_message_pattern": "Input should be a valid string",
+        "adaptive_thinking_unsupported_models": ["claude-haiku-4-5-20251001"],
+        "disabled_thinking_unsupported_models": ["claude-fable-5"],
+        "enabled_budget_thinking_supported_models": ["claude-haiku-4-5-20251001", "claude-opus-4-6"],
+        "temperature_deprecated_models": ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7"],
+        "assistant_prefill_supported_models": ["claude-haiku-4-5-20251001"],
+        "thinking_forced_tool_allowed_models": ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7"],
+        "thinking_forced_tool_rejected_models": ["claude-haiku-4-5-20251001", "claude-opus-4-6"],
+        "count_generation_input_token_parity": true,
+        "implicit_cache_without_cache_control": false,
+        "maximum_cache_control_blocks": 4,
+        "invalid_cache_ttl_order_status": 400,
+        "middle_system_role_status": 400,
+        "files_api_list_status": 200,
+        "message_batches_supported": true,
+        "credit_exhaustion_status": 400,
+        "credit_exhaustion_error_type": "invalid_request_error",
+        "credit_exhaustion_message_pattern": "credit balance is too low",
+        "fable_cache_second_request_created_again": true,
+        "thinking_signature_is_direct_channel_proof": false,
+        "thinking_signature_note": "Anthropic documents signature compatibility across Claude API, Amazon Bedrock, and Google Cloud; official live probes also accepted cross-model replay between Haiku 4.5 and Opus 4.6."
+      },
+      "model_limits": {
+        "claude-fable-5": {"max_input_tokens": 1000000, "max_output_tokens": 128000, "minimum_cacheable_tokens": 512},
+        "claude-opus-5": {"max_input_tokens": 1000000, "max_output_tokens": 128000, "minimum_cacheable_tokens": 512},
+        "claude-sonnet-5": {"max_input_tokens": 1000000, "max_output_tokens": 128000, "minimum_cacheable_tokens": 1024},
+        "claude-haiku-4-5-20251001": {"max_input_tokens": 200000, "max_output_tokens": 64000, "minimum_cacheable_tokens": 4096},
+        "claude-opus-4-8": {"max_input_tokens": 1000000, "max_output_tokens": 128000, "minimum_cacheable_tokens": 1024},
+        "claude-opus-4-7": {"max_input_tokens": 1000000, "max_output_tokens": 128000, "minimum_cacheable_tokens": 2048},
+        "claude-opus-4-6": {"max_input_tokens": 1000000, "max_output_tokens": 128000, "minimum_cacheable_tokens": 4096}
+      },
+      "tokenizer_vector": {
+        "probe_order": ["ascii_sentence", "english_repeat", "cjk_mixed", "emoji_unicode", "source_code", "json_dense", "numeric_punctuation", "whitespace_layout", "system_tools"],
+        "claude-fable-5": [30, 1366, 1166, 1115, 1230, 1163, 1805, 805, 436],
+        "claude-opus-5": [30, 1366, 1166, 1115, 1230, 1163, 1805, 805, 432],
+        "claude-sonnet-5": [30, 1366, 1166, 1115, 1230, 1163, 1805, 805, 500],
+        "claude-haiku-4-5-20251001": [21, 967, 1168, 1117, 951, 862, 1717, 631, 605],
+        "claude-opus-4-8": [30, 1366, 1166, 1115, 1230, 1163, 1805, 805, 436],
+        "claude-opus-4-7": [35, 1371, 1172, 1121, 1235, 1168, 1811, 810, 826],
+        "claude-opus-4-6": [21, 967, 1168, 1117, 951, 862, 1717, 631, 606]
+      },
+      "context_validation": {
+        "claude-fable-5_over_limit": "1005079 > 1000000",
+        "claude-opus-4-7_over_limit": "1005059 > 1000000",
+        "claude-opus-4-6_over_limit": "1005029 > 1000000",
+        "claude-haiku-4-5-20251001_over_limit": "201523 > 200000",
+        "claude-sonnet-5_900023_tokens": "accepted_but_refused_output",
+        "claude-sonnet-5_499999_tokens": "accepted_and_recalled_early_middle_late_needles"
+      },
+      "long_context_fixed_probe_input_tokens": {
+        "claude-fable-5": 168028,
+        "claude-opus-5": 168027,
+        "claude-sonnet-5": 168028,
+        "claude-haiku-4-5-20251001": 72017,
+        "claude-opus-4-8": 168028,
+        "claude-opus-4-7": 168033,
+        "claude-opus-4-6": 72017
+      }
+    },
     "gemini_generate": {
       "model": "gemini-3.6-flash",
       "model_version": "3.6-flash-07-2026",
-      "captured_at": "2026-07-29",
+      "captured_at": "2026-07-31",
+      "evidence_file": "rules/official-gemini-20260731.json",
+      "captured_models": [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-pro",
+        "gemini-3.1-pro-preview",
+        "gemini-3-pro-image",
+        "gemini-3.1-flash-image"
+      ],
+      "transport_baseline": {
+        "server": "scaffolding on HTTPServer2",
+        "request_id_header_observed": false,
+        "invalid_key_status": 400,
+        "invalid_key_error_status": "INVALID_ARGUMENT",
+        "invalid_key_reason": "API_KEY_INVALID"
+      },
       "input_token_limit": 1048576,
       "output_token_limit": 65536,
       "supported_generation_methods": [
@@ -141,6 +256,40 @@
         }
       ]
     }
+  },
+  "behavioral_distribution_rules": {
+    "verdict_authority": "supporting_only",
+    "official_reference_minimum_valid_samples_per_cell": 10,
+    "minimum_cells_for_model_evidence": 8,
+    "preferred_cells_for_model_evidence": 40,
+    "probe_randomization": [
+      "paraphrase_rotation",
+      "cell_order_shuffle",
+      "per_run_nonce"
+    ],
+    "sequential_dilution_audit": {
+      "method": "betting_e_process",
+      "null_tell_rate_ceiling": 0.05,
+      "false_positive_level": 0.01,
+      "stopping_wealth": 100.0,
+      "maximum_queries": 200,
+      "budget_exhausted_without_crossing": "inconclusive",
+      "routing_fraction_reporting": "conservative_lower_bound"
+    },
+    "production_guards": {
+      "hard_protocol_contradiction_overrides_behavior_match": true,
+      "behavior_mismatch_cannot_identify_cloud_channel": true,
+      "partial_official_baseline_is_diagnostic_only": true,
+      "same_model_different_sampling_is_not_substitution": true,
+      "multi_hop_sanitization_may_hide_terminal_channel": true
+    },
+    "source_urls": [
+      "https://github.com/Photen/IRIS-audit",
+      "https://arxiv.org/abs/2607.20860",
+      "https://github.com/Mohamed7415/fpverify",
+      "https://github.com/ToseaAI/llm-fingerprint-detector",
+      "https://arxiv.org/abs/2607.10252"
+    ]
   },
   "history_rules": {
     "claude_route_change": {

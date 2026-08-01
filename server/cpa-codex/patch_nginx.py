@@ -10,7 +10,9 @@ from datetime import datetime
 from pathlib import Path
 
 
-CONFIG_PATH = Path("/etc/nginx/sites-available/mad.myddns.me")
+# This host keeps sites-enabled as an independent active file rather than a
+# symlink, so update the configuration Nginx actually loads.
+CONFIG_PATH = Path("/etc/nginx/sites-enabled/mad.myddns.me")
 MARKER = "# MadAPI CPA Codex sidecar"
 LOCATION = """    # MadAPI CPA Codex sidecar
     location ^~ /codex/v1/ {

@@ -62,6 +62,8 @@ try {
     $sessionDir = Join-Path $testHome 'sessions\2026\08\01'
     New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
     $configPath = Join-Path $testHome 'config.toml'
+    $keyPath = Join-Path $testHome 'madapi.key'
+    $modelsCachePath = Join-Path $testHome 'models_cache.json'
     $sessionPath = Join-Path $sessionDir 'sentinel.jsonl'
     $desktop = ([char]0x684c).ToString() + ([char]0x9762)
     $project = ([char]0x9879).ToString() + ([char]0x76ee)
@@ -103,6 +105,7 @@ command = 'C:\Tools\node_repl.exe'
 args = []
 "@
     Write-Utf8NoBom $configPath ($config.Trim() + "`n")
+    Write-Utf8NoBom $modelsCachePath '{"models":[{"slug":"stale-gpt-only"}]}'
     Write-Utf8NoBom $sessionPath '{"type":"sentinel"}'
     $configHash = Get-Hash $configPath
     $sessionHash = Get-Hash $sessionPath
@@ -121,10 +124,12 @@ args = []
     Assert-True (-not $installed.Contains('old-secret')) 'Old MadAPI secret remained in config.toml.'
     Assert-True ($installed.Contains('experimental_bearer_token = "sk-windows-first-key"')) 'API key was not written into the active provider.'
     Assert-True (([regex]::Matches($installed, '(?m)^experimental_bearer_token = "sk-windows-first-key"\r?$')).Count -eq 1) 'API key was written more than once.'
-    Assert-True (-not $installed.Contains('madapi.key')) 'Obsolete key-file authentication remained configured.'
+    Assert-True ($installed.Contains('[model_providers.custom.auth]')) 'Dynamic catalog command authentication was not configured.'
+    Assert-True ($installed.Contains('madapi.key')) 'Dynamic catalog authentication does not read the protected MadAPI key.'
+    Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-first-key') 'Protected dynamic catalog key was not written correctly.'
+    Assert-True (-not (Test-Path -LiteralPath $modelsCachePath)) 'Stale model cache was not cleared.'
     Assert-True (-not ($installed -match '(?m)^\s*(?:model_catalog_json|"model_catalog_json"|''model_catalog_json'')\s*=')) 'An external static model catalog remained active.'
     Assert-True (Test-Path -LiteralPath $catalogFixture -PathType Leaf) 'The external catalog file was deleted instead of only removing its config reference.'
-    Assert-True (-not $installed.Contains('[model_providers.custom.auth]')) 'Command-backed authentication remained configured.'
     Assert-True (-not $installed.Contains('supports_websockets')) 'Unverified WebSocket support was enabled.'
     Assert-True ($installed.Contains('disable_response_storage = true')) 'The existing response-storage preference was not preserved.'
     Assert-True ($installed.Contains('stream_idle_timeout_ms = 360000')) 'Stable 360 second stream timeout was not configured.'
@@ -136,6 +141,7 @@ args = []
     Assert-True ($backup.Count -eq 1) 'Exactly one backup was not created.'
     Assert-True ((Get-Hash $backup[0].FullName) -eq $configHash) 'Backup is not byte-identical to the original config.'
     Assert-True ((Get-Acl -LiteralPath $configPath).AreAccessRulesProtected) 'Config containing the API key still inherits broad ACLs.'
+    Assert-True ((Get-Acl -LiteralPath $keyPath).AreAccessRulesProtected) 'Protected dynamic catalog key still inherits broad ACLs.'
 
     $oldHome = [string]$env:CODEX_HOME
     try {
@@ -157,6 +163,7 @@ args = []
     Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.custom\]\r?$')).Count -eq 1) 'Duplicate provider section was created.'
     Assert-True (([regex]::Matches($reinstalled, '(?m)^experimental_bearer_token = "sk-windows-second-key"\r?$')).Count -eq 1) 'Repeat install did not replace the API key exactly once.'
     Assert-True (-not $reinstalled.Contains('sk-windows-first-key')) 'Repeat install retained the previous API key.'
+    Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-second-key') 'Repeat install did not update the protected dynamic catalog key.'
     Assert-True (-not $reinstalled.Contains('supports_websockets')) 'Repeat install enabled unverified WebSocket support.'
 
     $recoveryHome = Join-Path $sandbox 'recover-provider'
@@ -199,6 +206,8 @@ requires_openai_auth = true
     Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh install did not use the proven custom provider identity.'
     Assert-True ($freshConfig.Contains('name = "custom"')) 'Fresh install did not use the proven custom provider display name.'
     Assert-True ($freshConfig.Contains('experimental_bearer_token = "sk-windows-fresh-key"')) 'Fresh install did not configure the MadAPI key.'
+    Assert-True ($freshConfig.Contains('[model_providers.custom.auth]')) 'Fresh install did not enable dynamic catalog refresh for API-key users.'
+    Assert-True (([IO.File]::ReadAllText((Join-Path $freshHome 'madapi.key'))) -eq 'sk-windows-fresh-key') 'Fresh install did not create the protected dynamic catalog key.'
     Assert-True (-not $freshConfig.Contains('disable_response_storage')) 'Fresh install added an optional response-storage policy.'
     Assert-True (-not $freshConfig.Contains('model_catalog_json')) 'Fresh install added a static model catalog.'
     $oldHome = [string]$env:CODEX_HOME
@@ -213,6 +222,8 @@ requires_openai_auth = true
             $env:CODEX_HOME = $oldHome
         }
     }
+    & node (Join-Path $PSScriptRoot 'codex-dynamic-catalog.mjs') $codexCli $freshHome (Join-Path $PSScriptRoot 'fixtures\codex-models.json') 'sk-windows-fresh-key'
+    Assert-True ($LASTEXITCODE -eq 0) 'API-key dynamic model catalog refresh failed.'
 
     $officialHome = Join-Path $sandbox 'official-provider'
     New-Item -ItemType Directory -Path $officialHome -Force | Out-Null
@@ -278,7 +289,7 @@ exit 0
     }
     Assert-True ($rollback.ExitCode -ne 0) 'Forced post-write validation failure was accepted.'
     Assert-True ((Get-Hash $rollbackConfig) -eq $rollbackHash) 'Config was not rolled back byte-for-byte.'
-    Assert-True (([IO.File]::ReadAllText($rollbackKey)) -eq 'sk-old-key') 'Unrelated legacy key file was changed.'
+    Assert-True (([IO.File]::ReadAllText($rollbackKey)) -eq 'sk-old-key') 'Protected dynamic catalog key was not rolled back.'
     Assert-True ((Get-Hash $rollbackCatalog) -eq $rollbackCatalogHash) 'Unrelated legacy model catalog was changed.'
 
     Write-Host 'Windows PowerShell 5.1 Codex installer acceptance passed.'

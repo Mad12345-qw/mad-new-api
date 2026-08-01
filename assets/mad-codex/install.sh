@@ -15,17 +15,24 @@ esac
 
 codex_home=${CODEX_HOME:-"$HOME/.codex"}
 config_path="$codex_home/config.toml"
+key_path="$codex_home/madapi.key"
+models_cache_path="$codex_home/models_cache.json"
 transaction_id="$$-$(date '+%s')"
 temp_path="$codex_home/config.toml.madapi.$transaction_id.tmp"
 body_path="$codex_home/config.toml.madapi.$transaction_id.body"
+temp_key_path="$codex_home/madapi.key.$transaction_id.tmp"
+rollback_key_path="$codex_home/madapi.key.$transaction_id.rollback"
 backup_path=
 had_config=0
+had_key=0
 config_installed=0
+key_installed=0
 success=0
 
 umask 077
 mkdir -p "$codex_home"
 [ -f "$config_path" ] && had_config=1
+[ -f "$key_path" ] && had_key=1
 
 find_codex_cli() {
   candidates=
@@ -207,8 +214,14 @@ cleanup() {
         rm -f "$config_path"
       fi
     fi
+    if [ "$key_installed" -eq 1 ]; then
+      rm -f "$key_path"
+    fi
+    if [ "$had_key" -eq 1 ] && [ -f "$rollback_key_path" ]; then
+      mv "$rollback_key_path" "$key_path"
+    fi
   fi
-  rm -f "$temp_path" "$body_path"
+  rm -f "$temp_path" "$body_path" "$temp_key_path" "$rollback_key_path"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
@@ -228,23 +241,37 @@ trap 'exit 1' HUP INT TERM
   printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 3'
-  printf '%s\n' 'context_window_override = 1048576'
+  printf '%s\n\n' 'context_window_override = 1048576'
+  printf '[model_providers.%s.auth]\n' "$provider_id"
+  printf '%s\n' 'command = "/bin/sh"'
+  printf '%s\n' 'args = ["-c", "h=${CODEX_HOME:-$HOME/.codex}; exec cat \"$h/madapi.key\""]'
+  printf '%s\n' 'timeout_ms = 5000'
+  printf '%s\n' 'refresh_interval_ms = 300000'
 } > "$temp_path"
+
+printf '%s' "$api_key" > "$temp_key_path"
+chmod 600 "$temp_key_path"
 
 if [ "$had_config" -eq 1 ]; then
   backup_path="$config_path.madapi-backup-$(date '+%Y%m%d-%H%M%S')-$$"
   cp -p "$config_path" "$backup_path"
   chmod 600 "$backup_path"
 fi
+if [ "$had_key" -eq 1 ]; then
+  mv "$key_path" "$rollback_key_path"
+fi
+mv "$temp_key_path" "$key_path"
+key_installed=1
 mv "$temp_path" "$config_path"
 config_installed=1
-chmod 600 "$config_path"
+chmod 600 "$config_path" "$key_path"
 
 if ! codex_config_valid; then
   printf '%s\n' 'The generated MadAPI configuration could not be parsed by Codex.' >&2
   exit 1
 fi
 
+rm -f "$models_cache_path" "$rollback_key_path"
 success=1
 
 printf 'MadAPI Codex configuration installed: %s\n' "$config_path"

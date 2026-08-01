@@ -267,10 +267,10 @@ index 0000000..6f58203
 +}
 diff --git a/web/default/src/features/keys/lib/codex-config.ts b/web/default/src/features/keys/lib/codex-config.ts
 new file mode 100644
-index 0000000..f35b358
+index 0000000..834eeca
 --- /dev/null
 +++ b/web/default/src/features/keys/lib/codex-config.ts
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,100 @@
 +/*
 +Copyright (C) 2023-2026 QuantumNous
 +
@@ -304,23 +304,33 @@ index 0000000..f35b358
 +  return value.replaceAll("'", "'\"'\"'")
 +}
 +
-+function buildAuthBlock(apiKey: string, platform: CodexPlatform): string {
-+  if (platform === 'macos') {
-+    return `[model_providers.madapi.auth]
-+command = "/bin/sh"
-+args = ["-c", "printf %s '${escapeShellSingleQuoted(apiKey)}'"]
-+timeout_ms = 5000
-+refresh_interval_ms = 300000`
-+  }
++function escapeTomlBasicString(value: string): string {
++  return `"${value
++    .replaceAll('\\', '\\\\')
++    .replaceAll('"', '\\"')
++    .replaceAll('\r', '\\r')
++    .replaceAll('\n', '\\n')
++    .replaceAll('\t', '\\t')}"`
++}
++
++function buildAuthBlock(platform: CodexPlatform): string {
++  const authCommand =
++    platform === 'macos'
++      ? 'h="${CODEX_HOME:-$HOME/.codex}"; exec cat "$h/madapi.key"'
++      : "$h=if([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)){Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex'}else{[string]$env:CODEX_HOME};[Console]::Out.Write([IO.File]::ReadAllText((Join-Path $h 'madapi.key')).Trim())"
 +
 +  return `[model_providers.madapi.auth]
-+command = "powershell.exe"
-+args = ["-NoProfile", "-Command", "[Console]::Out.Write('${escapePowerShellSingleQuoted(apiKey)}')"]
++command = "${platform === 'macos' ? '/bin/sh' : 'powershell.exe'}"
++args = ${
++    platform === 'macos'
++      ? `["-c", ${escapeTomlBasicString(authCommand)}]`
++      : `["-NoProfile", "-Command", ${escapeTomlBasicString(authCommand)}]`
++  }
 +timeout_ms = 5000
 +refresh_interval_ms = 300000`
 +}
 +
-+function buildProviderBlock(apiKey: string, platform: CodexPlatform): string {
++function buildProviderBlock(platform: CodexPlatform): string {
 +  return `[model_providers.madapi]
 +name = "MadAPI"
 +base_url = "${CODEX_BASE_URL}"
@@ -329,7 +339,7 @@ index 0000000..f35b358
 +request_max_retries = 0
 +context_window_override = 1048576
 +
-+${buildAuthBlock(apiKey, platform)}`
++${buildAuthBlock(platform)}`
 +}
 +
 +export function buildCodexConfig(options: {
@@ -342,7 +352,7 @@ index 0000000..f35b358
 +model_auto_compact_token_limit = 500000
 +disable_response_storage = true
 +
-+${buildProviderBlock(options.apiKey, options.platform)}`
++${buildProviderBlock(options.platform)}`
 +}
 +
 +export function buildCodexInstallCommand(options: {
@@ -350,10 +360,10 @@ index 0000000..f35b358
 +  platform: CodexPlatform
 +}): string {
 +  if (options.platform === 'macos') {
-+    return `MADAPI_KEY='${escapeShellSingleQuoted(options.apiKey)}' /bin/sh -c "$(curl -fsSL '${MACOS_INSTALLER_URL}')"`
++    return `MADAPI_KEY='${escapeShellSingleQuoted(options.apiKey)}' /bin/sh -c 'p=$(mktemp); trap '\''rm -f "$p"'\'' EXIT; curl -fsSL '\''${MACOS_INSTALLER_URL}'\'' -o "$p"; /bin/sh "$p"'`
 +  }
 +
-+  return `$env:MADAPI_KEY='${escapePowerShellSingleQuoted(options.apiKey)}'; irm '${WINDOWS_INSTALLER_URL}' | iex; Remove-Item Env:MADAPI_KEY -ErrorAction SilentlyContinue`
++  return `$env:MADAPI_KEY='${escapePowerShellSingleQuoted(options.apiKey)}'; try { & ([ScriptBlock]::Create((irm '${WINDOWS_INSTALLER_URL}'))) } finally { Remove-Item Env:MADAPI_KEY -ErrorAction SilentlyContinue }`
 +}
 +
 +export function detectCodexPlatform(userAgent: string): CodexPlatform {
@@ -424,10 +434,10 @@ index 815f297..13b9b3e 100644
  }
 diff --git a/web/default/tests/codex-config.test.ts b/web/default/tests/codex-config.test.ts
 new file mode 100644
-index 0000000..828ad86
+index 0000000..4e5a88e
 --- /dev/null
 +++ b/web/default/tests/codex-config.test.ts
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,87 @@
 +/*
 +Copyright (C) 2023-2026 QuantumNous
 +
@@ -466,7 +476,8 @@ index 0000000..828ad86
 +    expect(result).toContain('model_provider = "madapi"')
 +    expect(result).toContain('base_url = "https://mad.myddns.me/codex/v1"')
 +    expect(result).toContain('command = "powershell.exe"')
-+    expect(result).toContain(API_KEY)
++    expect(result).toContain('madapi.key')
++    expect(result).not.toContain(API_KEY)
 +    expect(result).not.toContain('experimental_bearer_token')
 +    expect(result).not.toContain('requires_openai_auth')
 +  })
@@ -478,7 +489,8 @@ index 0000000..828ad86
 +    })
 +
 +    expect(result).toContain('command = "/bin/sh"')
-+    expect(result).toContain("printf %s 'sk-test-key-123'")
++    expect(result).toContain('madapi.key')
++    expect(result).not.toContain(API_KEY)
 +    expect(result).toContain('model_provider = "madapi"')
 +  })
 +
@@ -494,8 +506,11 @@ index 0000000..828ad86
 +
 +    expect(windows).toContain("$env:MADAPI_KEY='sk-test-key-123'")
 +    expect(windows).toContain('/mad-codex/install.ps1')
++    expect(windows).toContain('try {')
++    expect(windows).toContain('finally {')
 +    expect(macos).toContain("MADAPI_KEY='sk-test-key-123'")
 +    expect(macos).toContain('/mad-codex/install.sh')
++    expect(macos).toContain('mktemp')
 +  })
 +
 +  test('detects Apple and Windows clients', () => {

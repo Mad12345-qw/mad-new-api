@@ -15,17 +15,86 @@ esac
 
 codex_home=${CODEX_HOME:-"$HOME/.codex"}
 config_path="$codex_home/config.toml"
-temp_path="$codex_home/config.toml.madapi.tmp"
-body_path="$codex_home/config.toml.madapi.body"
+key_path="$codex_home/madapi.key"
+transaction_id="$$-$(date '+%s')"
+temp_path="$codex_home/config.toml.madapi.$transaction_id.tmp"
+body_path="$codex_home/config.toml.madapi.$transaction_id.body"
+temp_key_path="$codex_home/madapi.key.$transaction_id.tmp"
+rollback_key_path="$codex_home/madapi.key.$transaction_id.rollback"
 backup_path=
+had_config=0
+had_key=0
+config_installed=0
+key_installed=0
+success=0
 
 umask 077
 mkdir -p "$codex_home"
+[ -f "$config_path" ] && had_config=1
+[ -f "$key_path" ] && had_key=1
 
-if [ -f "$config_path" ]; then
-  backup_path="$config_path.madapi-backup-$(date '+%Y%m%d-%H%M%S')"
-  cp "$config_path" "$backup_path"
-  awk '
+find_codex_cli() {
+  candidates=
+  if [ -n "${CODEX_CLI_PATH:-}" ]; then
+    candidates=$CODEX_CLI_PATH
+  fi
+  path_codex=$(command -v codex 2>/dev/null || true)
+  if [ -n "$path_codex" ]; then
+    candidates="$candidates
+$path_codex"
+  fi
+  candidates="$candidates
+/Applications/Codex.app/Contents/Resources/codex
+$HOME/Library/Application Support/OpenAI/Codex/bin/codex"
+
+  old_ifs=$IFS
+  IFS='
+'
+  for candidate in $candidates; do
+    [ -n "$candidate" ] || continue
+    [ -x "$candidate" ] || continue
+    if "$candidate" --version >/dev/null 2>&1; then
+      IFS=$old_ifs
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  IFS=$old_ifs
+  return 1
+}
+
+codex_config_valid() {
+  CODEX_HOME="$codex_home" "$codex_cli" features list >/dev/null 2>&1
+}
+
+codex_cli=$(find_codex_cli || true)
+if [ -z "$codex_cli" ]; then
+  printf '%s\n' 'Codex CLI was not found. Install or update Codex, then try again.' >&2
+  exit 1
+fi
+if [ "$had_config" -eq 1 ] && ! codex_config_valid; then
+  printf '%s\n' 'The existing Codex configuration could not be parsed. No files were changed.' >&2
+  exit 1
+fi
+
+has_root_key() {
+  key=$1
+  awk -v key="$key" '
+    BEGIN { found = 0 }
+    /^[[:space:]]*\[/ { exit }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "$config_path"
+}
+
+has_reasoning=0
+has_compact=0
+has_storage=0
+if [ "$had_config" -eq 1 ]; then
+  has_root_key model_reasoning_effort && has_reasoning=1
+  has_root_key model_auto_compact_token_limit && has_compact=1
+  has_root_key disable_response_storage && has_storage=1
+  LC_ALL=C awk '
     BEGIN { current = ""; skip = 0 }
     /^[[:space:]]*\[[^]]+\][[:space:]]*(#.*)?$/ {
       section = $0
@@ -43,9 +112,34 @@ else
   : > "$body_path"
 fi
 
+cleanup() {
+  if [ "$success" -ne 1 ]; then
+    if [ "$config_installed" -eq 1 ]; then
+      if [ "$had_config" -eq 1 ] && [ -n "$backup_path" ] && [ -f "$backup_path" ]; then
+        cp "$backup_path" "$config_path"
+      elif [ "$had_config" -eq 0 ]; then
+        rm -f "$config_path"
+      fi
+    fi
+    if [ "$key_installed" -eq 1 ]; then
+      rm -f "$key_path"
+    fi
+    if [ "$had_key" -eq 1 ] && [ -f "$rollback_key_path" ]; then
+      mv "$rollback_key_path" "$key_path"
+    fi
+  fi
+  rm -f "$temp_path" "$body_path" "$temp_key_path" "$rollback_key_path"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
 {
   printf '%s\n' 'model_provider = "madapi"'
-  printf '%s\n\n' 'model = "gpt-5.6-sol"'
+  printf '%s\n' 'model = "gpt-5.6-sol"'
+  [ "$has_reasoning" -eq 1 ] || printf '%s\n' 'model_reasoning_effort = "high"'
+  [ "$has_compact" -eq 1 ] || printf '%s\n' 'model_auto_compact_token_limit = 500000'
+  [ "$has_storage" -eq 1 ] || printf '%s\n' 'disable_response_storage = true'
+  printf '\n'
   cat "$body_path"
   printf '\n%s\n' '[model_providers.madapi]'
   printf '%s\n' 'name = "MadAPI"'
@@ -56,14 +150,36 @@ fi
   printf '%s\n\n' 'context_window_override = 1048576'
   printf '%s\n' '[model_providers.madapi.auth]'
   printf '%s\n' 'command = "/bin/sh"'
-  printf 'args = ["-c", "printf %%s '\''%s'\''"]\n' "$api_key"
+  printf '%s\n' 'args = ["-c", "h=${CODEX_HOME:-$HOME/.codex}; exec cat \"$h/madapi.key\""]'
   printf '%s\n' 'timeout_ms = 5000'
   printf '%s\n' 'refresh_interval_ms = 300000'
 } > "$temp_path"
 
+printf '%s' "$api_key" > "$temp_key_path"
+chmod 600 "$temp_key_path"
+
+if [ "$had_config" -eq 1 ]; then
+  backup_path="$config_path.madapi-backup-$(date '+%Y%m%d-%H%M%S')-$$"
+  cp -p "$config_path" "$backup_path"
+  chmod 600 "$backup_path"
+fi
+if [ "$had_key" -eq 1 ]; then
+  mv "$key_path" "$rollback_key_path"
+fi
+
+mv "$temp_key_path" "$key_path"
+key_installed=1
 mv "$temp_path" "$config_path"
-rm -f "$body_path"
-chmod 600 "$config_path"
+config_installed=1
+chmod 600 "$config_path" "$key_path"
+
+if ! codex_config_valid; then
+  printf '%s\n' 'The generated MadAPI configuration could not be parsed by Codex.' >&2
+  exit 1
+fi
+
+success=1
+rm -f "$rollback_key_path"
 
 printf 'MadAPI Codex configuration installed: %s\n' "$config_path"
 if [ -n "$backup_path" ]; then

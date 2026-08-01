@@ -1,5 +1,5 @@
 diff --git a/controller/codex_catalog.go b/controller/codex_catalog.go
-index 333564b..d48e685 100644
+index 333564b..da58d85 100644
 --- a/controller/codex_catalog.go
 +++ b/controller/codex_catalog.go
 @@ -66,6 +66,28 @@ var codexValidatedImageInputModels = map[string]bool{
@@ -7,17 +7,17 @@ index 333564b..d48e685 100644
  }
  
 +var codexNativeSearchModels = map[string]bool{
-+	"claude-fable-5":        true,
-+	"claude-opus-4-8":       true,
-+	"claude-opus-5":         true,
-+	"deepseek-v4-flash":     true,
-+	"gemini-3.6-flash":      true,
-+	"glm-5-2":               true,
-+	"gpt-5.5":               true,
-+	"gpt-5.6-luna":          true,
-+	"gpt-5.6-sol":           true,
-+	"gpt-5.6-terra":         true,
-+	"grok-4.5":              true,
++	"claude-fable-5":      true,
++	"claude-opus-4-8":     true,
++	"claude-opus-5":       true,
++	"deepseek-v4-flash":   true,
++	"gemini-3.6-flash":    true,
++	"glm-5-2":             true,
++	"gpt-5.5":             true,
++	"gpt-5.6-luna":        true,
++	"gpt-5.6-sol":         true,
++	"gpt-5.6-terra":       true,
++	"grok-4.5":            true,
 +	"qwen3.8-max-preview": true,
 +}
 +
@@ -53,7 +53,7 @@ index 333564b..d48e685 100644
  		entry["display_name"] = value
  	}
 diff --git a/controller/codex_compat.go b/controller/codex_compat.go
-index 95115d8..5af0fa1 100644
+index 95115d8..9fd833f 100644
 --- a/controller/codex_compat.go
 +++ b/controller/codex_compat.go
 @@ -131,6 +131,11 @@ func CodexResponses(c *gin.Context) {
@@ -123,32 +123,57 @@ index 95115d8..5af0fa1 100644
  func normalizeCodexGLMToolChoice(request *dto.GeneralOpenAIRequest) {
  	if request == nil || !strings.EqualFold(strings.TrimSpace(request.Model), "glm-5-2") || lo.FromPtrOr(request.Stream, false) {
  		return
-@@ -409,8 +462,8 @@ func buildCodexModel(candidate dto.OpenAIModels, index int) map[string]any {
- 		"display_name":                         displayName,
- 		"description":                          "Available through MadAPI: " + displayName,
- 		"prefer_websockets":                    false,
+@@ -405,30 +458,36 @@ func isCodexConversationModel(candidate dto.OpenAIModels, textPricing map[string
+ func buildCodexModel(candidate dto.OpenAIModels, index int) map[string]any {
+ 	displayName := strings.TrimSpace(candidate.Id)
+ 	entry := map[string]any{
+-		"slug":                                 candidate.Id,
+-		"display_name":                         displayName,
+-		"description":                          "Available through MadAPI: " + displayName,
+-		"prefer_websockets":                    false,
 -		"support_verbosity":                    false,
 -		"default_verbosity":                    "low",
-+		"support_verbosity":                    true,
-+		"default_verbosity":                    "medium",
- 		"web_search_tool_type":                 "text_and_image",
- 		"input_modalities":                     []string{"text"},
- 		"supports_image_detail_original":       false,
-@@ -421,14 +474,20 @@ func buildCodexModel(candidate dto.OpenAIModels, index int) map[string]any {
- 		"use_responses_lite":                   false,
- 		"include_skills_usage_instructions":    true,
- 		"auto_review_model_override":           nil,
+-		"web_search_tool_type":                 "text_and_image",
+-		"input_modalities":                     []string{"text"},
+-		"supports_image_detail_original":       false,
+-		"truncation_policy":                    map[string]any{"mode": "tokens", "limit": 10000},
+-		"supports_parallel_tool_calls":         true,
+-		"tool_mode":                            nil,
+-		"multi_agent_version":                  nil,
+-		"use_responses_lite":                   false,
+-		"include_skills_usage_instructions":    true,
+-		"auto_review_model_override":           nil,
 -		"context_window":                       128000,
 -		"max_context_window":                   128000,
-+		"context_window":                       1000000,
-+		"max_context_window":                   1000000,
- 		"auto_compact_token_limit":             nil,
- 		"comp_hash":                            "madapi-codex-compat-v1",
- 		"reasoning_summary_format":             "none",
- 		"default_reasoning_summary":            "none",
+-		"auto_compact_token_limit":             nil,
+-		"comp_hash":                            "madapi-codex-compat-v1",
+-		"reasoning_summary_format":             "none",
+-		"default_reasoning_summary":            "none",
 -		"default_reasoning_level":              "none",
 -		"supported_reasoning_levels":           []any{map[string]any{"effort": "none", "description": "Uses the model's default reasoning behavior"}},
-+		"default_reasoning_level":              "high",
++		"slug":                              candidate.Id,
++		"display_name":                      displayName,
++		"description":                       "Available through MadAPI: " + displayName,
++		"prefer_websockets":                 false,
++		"support_verbosity":                 true,
++		"default_verbosity":                 "medium",
++		"web_search_tool_type":              "text_and_image",
++		"input_modalities":                  []string{"text"},
++		"supports_image_detail_original":    false,
++		"truncation_policy":                 map[string]any{"mode": "tokens", "limit": 10000},
++		"supports_parallel_tool_calls":      true,
++		"tool_mode":                         nil,
++		"multi_agent_version":               nil,
++		"use_responses_lite":                false,
++		"include_skills_usage_instructions": true,
++		"auto_review_model_override":        nil,
++		"context_window":                    1000000,
++		"max_context_window":                1000000,
++		"auto_compact_token_limit":          nil,
++		"comp_hash":                         "madapi-codex-compat-v1",
++		"reasoning_summary_format":          "none",
++		"default_reasoning_summary":         "none",
++		"default_reasoning_level":           "high",
 +		"supported_reasoning_levels": []any{
 +			map[string]any{"effort": "low", "description": codexReasoningDescription("low")},
 +			map[string]any{"effort": "medium", "description": codexReasoningDescription("medium")},

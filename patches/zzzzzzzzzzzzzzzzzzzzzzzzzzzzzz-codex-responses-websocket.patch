@@ -73,7 +73,7 @@ index 6f53f12..43d3db2 100644
 +	require.NoError(t, conn.WriteJSON(gin.H{
 +		"type":                 "response.append",
 +		"previous_response_id": "resp-1",
-+		"input": []any{gin.H{"type": "message", "role": "user", "id": "user-2", "content": "next"}},
++		"input":                []any{gin.H{"type": "message", "role": "user", "id": "user-2", "content": "next"}},
 +	}))
 +	readCodexWebsocketUntilCompleted(t, conn)
 +	require.Equal(t, int32(2), calls.Load())
@@ -180,8 +180,8 @@ index 0000000..922212e
 +)
 +
 +var (
-+	codexWebsocketSlots    = make(chan struct{}, codexWebsocketConnectionLimit)
-+	codexWebsocketUsers    = struct {
++	codexWebsocketSlots = make(chan struct{}, codexWebsocketConnectionLimit)
++	codexWebsocketUsers = struct {
 +		sync.Mutex
 +		active map[int]int
 +	}{active: make(map[int]int)}

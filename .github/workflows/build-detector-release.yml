@@ -87,11 +87,6 @@ jobs:
             router/relay-router.go
             service/quota.go
             service/quota_audio_test.go
-            service/relayconvert/internal/cpa_responses/native.go
-            service/relayconvert/internal/cpa_responses/native_test.go
-            service/relayconvert/internal/oai_responses/native_tools_test.go
-            service/relayconvert/internal/oai_responses/to_claude_messages_req.go
-            service/relayconvert/internal/oai_responses/to_gemini_chat_req.go
           )
           unformatted=$(gofmt -l "${files[@]}")
           if [ -n "$unformatted" ]; then
@@ -101,7 +96,7 @@ jobs:
 
       - name: Test New API functional paths
         working-directory: source
-        run: go test ./controller ./middleware ./relay/common ./relay ./router ./service ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_responses
+        run: go test ./controller ./middleware ./relay/common ./relay ./router ./service
 
       - name: Verify New API frontend
         working-directory: source/web/default

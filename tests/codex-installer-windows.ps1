@@ -69,6 +69,7 @@ try {
     $config = @"
 model_provider = "custom"
 model = "old-model"
+model_catalog_json = "C:\old-static-catalog.json"
 model_reasoning_effort = "medium"
 
 [features]
@@ -105,21 +106,26 @@ args = []
     $installed = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8)
     Assert-True ($installed.Contains($projectPath)) 'UTF-8 project path was not preserved.'
     Assert-True ($installed.Contains('[model_providers.custom]')) 'Existing provider was not preserved.'
+    Assert-True ($installed.Contains('model_provider = "custom"')) 'Existing provider identity was changed.'
+    Assert-True ($installed.Contains('name = "Existing Provider"')) 'Existing provider display name was changed.'
+    Assert-True (-not $installed.Contains('[model_providers.madapi]')) 'A second provider identity was created.'
     Assert-True ($installed.Contains('[plugins."github@openai-curated"]')) 'Plugin configuration was not preserved.'
     Assert-True ($installed.Contains('[mcp_servers.node_repl]')) 'MCP configuration was not preserved.'
     Assert-True ($installed.Contains('model_reasoning_effort = "medium"')) 'Existing reasoning effort was overwritten.'
     Assert-True (-not $installed.Contains('old-secret')) 'Old MadAPI secret remained in config.toml.'
-    Assert-True (-not $installed.Contains('sk-windows-first-key')) 'API key was written into config.toml.'
-    Assert-True ($installed.Contains('madapi.key')) 'Protected key-file auth was not configured.'
+    Assert-True ($installed.Contains('experimental_bearer_token = "sk-windows-first-key"')) 'API key was not written into the active provider.'
+    Assert-True (([regex]::Matches($installed, '(?m)^experimental_bearer_token = "sk-windows-first-key"\r?$')).Count -eq 1) 'API key was written more than once.'
+    Assert-True (-not $installed.Contains('madapi.key')) 'Obsolete key-file authentication remained configured.'
+    Assert-True (-not $installed.Contains('model_catalog_json')) 'A static model catalog remained configured.'
+    Assert-True (-not $installed.Contains('[model_providers.custom.auth]')) 'Command-backed authentication remained configured.'
     Assert-True ($installed.Contains('supports_websockets = true')) 'MadAPI WebSocket support was not enabled.'
+    Assert-True ($installed.Contains('requires_openai_auth = true')) 'Remote model catalog authentication was not enabled.'
     Assert-True ((Get-Hash $sessionPath) -eq $sessionHash) 'Session data changed.'
 
     $backup = @(Get-ChildItem -LiteralPath $testHome -Filter 'config.toml.madapi-backup-*' -File)
     Assert-True ($backup.Count -eq 1) 'Exactly one backup was not created.'
     Assert-True ((Get-Hash $backup[0].FullName) -eq $configHash) 'Backup is not byte-identical to the original config.'
-    $keyPath = Join-Path $testHome 'madapi.key'
-    Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-first-key') 'Protected key file has the wrong value.'
-    Assert-True ((Get-Acl -LiteralPath $keyPath).AreAccessRulesProtected) 'Key file still inherits broad ACLs.'
+    Assert-True ((Get-Acl -LiteralPath $configPath).AreAccessRulesProtected) 'Config containing the API key still inherits broad ACLs.'
 
     $oldHome = [string]$env:CODEX_HOME
     try {
@@ -138,14 +144,51 @@ args = []
     $second = Invoke-TestInstaller $testHome 'sk-windows-second-key' $codexCli
     Assert-True ($second.ExitCode -eq 0) 'Repeat install failed.'
     $reinstalled = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8)
-    Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\]\r?$')).Count -eq 1) 'Duplicate provider section was created.'
-    Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.madapi\.auth\]\r?$')).Count -eq 1) 'Duplicate auth section was created.'
+    Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.custom\]\r?$')).Count -eq 1) 'Duplicate provider section was created.'
+    Assert-True (([regex]::Matches($reinstalled, '(?m)^experimental_bearer_token = "sk-windows-second-key"\r?$')).Count -eq 1) 'Repeat install did not replace the API key exactly once.'
+    Assert-True (-not $reinstalled.Contains('sk-windows-first-key')) 'Repeat install retained the previous API key.'
     Assert-True (([regex]::Matches($reinstalled, '(?m)^supports_websockets = true\r?$')).Count -eq 1) 'Duplicate WebSocket setting was created.'
-    Assert-True (([IO.File]::ReadAllText($keyPath)) -eq 'sk-windows-second-key') 'Repeat install did not rotate the key.'
+
+    $recoveryHome = Join-Path $sandbox 'recover-provider'
+    New-Item -ItemType Directory -Path $recoveryHome -Force | Out-Null
+    $recoveryConfigPath = Join-Path $recoveryHome 'config.toml'
+    Write-Utf8NoBom $recoveryConfigPath @'
+model_provider = "madapi"
+model = "gpt-5.6-sol"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://mad.myddns.me/codex/v1"
+wire_api = "responses"
+
+[model_providers.madapi]
+name = "MadAPI"
+base_url = "https://mad.myddns.me/codex/v1"
+wire_api = "responses"
+'@
+    Write-Utf8NoBom ($recoveryConfigPath + '.madapi-backup-20260801-010101-001') @'
+model_provider = "custom"
+model = "deepseek-v4-flash"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://mad.myddns.me/codex/v1"
+wire_api = "responses"
+requires_openai_auth = true
+'@
+    $recovery = Invoke-TestInstaller $recoveryHome 'sk-windows-recovery-key' $codexCli
+    Assert-True ($recovery.ExitCode -eq 0) ('Provider recovery failed: ' + ($recovery.Output -join ' | '))
+    $recoveredConfig = [IO.File]::ReadAllText($recoveryConfigPath, [Text.Encoding]::UTF8)
+    Assert-True ($recoveredConfig.Contains('model_provider = "custom"')) 'Original provider identity was not recovered from backup.'
+    Assert-True (-not $recoveredConfig.Contains('[model_providers.madapi]')) 'Temporary MadAPI provider identity remained after recovery.'
 
     $freshHome = Join-Path $sandbox 'fresh'
     $fresh = Invoke-TestInstaller $freshHome 'sk-windows-fresh-key' $codexCli
     Assert-True ($fresh.ExitCode -eq 0) 'Fresh install failed.'
+    $freshConfig = [IO.File]::ReadAllText((Join-Path $freshHome 'config.toml'), [Text.Encoding]::UTF8)
+    Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh install did not use the proven custom provider identity.'
+    Assert-True ($freshConfig.Contains('name = "custom"')) 'Fresh install did not use the proven custom provider display name.'
+    Assert-True ($freshConfig.Contains('experimental_bearer_token = "sk-windows-fresh-key"')) 'Fresh install did not configure the MadAPI key.'
     $oldHome = [string]$env:CODEX_HOME
     try {
         $env:CODEX_HOME = $freshHome
@@ -159,6 +202,24 @@ args = []
         }
     }
 
+    $officialHome = Join-Path $sandbox 'official-provider'
+    New-Item -ItemType Directory -Path $officialHome -Force | Out-Null
+    $officialConfigPath = Join-Path $officialHome 'config.toml'
+    Write-Utf8NoBom $officialConfigPath @'
+model_provider = "openai"
+model = "gpt-5.6-sol"
+
+[features]
+memories = true
+'@
+    $official = Invoke-TestInstaller $officialHome 'sk-windows-official-key' $codexCli
+    Assert-True ($official.ExitCode -eq 0) ('Reserved provider migration failed: ' + ($official.Output -join ' | '))
+    $officialConfig = [IO.File]::ReadAllText($officialConfigPath, [Text.Encoding]::UTF8)
+    Assert-True ($officialConfig.Contains('model_provider = "custom"')) 'Reserved OpenAI provider was not moved to the proven custom provider.'
+    Assert-True ($officialConfig.Contains('[model_providers.custom]')) 'Custom MadAPI provider was not created for the reserved OpenAI provider.'
+    Assert-True (-not $officialConfig.Contains('[model_providers.openai]')) 'Reserved OpenAI provider was illegally overridden.'
+    Assert-True ($officialConfig.Contains('[features]')) 'Existing official-provider configuration was not preserved.'
+
     $badHome = Join-Path $sandbox 'malformed'
     New-Item -ItemType Directory -Path $badHome -Force | Out-Null
     $badConfig = Join-Path $badHome 'config.toml'
@@ -167,15 +228,17 @@ args = []
     $bad = Invoke-TestInstaller $badHome 'sk-windows-bad-key' $codexCli
     Assert-True ($bad.ExitCode -ne 0) 'Malformed existing config was accepted.'
     Assert-True ((Get-Hash $badConfig) -eq $badHash) 'Malformed existing config was changed.'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $badHome 'madapi.key'))) 'Key file was created for a rejected config.'
 
     $rollbackHome = Join-Path $sandbox 'rollback'
     New-Item -ItemType Directory -Path $rollbackHome -Force | Out-Null
     $rollbackConfig = Join-Path $rollbackHome 'config.toml'
     $rollbackKey = Join-Path $rollbackHome 'madapi.key'
+    $rollbackCatalog = Join-Path $rollbackHome 'madapi-models.json'
     Write-Utf8NoBom $rollbackConfig "model = \"old-model\"`n"
     Write-Utf8NoBom $rollbackKey 'sk-old-key'
+    Write-Utf8NoBom $rollbackCatalog '{"models":[{"slug":"old-model"}]}'
     $rollbackHash = Get-Hash $rollbackConfig
+    $rollbackCatalogHash = Get-Hash $rollbackCatalog
     $fakeScript = Join-Path $sandbox 'fake-codex.ps1'
     $fakeCommand = Join-Path $sandbox 'fake-codex.cmd'
     $counterPath = Join-Path $sandbox 'fake-count.txt'
@@ -203,7 +266,8 @@ exit 0
     }
     Assert-True ($rollback.ExitCode -ne 0) 'Forced post-write validation failure was accepted.'
     Assert-True ((Get-Hash $rollbackConfig) -eq $rollbackHash) 'Config was not rolled back byte-for-byte.'
-    Assert-True (([IO.File]::ReadAllText($rollbackKey)) -eq 'sk-old-key') 'Previous key was not restored.'
+    Assert-True (([IO.File]::ReadAllText($rollbackKey)) -eq 'sk-old-key') 'Unrelated legacy key file was changed.'
+    Assert-True ((Get-Hash $rollbackCatalog) -eq $rollbackCatalogHash) 'Unrelated legacy model catalog was changed.'
 
     Write-Host 'Windows PowerShell 5.1 Codex installer acceptance passed.'
 } finally {

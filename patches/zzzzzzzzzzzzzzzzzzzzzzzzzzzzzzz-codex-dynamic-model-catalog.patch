@@ -1,0 +1,51 @@
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -185,6 +185,47 @@ func TestCodexListModelsUsesExistingTextPricingAndEndpointMetadata(t *testing.T)
+ 	require.NotEmpty(t, model["model_messages"])
+ }
+ 
++func TestCodexListModelsReflectsNewTextModelsWithoutServerRestart(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		call := calls.Add(1)
++		require.Equal(t, "/models", r.URL.Path)
++		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
++		w.Header().Set("Content-Type", "application/json")
++		if call == 1 {
++			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"existing-text-model","object":"model","supported_endpoint_types":["openai-response"]}]}`)
++			return
++		}
++		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"existing-text-model","object":"model","supported_endpoint_types":["openai-response"]},{"id":"new-text-model","object":"model","supported_endpoint_types":["anthropic"]}]}`)
++	}), "existing-text-model", "new-text-model")
++
++	wantSlugs := [][]string{
++		{"existing-text-model"},
++		{"existing-text-model", "new-text-model"},
++	}
++	for index, want := range wantSlugs {
++		recorder := httptest.NewRecorder()
++		c, _ := gin.CreateTestContext(recorder)
++		c.Request = httptest.NewRequest(http.MethodGet, "/codex/v1/models?client_version=26.801", nil)
++		c.Request.Header.Set("Authorization", "Bearer test-token")
++
++		CodexListModels(c)
++
++		require.Equal(t, http.StatusOK, recorder.Code)
++		require.Equal(t, "private, no-store", recorder.Header().Get("Cache-Control"))
++		var payload codexModelsResponse
++		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
++		slugs := make([]string, 0, len(payload.Models))
++		for _, model := range payload.Models {
++			slug, _ := model["slug"].(string)
++			slugs = append(slugs, slug)
++		}
++		require.Equal(t, want, slugs, "catalog request %d", index+1)
++	}
++	require.Equal(t, int32(2), calls.Load())
++}
++
+ func TestBuildCodexModelUsesPinnedCPACapabilityMetadata(t *testing.T) {
+ 	model := buildCodexModel(dto.OpenAIModels{
+ 		Id:      "claude-opus-4-8",

@@ -1,0 +1,512 @@
+diff --git a/web/default/src/features/keys/components/api-keys-dialogs.tsx b/web/default/src/features/keys/components/api-keys-dialogs.tsx
+index ae45cdf..276d51b 100644
+--- a/web/default/src/features/keys/components/api-keys-dialogs.tsx
++++ b/web/default/src/features/keys/components/api-keys-dialogs.tsx
+@@ -20,6 +20,7 @@ import { ApiKeysDeleteDialog } from './api-keys-delete-dialog'
+ import { ApiKeysMutateDrawer } from './api-keys-mutate-drawer'
+ import { useApiKeys } from './api-keys-provider'
+ import { CCSwitchDialog } from './dialogs/cc-switch-dialog'
++import { CodexSetupDialog } from './dialogs/codex-setup-dialog'
+ 
+ export function ApiKeysDialogs() {
+   const { open, setOpen, currentRow, resolvedKey } = useApiKeys()
+@@ -37,6 +38,12 @@ export function ApiKeysDialogs() {
+         onOpenChange={(isOpen) => !isOpen && setOpen(null)}
+         tokenKey={resolvedKey}
+       />
++      <CodexSetupDialog
++        open={open === 'codex-setup'}
++        onOpenChange={(isOpen) => !isOpen && setOpen(null)}
++        tokenKey={resolvedKey}
++        tokenName={currentRow?.name}
++      />
+     </>
+   )
+ }
+diff --git a/web/default/src/features/keys/components/data-table-row-actions.tsx b/web/default/src/features/keys/components/data-table-row-actions.tsx
+index 5a75d5f..f664313 100644
+--- a/web/default/src/features/keys/components/data-table-row-actions.tsx
++++ b/web/default/src/features/keys/components/data-table-row-actions.tsx
+@@ -27,6 +27,7 @@ import {
+   Copy,
+   Link,
+   Loader2,
++  SquareTerminal,
+ } from 'lucide-react'
+ import { useCallback, useState } from 'react'
+ import { useTranslation } from 'react-i18next'
+@@ -268,6 +269,21 @@ export function DataTableRowActions<TData>({
+             <Link size={16} />
+           </DropdownMenuShortcut>
+         </DropdownMenuItem>
++        <DropdownMenuItem
++          disabled={!isEnabled || isRealKeyLoading}
++          onClick={async () => {
++            const realKey = await resolveRealKey(apiKey.id)
++            if (!realKey) return
++            setResolvedKey(realKey)
++            setCurrentRow(apiKey)
++            setOpen('codex-setup')
++          }}
++        >
++          {t('Codex Setup')}
++          <DropdownMenuShortcut>
++            <SquareTerminal size={16} />
++          </DropdownMenuShortcut>
++        </DropdownMenuItem>
+         <DropdownMenuSeparator />
+         <DropdownMenuItem
+           onClick={async () => {
+diff --git a/web/default/src/features/keys/components/dialogs/codex-setup-dialog.tsx b/web/default/src/features/keys/components/dialogs/codex-setup-dialog.tsx
+new file mode 100644
+index 0000000..6f58203
+--- /dev/null
++++ b/web/default/src/features/keys/components/dialogs/codex-setup-dialog.tsx
+@@ -0,0 +1,202 @@
++/*
++Copyright (C) 2023-2026 QuantumNous
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU Affero General Public License as
++published by the Free Software Foundation, either version 3 of the
++License, or (at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++GNU Affero General Public License for more details.
++
++You should have received a copy of the GNU Affero General Public License
++along with this program. If not, see <https://www.gnu.org/licenses/>.
++
++For commercial licensing, please contact support@quantumnous.com
++*/
++import {
++  Apple,
++  Check,
++  Copy,
++  Monitor,
++  ShieldCheck,
++  SquareTerminal,
++} from 'lucide-react'
++import { useEffect, useMemo, useRef, useState } from 'react'
++import { useTranslation } from 'react-i18next'
++import { toast } from 'sonner'
++
++import { Button } from '@/components/ui/button'
++import {
++  Dialog,
++  DialogContent,
++  DialogDescription,
++  DialogFooter,
++  DialogHeader,
++  DialogTitle,
++} from '@/components/ui/dialog'
++import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
++import { copyToClipboard } from '@/lib/copy-to-clipboard'
++
++import {
++  buildCodexInstallCommand,
++  detectCodexPlatform,
++  type CodexPlatform,
++} from '../../lib/codex-config'
++
++type CodexSetupDialogProps = {
++  open: boolean
++  onOpenChange: (open: boolean) => void
++  tokenKey: string
++  tokenName?: string
++}
++
++function getInitialPlatform(): CodexPlatform {
++  if (typeof navigator === 'undefined') return 'windows'
++  return detectCodexPlatform(navigator.userAgent)
++}
++
++export function CodexSetupDialog({
++  open,
++  onOpenChange,
++  tokenKey,
++  tokenName,
++}: CodexSetupDialogProps) {
++  const { t } = useTranslation()
++  const [platform, setPlatform] = useState<CodexPlatform>(getInitialPlatform)
++  const [copied, setCopied] = useState(false)
++  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
++
++  useEffect(() => {
++    if (!open) return
++    setPlatform(getInitialPlatform())
++    setCopied(false)
++  }, [open])
++
++  useEffect(() => {
++    return () => clearTimeout(copiedTimer.current)
++  }, [])
++
++  const installCommand = useMemo(
++    () => buildCodexInstallCommand({ apiKey: tokenKey, platform }),
++    [platform, tokenKey]
++  )
++
++  const handleCopy = async () => {
++    const success = await copyToClipboard(installCommand)
++    if (!success) {
++      toast.error(t('Failed to copy configuration'))
++      return
++    }
++
++    setCopied(true)
++    toast.success(t('Codex configuration copied'))
++    clearTimeout(copiedTimer.current)
++    copiedTimer.current = setTimeout(() => setCopied(false), 2000)
++  }
++
++  return (
++    <Dialog open={open} onOpenChange={onOpenChange}>
++      <DialogContent className='max-h-[min(90vh,760px)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden p-0 sm:max-w-2xl'>
++        <DialogHeader className='px-4 pt-4 pr-12 sm:px-5 sm:pt-5 sm:pr-12'>
++          <div className='flex items-center gap-2.5'>
++            <div className='border-border bg-muted/50 flex size-8 shrink-0 items-center justify-center rounded-lg border'>
++              <SquareTerminal className='size-4' />
++            </div>
++            <div className='min-w-0'>
++              <DialogTitle>{t('Codex Setup')}</DialogTitle>
++              <DialogDescription className='mt-1 truncate text-xs'>
++                {t('API key')}: {tokenName || t('Current key')}
++              </DialogDescription>
++            </div>
++          </div>
++        </DialogHeader>
++
++        <div className='min-h-0 space-y-4 overflow-y-auto px-4 pb-1 sm:px-5'>
++          <div className='space-y-1.5'>
++            <div className='text-muted-foreground flex items-center gap-1.5 text-xs font-medium'>
++              <Monitor className='size-3.5' />
++              {t('Computer system detected automatically')}
++            </div>
++            <Tabs
++              value={platform}
++              onValueChange={(value) => setPlatform(value as CodexPlatform)}
++            >
++              <TabsList className='grid w-full grid-cols-2 sm:w-72'>
++                <TabsTrigger value='windows'>
++                  <Monitor /> Windows
++                </TabsTrigger>
++                <TabsTrigger value='macos'>
++                  <Apple /> macOS
++                </TabsTrigger>
++              </TabsList>
++            </Tabs>
++          </div>
++
++          <div className='bg-muted/35 rounded-lg border'>
++            <div className='border-border flex items-center justify-between gap-3 border-b px-3 py-2'>
++              <span className='text-muted-foreground text-xs font-medium'>
++                {platform === 'windows'
++                  ? t('PowerShell command')
++                  : t('Terminal command')}
++              </span>
++              <span className='text-muted-foreground shrink-0 text-[10px] uppercase'>
++                {platform === 'windows' ? 'PowerShell' : 'Shell'}
++              </span>
++            </div>
++            <pre className='text-foreground max-h-36 overflow-auto p-3 font-mono text-[11px] leading-5 break-all whitespace-pre-wrap sm:text-xs'>
++              {installCommand}
++            </pre>
++          </div>
++
++          <div className='grid grid-cols-1 gap-2 text-xs sm:grid-cols-3'>
++            {[
++              t('Backs up the original configuration'),
++              t('Keeps plugins and MCP settings'),
++              t('Updates the MadAPI provider safely'),
++            ].map((label) => (
++              <div key={label} className='flex items-center gap-1.5'>
++                <ShieldCheck className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
++                <span>{label}</span>
++              </div>
++            ))}
++          </div>
++
++          <div className='space-y-2 text-xs'>
++            <div className='flex gap-2'>
++              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>
++                1
++              </span>
++              <span>{t('Copy the one-command setup below')}</span>
++            </div>
++            <div className='flex gap-2'>
++              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>
++                2
++              </span>
++              <span>
++                {platform === 'windows'
++                  ? t('Open PowerShell, paste the command, and press Enter')
++                  : t('Open Terminal, paste the command, and press Enter')}
++              </span>
++            </div>
++            <div className='flex gap-2'>
++              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>
++                3
++              </span>
++              <span>{t('Restart Codex and choose an available model')}</span>
++            </div>
++          </div>
++        </div>
++
++        <DialogFooter className='m-0 px-4 py-3 sm:px-5'>
++          <Button className='w-full sm:w-auto sm:min-w-40' onClick={handleCopy}>
++            {copied ? <Check /> : <Copy />}
++            {copied ? t('Copied!') : t('Copy one-command setup')}
++          </Button>
++        </DialogFooter>
++      </DialogContent>
++    </Dialog>
++  )
++}
+diff --git a/web/default/src/features/keys/lib/codex-config.ts b/web/default/src/features/keys/lib/codex-config.ts
+new file mode 100644
+index 0000000..f35b358
+--- /dev/null
++++ b/web/default/src/features/keys/lib/codex-config.ts
+@@ -0,0 +1,90 @@
++/*
++Copyright (C) 2023-2026 QuantumNous
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU Affero General Public License as
++published by the Free Software Foundation, either version 3 of the
++License, or (at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++GNU Affero General Public License for more details.
++
++You should have received a copy of the GNU Affero General Public License
++along with this program. If not, see <https://www.gnu.org/licenses/>.
++
++For commercial licensing, please contact support@quantumnous.com
++*/
++
++export type CodexPlatform = 'windows' | 'macos'
++
++const CODEX_BASE_URL = 'https://mad.myddns.me/codex/v1'
++const WINDOWS_INSTALLER_URL = 'https://mad.myddns.me/mad-codex/install.ps1'
++const MACOS_INSTALLER_URL = 'https://mad.myddns.me/mad-codex/install.sh'
++
++function escapePowerShellSingleQuoted(value: string): string {
++  return value.replaceAll("'", "''")
++}
++
++function escapeShellSingleQuoted(value: string): string {
++  return value.replaceAll("'", "'\"'\"'")
++}
++
++function buildAuthBlock(apiKey: string, platform: CodexPlatform): string {
++  if (platform === 'macos') {
++    return `[model_providers.madapi.auth]
++command = "/bin/sh"
++args = ["-c", "printf %s '${escapeShellSingleQuoted(apiKey)}'"]
++timeout_ms = 5000
++refresh_interval_ms = 300000`
++  }
++
++  return `[model_providers.madapi.auth]
++command = "powershell.exe"
++args = ["-NoProfile", "-Command", "[Console]::Out.Write('${escapePowerShellSingleQuoted(apiKey)}')"]
++timeout_ms = 5000
++refresh_interval_ms = 300000`
++}
++
++function buildProviderBlock(apiKey: string, platform: CodexPlatform): string {
++  return `[model_providers.madapi]
++name = "MadAPI"
++base_url = "${CODEX_BASE_URL}"
++wire_api = "responses"
++stream_idle_timeout_ms = 360000
++request_max_retries = 0
++context_window_override = 1048576
++
++${buildAuthBlock(apiKey, platform)}`
++}
++
++export function buildCodexConfig(options: {
++  apiKey: string
++  platform: CodexPlatform
++}): string {
++  return `model_provider = "madapi"
++model = "gpt-5.6-sol"
++model_reasoning_effort = "high"
++model_auto_compact_token_limit = 500000
++disable_response_storage = true
++
++${buildProviderBlock(options.apiKey, options.platform)}`
++}
++
++export function buildCodexInstallCommand(options: {
++  apiKey: string
++  platform: CodexPlatform
++}): string {
++  if (options.platform === 'macos') {
++    return `MADAPI_KEY='${escapeShellSingleQuoted(options.apiKey)}' /bin/sh -c "$(curl -fsSL '${MACOS_INSTALLER_URL}')"`
++  }
++
++  return `$env:MADAPI_KEY='${escapePowerShellSingleQuoted(options.apiKey)}'; irm '${WINDOWS_INSTALLER_URL}' | iex; Remove-Item Env:MADAPI_KEY -ErrorAction SilentlyContinue`
++}
++
++export function detectCodexPlatform(userAgent: string): CodexPlatform {
++  return /Macintosh|Mac OS X|iPhone|iPad|iPod/i.test(userAgent)
++    ? 'macos'
++    : 'windows'
++}
+diff --git a/web/default/src/features/keys/types.ts b/web/default/src/features/keys/types.ts
+index 1583e64..7696413 100644
+--- a/web/default/src/features/keys/types.ts
++++ b/web/default/src/features/keys/types.ts
+@@ -104,3 +104,4 @@ export type ApiKeysDialogType =
+   | 'delete'
+   | 'batch-delete'
+   | 'cc-switch'
++  | 'codex-setup'
+diff --git a/web/default/src/i18n/locales/en.json b/web/default/src/i18n/locales/en.json
+index 45dde3c..18057a8 100644
+--- a/web/default/src/i18n/locales/en.json
++++ b/web/default/src/i18n/locales/en.json
+@@ -5169,6 +5169,20 @@
+     "Zero retention": "Zero retention",
+     "Zhipu": "Zhipu",
+     "Zhipu V4": "Zhipu V4",
+-    "Zoom": "Zoom"
++    "Zoom": "Zoom",
++    "Codex Setup": "Codex Setup",
++    "Failed to copy configuration": "Failed to copy configuration",
++    "Codex configuration copied": "Codex configuration copied",
++    "Computer system detected automatically": "Computer system detected automatically",
++    "PowerShell command": "PowerShell command",
++    "Terminal command": "Terminal command",
++    "Backs up the original configuration": "Backs up the original configuration",
++    "Keeps plugins and MCP settings": "Keeps plugins and MCP settings",
++    "Updates the MadAPI provider safely": "Updates the MadAPI provider safely",
++    "Copy the one-command setup below": "Copy the one-command setup below",
++    "Open PowerShell, paste the command, and press Enter": "Open PowerShell, paste the command, and press Enter",
++    "Open Terminal, paste the command, and press Enter": "Open Terminal, paste the command, and press Enter",
++    "Restart Codex and choose an available model": "Restart Codex and choose an available model",
++    "Copy one-command setup": "Copy one-command setup"
+   }
+ }
+diff --git a/web/default/src/i18n/locales/zh.json b/web/default/src/i18n/locales/zh.json
+index 815f297..13b9b3e 100644
+--- a/web/default/src/i18n/locales/zh.json
++++ b/web/default/src/i18n/locales/zh.json
+@@ -5200,6 +5200,20 @@
+     "Voice ID": "音色 ID",
+     "Enter text and choose a voice and audio format supported by the model.": "输入文字并选择模型支持的音色与音频格式。",
+     "Generate video from text or upload an image for compatible image-to-video models.": "支持文生视频；上传图片后可测试兼容的图生视频能力。",
+-    "Chat with image and file understanding; enable search for compatible web-enabled models.": "支持对话、图片与文件理解；搜索开关用于兼容的联网模型。"
++    "Chat with image and file understanding; enable search for compatible web-enabled models.": "支持对话、图片与文件理解；搜索开关用于兼容的联网模型。",
++    "Codex Setup": "Codex 接入",
++    "Failed to copy configuration": "配置复制失败",
++    "Codex configuration copied": "Codex 配置已复制",
++    "Computer system detected automatically": "已自动识别电脑系统",
++    "PowerShell command": "PowerShell 一键命令",
++    "Terminal command": "终端一键命令",
++    "Backs up the original configuration": "自动备份原配置",
++    "Keeps plugins and MCP settings": "保留插件和 MCP 设置",
++    "Updates the MadAPI provider safely": "安全更新 MadAPI 接入",
++    "Copy the one-command setup below": "复制下方一键配置命令",
++    "Open PowerShell, paste the command, and press Enter": "打开 PowerShell，粘贴命令并按回车",
++    "Open Terminal, paste the command, and press Enter": "打开终端，粘贴命令并按回车",
++    "Restart Codex and choose an available model": "重启 Codex 后选择可用模型",
++    "Copy one-command setup": "复制一键配置命令"
+   }
+ }
+diff --git a/web/default/tests/codex-config.test.ts b/web/default/tests/codex-config.test.ts
+new file mode 100644
+index 0000000..828ad86
+--- /dev/null
++++ b/web/default/tests/codex-config.test.ts
+@@ -0,0 +1,82 @@
++/*
++Copyright (C) 2023-2026 QuantumNous
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU Affero General Public License as
++published by the Free Software Foundation, either version 3 of the
++License, or (at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++GNU Affero General Public License for more details.
++
++You should have received a copy of the GNU Affero General Public License
++along with this program. If not, see <https://www.gnu.org/licenses/>.
++
++For commercial licensing, please contact support@quantumnous.com
++*/
++import { describe, expect, test } from 'bun:test'
++
++import {
++  buildCodexConfig,
++  buildCodexInstallCommand,
++  detectCodexPlatform,
++} from '../src/features/keys/lib/codex-config'
++
++const API_KEY = 'sk-test-key-123'
++
++describe('Codex configuration generation', () => {
++  test('builds a complete Windows configuration', () => {
++    const result = buildCodexConfig({
++      apiKey: API_KEY,
++      platform: 'windows',
++    })
++
++    expect(result).toContain('model_provider = "madapi"')
++    expect(result).toContain('base_url = "https://mad.myddns.me/codex/v1"')
++    expect(result).toContain('command = "powershell.exe"')
++    expect(result).toContain(API_KEY)
++    expect(result).not.toContain('experimental_bearer_token')
++    expect(result).not.toContain('requires_openai_auth')
++  })
++
++  test('builds a macOS provider configuration', () => {
++    const result = buildCodexConfig({
++      apiKey: API_KEY,
++      platform: 'macos',
++    })
++
++    expect(result).toContain('command = "/bin/sh"')
++    expect(result).toContain("printf %s 'sk-test-key-123'")
++    expect(result).toContain('model_provider = "madapi"')
++  })
++
++  test('builds native one-command installers', () => {
++    const windows = buildCodexInstallCommand({
++      apiKey: API_KEY,
++      platform: 'windows',
++    })
++    const macos = buildCodexInstallCommand({
++      apiKey: API_KEY,
++      platform: 'macos',
++    })
++
++    expect(windows).toContain("$env:MADAPI_KEY='sk-test-key-123'")
++    expect(windows).toContain('/mad-codex/install.ps1')
++    expect(macos).toContain("MADAPI_KEY='sk-test-key-123'")
++    expect(macos).toContain('/mad-codex/install.sh')
++  })
++
++  test('detects Apple and Windows clients', () => {
++    expect(detectCodexPlatform('Mozilla/5.0 (Macintosh; Intel Mac OS X)')).toBe(
++      'macos'
++    )
++    expect(detectCodexPlatform('Mozilla/5.0 (iPhone; CPU iPhone OS)')).toBe(
++      'macos'
++    )
++    expect(
++      detectCodexPlatform('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
++    ).toBe('windows')
++  })
++})

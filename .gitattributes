@@ -1,7 +1,9 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.sh text eol=lf
-*.patch text eol=lf
+*.patch text eol=lf -whitespace
+*.ps1 text eol=lf
+*.sha256 text eol=lf
 *.md text eol=lf
 *.css text eol=lf
 *.html text eol=lf

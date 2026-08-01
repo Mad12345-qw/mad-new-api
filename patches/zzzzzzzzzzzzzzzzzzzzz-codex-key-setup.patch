@@ -360,7 +360,7 @@ index 0000000..834eeca
 +  platform: CodexPlatform
 +}): string {
 +  if (options.platform === 'macos') {
-+    return `MADAPI_KEY='${escapeShellSingleQuoted(options.apiKey)}' /bin/sh -c 'p=$(mktemp); trap '\''rm -f "$p"'\'' EXIT; curl -fsSL '\''${MACOS_INSTALLER_URL}'\'' -o "$p"; /bin/sh "$p"'`
++    return `p=$(mktemp) && trap 'rm -f "$p"' EXIT && curl -fsSL '${MACOS_INSTALLER_URL}' -o "$p" && MADAPI_KEY='${escapeShellSingleQuoted(options.apiKey)}' /bin/sh "$p"`
 +  }
 +
 +  return `$env:MADAPI_KEY='${escapePowerShellSingleQuoted(options.apiKey)}'; try { & ([ScriptBlock]::Create((irm '${WINDOWS_INSTALLER_URL}'))) } finally { Remove-Item Env:MADAPI_KEY -ErrorAction SilentlyContinue }`
@@ -437,7 +437,7 @@ new file mode 100644
 index 0000000..4e5a88e
 --- /dev/null
 +++ b/web/default/tests/codex-config.test.ts
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,90 @@
 +/*
 +Copyright (C) 2023-2026 QuantumNous
 +
@@ -511,6 +511,9 @@ index 0000000..4e5a88e
 +    expect(macos).toContain("MADAPI_KEY='sk-test-key-123'")
 +    expect(macos).toContain('/mad-codex/install.sh')
 +    expect(macos).toContain('mktemp')
++    expect(macos).toContain(`trap 'rm -f "$p"' EXIT`)
++    expect(macos).not.toContain('/bin/sh -c')
++    expect(macos).not.toContain("'''")
 +  })
 +
 +  test('detects Apple and Windows clients', () => {

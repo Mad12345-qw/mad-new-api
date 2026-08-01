@@ -72,11 +72,11 @@ c1ceff1fcb6c5fd6ec44eb9ef8b77ef13038d01d3885e7aed6cc86681ba025fd  web/default/sr
 441e2ae5c0c51137b920c73ea5e5dd53ab660096766bf391703db46660416c59  web/default/src/features/keys/components/api-keys-dialogs.tsx
 dbda49fe01c2ce96e242b30430a4777c100b2f366e318ca2ad677c7185bdf46a  web/default/src/features/keys/components/data-table-row-actions.tsx
 d55169060f7838c4752d7fe1474c71e6ddfa6cd613706696937f8dd86d8cf132  web/default/src/features/keys/components/dialogs/codex-setup-dialog.tsx
-bc59b8fe1bfba9b24884ad841c22010a5896b6d68f5352b754ab59a21c224c3e  web/default/src/features/keys/lib/codex-config.ts
+14932804ef9c7a13908c3f4029b2ee44ff72b1967386013b119ca03657922d38  web/default/src/features/keys/lib/codex-config.ts
 f4e20521a606e8212543b21ff9c6154bfb4c764516ead12b8dc6757a4fedabca  web/default/src/features/keys/types.ts
 d0ba06d5e2b3fb08475140f36363936b33191126db55729154710d57ced0ea4e  web/default/src/i18n/locales/en.json
 8f7a7f4228662836d8a17406826d092a6d48f1865d253efd2ee0c2bac67494a6  web/default/src/i18n/locales/zh.json
-53828ab90ed6747c468cdecfd583e655a52c0e4e429101e9a01898be38366e20  web/default/tests/codex-config.test.ts
+c4e7333950ba8e42a6cf65de42eaac02b7ff691e5fedb02dd9e1495ebf61b36d  web/default/tests/codex-config.test.ts
 839172ddc6704e1fb28d9d14eea28cd4f98f284ccfb105be558cb2a2d432e273  web/default/public/mad-codex/install.ps1
 d9e3c13b3f145483877a9a46a29d589a05f215e76862543b1d6c133f8ade7d32  web/default/public/mad-codex/install.sh
 67340c71020e30f7d8732b3671b89531dc0ed046579a559d29048cf8d40cf708  controller/video_proxy.go

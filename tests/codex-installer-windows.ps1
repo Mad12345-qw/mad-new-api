@@ -80,6 +80,9 @@ base_url = "https://example.invalid/v1"
 wire_api = "responses"
 
 [model_providers.madapi]
+name = "Old MadAPI"
+base_url = "https://old.example.invalid/v1"
+wire_api = "responses"
 experimental_bearer_token = "old-secret"
 
 [projects.'$projectPath']

@@ -123,7 +123,6 @@ toml_string() {
 
 has_reasoning=0
 has_compact=0
-has_storage=0
 provider_source=$config_path
 provider_id=
 if [ "$had_config" -eq 1 ]; then
@@ -140,7 +139,6 @@ if [ "$had_config" -eq 1 ]; then
   fi
   has_root_key model_reasoning_effort && has_reasoning=1
   has_root_key model_auto_compact_token_limit && has_compact=1
-  has_root_key disable_response_storage && has_storage=1
 fi
 case "$provider_id" in
   ''|openai|ollama|lmstudio|amazon-bedrock)
@@ -201,7 +199,6 @@ trap 'exit 1' HUP INT TERM
   printf '%s\n' 'model = "gpt-5.6-sol"'
   [ "$has_reasoning" -eq 1 ] || printf '%s\n' 'model_reasoning_effort = "high"'
   [ "$has_compact" -eq 1 ] || printf '%s\n' 'model_auto_compact_token_limit = 500000'
-  [ "$has_storage" -eq 1 ] || printf '%s\n' 'disable_response_storage = true'
   printf '\n'
   cat "$body_path"
   printf '\n[model_providers.%s]\n' "$provider_id"
@@ -210,9 +207,8 @@ trap 'exit 1' HUP INT TERM
   printf '%s\n' 'wire_api = "responses"'
   printf '%s\n' 'requires_openai_auth = true'
   printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
-  printf '%s\n' 'supports_websockets = true'
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
-  printf '%s\n' 'request_max_retries = 0'
+  printf '%s\n' 'request_max_retries = 3'
   printf '%s\n' 'context_window_override = 1048576'
 } > "$temp_path"
 

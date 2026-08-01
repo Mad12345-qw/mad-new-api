@@ -86,7 +86,10 @@ grep -Fq 'experimental_bearer_token = "sk-macos-first-key"' "$config_path" || fa
 ! grep -Fq 'madapi.key' "$config_path" || fail 'Obsolete key-file authentication remained configured.'
 ! grep -Fq 'model_catalog_json' "$config_path" || fail 'A static model catalog remained configured.'
 ! grep -Fq '[model_providers.custom.auth]' "$config_path" || fail 'Command-backed authentication remained configured.'
-grep -Fq 'supports_websockets = true' "$config_path" || fail 'MadAPI WebSocket support was not enabled.'
+! grep -Fq 'supports_websockets' "$config_path" || fail 'Unverified WebSocket support was enabled.'
+! grep -Fq 'disable_response_storage' "$config_path" || fail 'Optional response storage policy was added.'
+grep -Fq 'stream_idle_timeout_ms = 360000' "$config_path" || fail 'Stable 360 second stream timeout was not configured.'
+grep -Fq 'request_max_retries = 3' "$config_path" || fail 'Stable request retry count was not configured.'
 grep -Fq 'requires_openai_auth = true' "$config_path" || fail 'Remote model catalog authentication was not enabled.'
 [ "$(hash_file "$session_path")" = "$session_hash" ] || fail 'Session data changed.'
 
@@ -101,7 +104,7 @@ run_installer "$home" 'sk-macos-second-key' "$codex_cli"
 [ "$(grep -c '^\[model_providers\.custom\]$' "$config_path")" -eq 1 ] || fail 'Duplicate provider section was created.'
 [ "$(grep -c '^experimental_bearer_token = "sk-macos-second-key"$' "$config_path")" -eq 1 ] || fail 'Repeat install did not replace the API key exactly once.'
 ! grep -Fq 'sk-macos-first-key' "$config_path" || fail 'Repeat install retained the previous API key.'
-[ "$(grep -c '^supports_websockets = true$' "$config_path")" -eq 1 ] || fail 'Duplicate WebSocket setting was created.'
+! grep -Fq 'supports_websockets' "$config_path" || fail 'Repeat install enabled unverified WebSocket support.'
 
 recovery_home="$sandbox/recover-provider"
 mkdir -p "$recovery_home"

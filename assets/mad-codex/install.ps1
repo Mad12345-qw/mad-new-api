@@ -213,7 +213,6 @@ $skipMadApiSection = $false
 $preservedDefaults = @{
     model_reasoning_effort = $false
     model_auto_compact_token_limit = $false
-    disable_response_storage = $false
 }
 
 foreach ($line in $sourceLines) {
@@ -256,10 +255,6 @@ if (-not $preservedDefaults.model_reasoning_effort) {
 if (-not $preservedDefaults.model_auto_compact_token_limit) {
     $headerLines.Add('model_auto_compact_token_limit = 500000')
 }
-if (-not $preservedDefaults.disable_response_storage) {
-    $headerLines.Add('disable_response_storage = true')
-}
-
 $configLines = New-Object 'System.Collections.Generic.List[string]'
 foreach ($line in $headerLines) {
     $configLines.Add($line)
@@ -275,9 +270,8 @@ $configLines.Add('base_url = "https://mad.myddns.me/codex/v1"')
 $configLines.Add('wire_api = "responses"')
 $configLines.Add('requires_openai_auth = true')
 $configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
-$configLines.Add('supports_websockets = true')
 $configLines.Add('stream_idle_timeout_ms = 360000')
-$configLines.Add('request_max_retries = 0')
+$configLines.Add('request_max_retries = 3')
 $configLines.Add('context_window_override = 1048576')
 try {
     [IO.File]::WriteAllText(

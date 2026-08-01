@@ -119,7 +119,10 @@ args = []
     Assert-True (-not $installed.Contains('madapi.key')) 'Obsolete key-file authentication remained configured.'
     Assert-True (-not $installed.Contains('model_catalog_json')) 'A static model catalog remained configured.'
     Assert-True (-not $installed.Contains('[model_providers.custom.auth]')) 'Command-backed authentication remained configured.'
-    Assert-True ($installed.Contains('supports_websockets = true')) 'MadAPI WebSocket support was not enabled.'
+    Assert-True (-not $installed.Contains('supports_websockets')) 'Unverified WebSocket support was enabled.'
+    Assert-True (-not $installed.Contains('disable_response_storage')) 'Optional response storage policy was added.'
+    Assert-True ($installed.Contains('stream_idle_timeout_ms = 360000')) 'Stable 360 second stream timeout was not configured.'
+    Assert-True ($installed.Contains('request_max_retries = 3')) 'Stable request retry count was not configured.'
     Assert-True ($installed.Contains('requires_openai_auth = true')) 'Remote model catalog authentication was not enabled.'
     Assert-True ((Get-Hash $sessionPath) -eq $sessionHash) 'Session data changed.'
 
@@ -148,7 +151,7 @@ args = []
     Assert-True (([regex]::Matches($reinstalled, '(?m)^\[model_providers\.custom\]\r?$')).Count -eq 1) 'Duplicate provider section was created.'
     Assert-True (([regex]::Matches($reinstalled, '(?m)^experimental_bearer_token = "sk-windows-second-key"\r?$')).Count -eq 1) 'Repeat install did not replace the API key exactly once.'
     Assert-True (-not $reinstalled.Contains('sk-windows-first-key')) 'Repeat install retained the previous API key.'
-    Assert-True (([regex]::Matches($reinstalled, '(?m)^supports_websockets = true\r?$')).Count -eq 1) 'Duplicate WebSocket setting was created.'
+    Assert-True (-not $reinstalled.Contains('supports_websockets')) 'Repeat install enabled unverified WebSocket support.'
 
     $recoveryHome = Join-Path $sandbox 'recover-provider'
     New-Item -ItemType Directory -Path $recoveryHome -Force | Out-Null

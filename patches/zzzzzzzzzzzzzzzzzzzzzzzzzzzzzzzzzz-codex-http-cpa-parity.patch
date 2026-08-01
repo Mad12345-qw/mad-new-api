@@ -1,0 +1,413 @@
+diff --git a/service/relayconvert/internal/cpa_responses/native.go b/service/relayconvert/internal/cpa_responses/native.go
+index 9b2429af..a696efb0 100644
+--- a/service/relayconvert/internal/cpa_responses/native.go
++++ b/service/relayconvert/internal/cpa_responses/native.go
+@@ -78,6 +78,7 @@ func normalizeNativeTool(value any, namespace string) []any {
+ 		if namespace != "" && name != "" {
+ 			setNativeToolName(copyTool, qualifyResponsesNamespaceToolName(namespace, name))
+ 		}
++		normalizeNativeFunctionParameters(copyTool)
+ 		delete(copyTool, "namespace")
+ 		return []any{copyTool}
+ 	}
+@@ -93,6 +94,137 @@ func normalizeNativeTool(value any, namespace string) []any {
+ 	return children
+ }
+ 
++func normalizeNativeFunctionParameters(tool map[string]any) {
++	toolType := strings.TrimSpace(stringValue(tool["type"]))
++	if toolType != "" && toolType != "function" {
++		return
++	}
++
++	target := tool
++	if function, ok := tool["function"].(map[string]any); ok {
++		target = function
++	}
++	if strings.TrimSpace(stringValue(target["name"])) == "" {
++		return
++	}
++
++	var parameters any
++	for _, key := range []string{"parameters", "parametersJsonSchema", "input_schema"} {
++		if value, exists := target[key]; exists {
++			parameters = value
++			break
++		}
++	}
++	target["parameters"] = normalizeNativeObjectSchema(parameters)
++	delete(target, "parametersJsonSchema")
++	delete(target, "input_schema")
++}
++
++func normalizeNativeObjectSchema(value any) map[string]any {
++	schema, ok := value.(map[string]any)
++	if !ok || schema == nil {
++		return safeNativeObjectSchema()
++	}
++	schema = cloneMap(schema)
++
++	rootType, hasType := schema["type"]
++	if !hasType {
++		if branch := firstNativeObjectUnionBranch(schema); branch != nil {
++			schema = mergeNativeObjectSchema(schema, branch)
++		} else {
++			schema["type"] = "object"
++		}
++	} else if !nativeSchemaTypeIsObjectOnly(rootType) {
++		if branch := firstNativeObjectUnionBranch(schema); branch != nil {
++			schema = mergeNativeObjectSchema(schema, branch)
++		} else {
++			return safeNativeObjectSchema()
++		}
++	} else {
++		schema["type"] = "object"
++		for _, unionName := range []string{"oneOf", "anyOf"} {
++			branches, exists := schema[unionName].([]any)
++			if !exists {
++				continue
++			}
++			for _, rawBranch := range branches {
++				branch, branchOK := rawBranch.(map[string]any)
++				if !branchOK || !nativeSchemaTypeIsObjectOnly(branch["type"]) {
++					if objectBranch := firstNativeObjectUnionBranch(schema); objectBranch != nil {
++						schema = mergeNativeObjectSchema(schema, objectBranch)
++					} else {
++						return safeNativeObjectSchema()
++					}
++					break
++				}
++			}
++		}
++	}
++
++	if _, ok := schema["properties"].(map[string]any); !ok {
++		schema["properties"] = map[string]any{}
++	}
++	return schema
++}
++
++func nativeSchemaTypeIsObjectOnly(value any) bool {
++	switch typed := value.(type) {
++	case string:
++		return strings.EqualFold(strings.TrimSpace(typed), "object")
++	case []any:
++		if len(typed) == 0 {
++			return false
++		}
++		for _, item := range typed {
++			text, ok := item.(string)
++			if !ok || !strings.EqualFold(strings.TrimSpace(text), "object") {
++				return false
++			}
++		}
++		return true
++	default:
++		return false
++	}
++}
++
++func firstNativeObjectUnionBranch(schema map[string]any) map[string]any {
++	for _, unionName := range []string{"oneOf", "anyOf"} {
++		branches, ok := schema[unionName].([]any)
++		if !ok {
++			continue
++		}
++		for _, rawBranch := range branches {
++			branch, branchOK := rawBranch.(map[string]any)
++			if !branchOK {
++				continue
++			}
++			branchType, hasType := branch["type"]
++			if !hasType || nativeSchemaTypeIsObjectOnly(branchType) {
++				return branch
++			}
++		}
++	}
++	return nil
++}
++
++func mergeNativeObjectSchema(root, branch map[string]any) map[string]any {
++	merged := cloneMap(root)
++	delete(merged, "oneOf")
++	delete(merged, "anyOf")
++	for key, value := range branch {
++		merged[key] = value
++	}
++	merged["type"] = "object"
++	return merged
++}
++
++func safeNativeObjectSchema() map[string]any {
++	return map[string]any{
++		"type":       "object",
++		"properties": map[string]any{},
++	}
++}
++
+ func normalizeNativeHistoryItem(item map[string]any) {
+ 	itemType := strings.TrimSpace(stringValue(item["type"]))
+ 	if itemType != "function_call" && itemType != "custom_tool_call" {
+diff --git a/service/relayconvert/internal/cpa_responses/native_test.go b/service/relayconvert/internal/cpa_responses/native_test.go
+index 8b068087..fdb6aa8b 100644
+--- a/service/relayconvert/internal/cpa_responses/native_test.go
++++ b/service/relayconvert/internal/cpa_responses/native_test.go
+@@ -53,6 +53,50 @@ func TestNormalizeOpenAIResponsesRequestKeepsNativeFieldsAndFlattensNamespaces(t
+ 	}
+ }
+ 
++func TestNormalizeOpenAIResponsesRequestRepairsCodexToolSchemas(t *testing.T) {
++	raw := []byte(`{
++		"model":"deepseek-v4-flash",
++		"input":"weather",
++		"tools":[
++			{"type":"namespace","name":"codex_app","tools":[
++				{"type":"function","name":"automation_update","parameters":null},
++				{"type":"function","name":"union_tool","parameters":{"oneOf":[{"type":"object","properties":{"action":{"type":"string"}},"required":["action"]},{"type":"null"}]}},
++				{"type":"function","name":"lookup","parametersJsonSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}
++			]}
++		]
++	}`)
++
++	out, err := NormalizeOpenAIResponsesRequest(raw)
++	if err != nil {
++		t.Fatalf("NormalizeOpenAIResponsesRequest() error = %v", err)
++	}
++
++	if got := gjson.GetBytes(out, "tools.0.name").String(); got != "codex_app__automation_update" {
++		t.Fatalf("automation tool name = %q; output=%s", got, out)
++	}
++	if got := gjson.GetBytes(out, "tools.0.parameters.type").String(); got != "object" {
++		t.Fatalf("automation parameters type = %q, want object; output=%s", got, out)
++	}
++	if !gjson.GetBytes(out, "tools.0.parameters.properties").IsObject() {
++		t.Fatalf("automation properties are not an object; output=%s", out)
++	}
++	if got := gjson.GetBytes(out, "tools.1.parameters.properties.action.type").String(); got != "string" {
++		t.Fatalf("union object branch was not preserved; output=%s", out)
++	}
++	if got := gjson.GetBytes(out, "tools.1.parameters.required.0").String(); got != "action" {
++		t.Fatalf("union required field was not preserved; output=%s", out)
++	}
++	if gjson.GetBytes(out, "tools.1.parameters.oneOf").Exists() {
++		t.Fatalf("nullable root union was not removed; output=%s", out)
++	}
++	if got := gjson.GetBytes(out, "tools.2.parameters.properties.query.type").String(); got != "string" {
++		t.Fatalf("valid parametersJsonSchema was not preserved; output=%s", out)
++	}
++	if gjson.GetBytes(out, "tools.2.parametersJsonSchema").Exists() {
++		t.Fatalf("parametersJsonSchema alias was not canonicalized; output=%s", out)
++	}
++}
++
+ func TestRestoreOpenAIResponsesPayloadRestoresNamespaceAndCustomTool(t *testing.T) {
+ 	request := []byte(`{
+ 		"tools":[
+diff --git a/service/relayconvert/internal/cpa_responses/request.go b/service/relayconvert/internal/cpa_responses/request.go
+index 18602bdd..c43f11a9 100644
+--- a/service/relayconvert/internal/cpa_responses/request.go
++++ b/service/relayconvert/internal/cpa_responses/request.go
+@@ -179,8 +179,8 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
+ 							imageURL := contentItem.Get("image_url").String()
+ 							contentPart := []byte(`{"type":"image_url","image_url":{"url":""}}`)
+ 							contentPart, _ = sjson.SetBytes(contentPart, "image_url.url", imageURL)
+-							if detail := contentItem.Get("detail"); detail.Exists() {
+-								contentPart, _ = sjson.SetBytes(contentPart, "image_url.detail", detail.String())
++							if detail, ok := normalizeChatImageDetail(contentItem.Get("detail")); ok && detail != "" {
++								contentPart, _ = sjson.SetBytes(contentPart, "image_url.detail", detail)
+ 							}
+ 							contentItems = append(contentItems, contentPart)
+ 						}
+@@ -248,7 +248,7 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
+ 				}
+ 
+ 				if output := item.Get("output"); output.Exists() {
+-					toolMessage, _ = sjson.SetBytes(toolMessage, "content", output.String())
++					toolMessage = setFunctionCallOutputContent(toolMessage, output)
+ 				}
+ 
+ 				appendMessage(toolMessage)
+@@ -361,6 +361,130 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
+ 	return out
+ }
+ 
++func setFunctionCallOutputContent(toolMessage []byte, output gjson.Result) []byte {
++	structuredContent := output
++	if output.Type == gjson.String {
++		if !gjson.Valid(output.String()) {
++			toolMessage, _ = sjson.SetBytes(toolMessage, "content", output.String())
++			return toolMessage
++		}
++		structuredContent = gjson.Parse(output.String())
++	}
++
++	if hasChatToolOutputImagePart(structuredContent) {
++		contentItems := make([][]byte, 0, len(structuredContent.Array()))
++		for _, item := range structuredContent.Array() {
++			contentItems = append(contentItems, chatToolOutputContentPart(item))
++		}
++		return translatorcommon.SetRawArrayItems(toolMessage, "content", contentItems)
++	}
++
++	toolMessage, _ = sjson.SetBytes(toolMessage, "content", output.String())
++	return toolMessage
++}
++
++func chatToolOutputContentPart(item gjson.Result) []byte {
++	switch item.Get("type").String() {
++	case "text", "input_text", "output_text":
++		part := []byte(`{"type":"text","text":""}`)
++		part, _ = sjson.SetBytes(part, "text", item.Get("text").String())
++		return part
++	case "image_url", "input_image":
++		imageURL, detail, ok := chatToolOutputImageFields(item)
++		if !ok {
++			return chatToolOutputFallbackPart(item)
++		}
++		part := []byte(`{"type":"image_url","image_url":{"url":""}}`)
++		part, _ = sjson.SetBytes(part, "image_url.url", imageURL)
++		if detail != "" {
++			part, _ = sjson.SetBytes(part, "image_url.detail", detail)
++		}
++		return part
++	default:
++		return chatToolOutputFallbackPart(item)
++	}
++}
++
++func hasChatToolOutputImagePart(content gjson.Result) bool {
++	if !content.IsArray() {
++		return false
++	}
++	hasImage := false
++	for _, item := range content.Array() {
++		itemType := item.Get("type")
++		if itemType.Type != gjson.String {
++			continue
++		}
++		switch itemType.String() {
++		case "text", "input_text", "output_text":
++			if item.Get("text").Type != gjson.String {
++				return false
++			}
++		case "image_url", "input_image":
++			if _, _, ok := chatToolOutputImageFields(item); !ok {
++				return false
++			}
++			hasImage = true
++		}
++	}
++	return hasImage
++}
++
++func chatToolOutputImageFields(item gjson.Result) (imageURL, detail string, ok bool) {
++	var imageURLValue gjson.Result
++	var detailValue gjson.Result
++	switch item.Get("type").String() {
++	case "image_url":
++		imageURLValue = item.Get("image_url.url")
++		detailValue = item.Get("image_url.detail")
++	case "input_image":
++		imageURLValue = item.Get("image_url")
++		detailValue = item.Get("detail")
++	default:
++		return "", "", false
++	}
++	if imageURLValue.Type != gjson.String {
++		return "", "", false
++	}
++	imageURL = strings.TrimSpace(imageURLValue.String())
++	if imageURL == "" {
++		return "", "", false
++	}
++	detail, ok = normalizeChatImageDetail(detailValue)
++	if !ok {
++		return "", "", false
++	}
++	return imageURL, detail, true
++}
++
++func normalizeChatImageDetail(detailValue gjson.Result) (string, bool) {
++	if !detailValue.Exists() {
++		return "", true
++	}
++	if detailValue.Type != gjson.String {
++		return "", false
++	}
++	normalizedDetail := strings.ToLower(strings.TrimSpace(detailValue.String()))
++	switch normalizedDetail {
++	case "auto", "low", "high":
++		return normalizedDetail, true
++	case "original":
++		return "high", true
++	default:
++		return "", true
++	}
++}
++
++func chatToolOutputFallbackPart(item gjson.Result) []byte {
++	text := item.Raw
++	if item.Type == gjson.String || text == "" {
++		text = item.String()
++	}
++	part := []byte(`{"type":"text","text":""}`)
++	part, _ = sjson.SetBytes(part, "text", text)
++	return part
++}
++
+ func collectOpenAIResponsesReasoningContent(item gjson.Result) string {
+ 	var reasoningText strings.Builder
+ 	if summary := item.Get("summary"); summary.Exists() && summary.IsArray() {
+diff --git a/service/relayconvert/internal/cpa_responses/request_test.go b/service/relayconvert/internal/cpa_responses/request_test.go
+index 3f794e4b..5b079fa7 100644
+--- a/service/relayconvert/internal/cpa_responses/request_test.go
++++ b/service/relayconvert/internal/cpa_responses/request_test.go
+@@ -123,6 +123,48 @@ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_DefersMessageUntil
+ 	}
+ }
+ 
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesToolOutputImages(t *testing.T) {
++	raw := []byte(`{
++		"input": [
++			{"type":"function_call","call_id":"call_image","name":"view_image","arguments":"{}"},
++			{"type":"function_call_output","call_id":"call_image","output":[
++				{"type":"input_text","text":"Captured screenshot."},
++				{"type":"input_image","image_url":"data:image/png;base64,AA==","detail":"original"}
++			]}
++		]
++	}`)
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("deepseek-v4-flash", raw, false)
++	content := gjson.GetBytes(out, "messages.1.content")
++	if !content.IsArray() {
++		t.Fatalf("tool output content is not an array; output=%s", out)
++	}
++	if got := content.Get("0.text").String(); got != "Captured screenshot." {
++		t.Fatalf("tool output text = %q; output=%s", got, out)
++	}
++	if got := content.Get("1.image_url.url").String(); got != "data:image/png;base64,AA==" {
++		t.Fatalf("tool output image URL = %q; output=%s", got, out)
++	}
++	if got := content.Get("1.image_url.detail").String(); got != "high" {
++		t.Fatalf("tool output image detail = %q, want high; output=%s", got, out)
++	}
++}
++
++func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_NormalizesInputImageDetail(t *testing.T) {
++	raw := []byte(`{
++		"input":[{"role":"user","content":[{
++			"type":"input_image",
++			"image_url":"https://example.com/image.png",
++			"detail":"original"
++		}]}]
++	}`)
++
++	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("gpt-5.6-sol", raw, false)
++	if got := gjson.GetBytes(out, "messages.0.content.0.image_url.detail").String(); got != "high" {
++		t.Fatalf("input image detail = %q, want high; output=%s", got, out)
++	}
++}
++
+ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_AttachesReasoningToAssistantMessage(t *testing.T) {
+ 	raw := []byte(`{
+ 		"input": [

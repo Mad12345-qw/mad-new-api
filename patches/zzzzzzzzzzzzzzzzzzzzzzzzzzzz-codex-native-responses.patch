@@ -1169,10 +1169,10 @@ index 0000000..8b06808
 +}
 diff --git a/service/relayconvert/internal/oai_responses/native_tools_test.go b/service/relayconvert/internal/oai_responses/native_tools_test.go
 new file mode 100644
-index 0000000..969edbe
+index 0000000..f11b93a
 --- /dev/null
 +++ b/service/relayconvert/internal/oai_responses/native_tools_test.go
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,78 @@
 +package oairesponses
 +
 +import (
@@ -1202,12 +1202,16 @@ index 0000000..969edbe
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	if len(out.Tools) != 1 {
-+		t.Fatalf("tools length = %d", len(out.Tools))
-+	}
-+	search, ok := out.Tools[0].(*dto.ClaudeWebSearchTool)
++	tools, ok := out.Tools.([]any)
 +	if !ok {
-+		t.Fatalf("tool type = %T", out.Tools[0])
++		t.Fatalf("tools type = %T", out.Tools)
++	}
++	if len(tools) != 1 {
++		t.Fatalf("tools length = %d", len(tools))
++	}
++	search, ok := tools[0].(*dto.ClaudeWebSearchTool)
++	if !ok {
++		t.Fatalf("tool type = %T", tools[0])
 +	}
 +	if search.Type != "web_search_20250305" || search.MaxUses != 10 {
 +		t.Fatalf("search tool = %#v", search)

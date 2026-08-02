@@ -65,17 +65,20 @@ try {
     Assert-True ($result.Contains('name = "NewAPI"')) 'Provider name changed.'
     Assert-True ($result.Contains('experimental_bearer_token = "sk-windows-first-key"')) 'Bearer token missing.'
     Assert-True ($result.Contains('requires_openai_auth = true')) 'Desktop OAuth setting missing.'
-    Assert-True ($result.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'OAuth route changed.'
+    Assert-True ($result.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'OAuth Cockpit route is missing.'
     Assert-True (-not $result.Contains('[model_providers.newapi.auth]')) 'Command auth remains.'
     Assert-True (-not $result.Contains('sk-stale-bearer')) 'Stale bearer remains.'
     Assert-True (-not $result.Contains('Write-Output stale')) 'Stale command auth remains.'
     Assert-True ($result.Contains('disable_response_storage = true')) 'Unrelated setting changed.'
-    Assert-True (-not ($result -match '(?m)^\s*(model_catalog_json|"model_catalog_json"|''model_catalog_json'')\s*=')) 'Static catalog remains.'
+    Assert-True ($result.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'OAuth managed catalog is missing.'
+    Assert-True (-not $result.Contains('cc-switch-model-catalog.json')) 'Conflicting third-party catalog remains.'
     Assert-True (-not $result.Contains('[model_providers.madapi]')) 'Temporary provider remains.'
     Assert-True (([IO.File]::ReadAllText($keyFile)) -eq 'keep-me') 'Existing key file changed.'
     Assert-True (-not (Test-Path -LiteralPath $cache)) 'Stale cache remains.'
     Assert-True ((Hash $auth) -eq $authHash) 'OAuth state changed.'
     Assert-True ((Hash $session) -eq $sessionHash) 'Session changed.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-refresh-model-catalog.ps1')) 'OAuth refresh script is missing.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json')) 'OAuth catalog file is missing.'
     $backup = @(Get-ChildItem -LiteralPath $codexHome -Filter 'config.toml.madapi-backup-*' -File)[0]
     Assert-True ($null -ne $backup -and (Hash $backup.FullName) -eq $configHash) 'Backup is not exact.'
     Install $codexHome 'sk-windows-second-key'
@@ -91,7 +94,8 @@ try {
     Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh identity is wrong.'
     Assert-True ($freshConfig.Contains('model = "gpt-5.6-sol"')) 'Fresh default missing.'
     Assert-True ($freshConfig.Contains('requires_openai_auth = true')) 'Fresh OAuth setting missing.'
-    Assert-True ($freshConfig.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'Fresh OAuth route changed.'
+    Assert-True ($freshConfig.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'Fresh OAuth Cockpit route is missing.'
+    Assert-True ($freshConfig.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'Fresh OAuth managed catalog is missing.'
     Assert-True ($freshConfig.Contains('experimental_bearer_token = "sk-windows-fresh-key"')) 'Fresh bearer token missing.'
     Assert-True (-not $freshConfig.Contains('[model_providers.custom.auth]')) 'Fresh command auth remains.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fresh 'madapi.key'))) 'Fresh install created key file.'
@@ -119,12 +123,11 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $apiOnly 'madapi-cockpit-model-catalog.json')) 'API-key catalog file is missing.'
     Assert-True (-not (Test-Path -LiteralPath $apiOnlyCache)) 'API-key stale cache remains.'
     $apiAuth = [IO.File]::ReadAllText($apiOnlyAuth) | ConvertFrom-Json
-    Assert-True ($apiAuth.auth_mode -eq 'apikey') 'API-key auth mode is wrong.'
-    Assert-True ($apiAuth.OPENAI_API_KEY -eq 'sk-windows-api-key') 'API-key auth file was not updated.'
+    Assert-True ($apiAuth.OPENAI_API_KEY -eq 'sk-existing-api-key') 'Existing API-key authentication changed.'
+    Assert-True ((Hash $apiOnlyAuth) -eq $apiOnlyAuthHash) 'Existing API-key authentication was not preserved byte-for-byte.'
     $apiConfigBackup = @(Get-ChildItem -LiteralPath $apiOnly -Filter 'config.toml.madapi-backup-*' -File)[0]
-    $apiAuthBackup = @(Get-ChildItem -LiteralPath $apiOnly -Filter 'auth.json.madapi-backup-*' -File)[0]
     Assert-True ((Hash $apiConfigBackup.FullName) -eq $apiOnlyConfigHash) 'API-key config backup is not exact.'
-    Assert-True ((Hash $apiAuthBackup.FullName) -eq $apiOnlyAuthHash) 'API-key auth backup is not exact.'
+    Assert-True (@(Get-ChildItem -LiteralPath $apiOnly -Filter 'auth.json.madapi-backup-*' -File).Count -eq 0) 'Installer created an unnecessary authentication backup.'
 
     $unsigned = Join-Path $codexHome 'unsigned'
     New-Item -ItemType Directory -Path $unsigned -Force | Out-Null
@@ -132,11 +135,11 @@ try {
     Write-Utf8 $unsignedConfig 'model = "gpt-5.6-sol"'
     Install $unsigned 'sk-windows-new-key'
     $unsignedResult = [IO.File]::ReadAllText($unsignedConfig)
-    Assert-True ($unsignedResult.Contains('[model_providers.custom.auth]')) 'New API-key install did not configure command auth.'
-    Assert-True ($unsignedResult.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'New API-key install did not configure the managed catalog.'
-    Assert-True ($unsignedResult.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'New API-key install did not configure the Cockpit route.'
-    $unsignedAuth = [IO.File]::ReadAllText((Join-Path $unsigned 'auth.json')) | ConvertFrom-Json
-    Assert-True ($unsignedAuth.auth_mode -eq 'apikey') 'New API-key install did not create API-key auth.'
-    Assert-True ($unsignedAuth.OPENAI_API_KEY -eq 'sk-windows-new-key') 'New API-key install wrote the wrong key.'
+    Assert-True (-not $unsignedResult.Contains('[model_providers.custom.auth]')) 'New-user install forced command authentication.'
+    Assert-True ($unsignedResult.Contains('requires_openai_auth = true')) 'New-user install did not preserve the Codex sign-in chooser.'
+    Assert-True ($unsignedResult.Contains('experimental_bearer_token = "sk-windows-new-key"')) 'New-user MadAPI bearer token is missing.'
+    Assert-True ($unsignedResult.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'New-user install did not configure the managed catalog.'
+    Assert-True ($unsignedResult.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'New-user install did not configure the Cockpit route.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $unsigned 'auth.json'))) 'New-user install forced API-key sign-in.'
     Write-Host 'Windows desktop Codex installer acceptance passed.'
 } finally { if (Test-Path -LiteralPath $codexHome) { Remove-Item -LiteralPath $codexHome -Recurse -Force } }

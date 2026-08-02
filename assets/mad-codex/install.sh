@@ -28,7 +28,7 @@ umask 077
 auth_kind=apikey
 if [ -f "$auth_path" ]; then
   had_auth=1
-  /usr/bin/plutil -lint "$auth_path" >/dev/null 2>&1 || { printf '%s\n' 'Codex Desktop authentication state is unreadable. No files were changed.' >&2; exit 1; }
+  /usr/bin/plutil -lint -- "$auth_path" >/dev/null 2>&1 || { printf '%s\n' 'Codex Desktop authentication state is unreadable. No files were changed.' >&2; exit 1; }
   existing_mode=$(/usr/bin/plutil -extract auth_mode raw -o - "$auth_path" 2>/dev/null || true)
   existing_access_token=$(/usr/bin/plutil -extract tokens.access_token raw -o - "$auth_path" 2>/dev/null || true)
   existing_refresh_token=$(/usr/bin/plutil -extract tokens.refresh_token raw -o - "$auth_path" 2>/dev/null || true)

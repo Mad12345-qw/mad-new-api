@@ -27,44 +27,26 @@ diff --git a/web/default/src/features/keys/components/data-table-row-actions.tsx
 index 5a75d5f..734d798 100644
 --- a/web/default/src/features/keys/components/data-table-row-actions.tsx
 +++ b/web/default/src/features/keys/components/data-table-row-actions.tsx
-@@ -27,6 +27,7 @@ import {
-   Copy,
-   Link,
-   Loader2,
-+  SquareTerminal,
- } from 'lucide-react'
- import { useCallback, useState } from 'react'
- import { useTranslation } from 'react-i18next'
-@@ -191,6 +192,33 @@ export function DataTableRowActions<TData>({
+@@ -191,6 +191,23 @@ export function DataTableRowActions<TData>({
  
    return (
      <div className='-ml-1.5 flex items-center gap-1'>
-+      <Tooltip>
-+        <TooltipTrigger
-+          render={
-+            <Button
-+              variant='ghost'
-+              size='icon-sm'
-+              disabled={!isEnabled || isRealKeyLoading}
-+              onClick={async () => {
-+                const realKey = await resolveRealKey(apiKey.id)
-+                if (!realKey) return
-+                setResolvedKey(realKey)
-+                setCurrentRow(apiKey)
-+                setOpen('codex-setup')
-+              }}
-+              aria-label={t('Codex Setup')}
-+            />
-+          }
-+        >
-+          {isRealKeyLoading ? (
-+            <Loader2 className='size-4 animate-spin' />
-+          ) : (
-+            <SquareTerminal className='size-4' />
-+          )}
-+        </TooltipTrigger>
-+        <TooltipContent>{t('Codex Setup')}</TooltipContent>
-+      </Tooltip>
++      <Button
++        variant='outline'
++        size='sm'
++        disabled={!isEnabled || isRealKeyLoading}
++        onClick={async () => {
++          const realKey = await resolveRealKey(apiKey.id)
++          if (!realKey) return
++          setResolvedKey(realKey)
++          setCurrentRow(apiKey)
++          setOpen('codex-setup')
++        }}
++        aria-label={t('Codex Setup')}
++        className='h-8 whitespace-nowrap px-2.5 text-xs'
++      >
++        {t('Codex Setup')}
++      </Button>
 +
        <Tooltip>
          <TooltipTrigger
@@ -428,7 +410,7 @@ index 815f297..13b9b3e 100644
      "Generate video from text or upload an image for compatible image-to-video models.": "支持文生视频；上传图片后可测试兼容的图生视频能力。",
 -    "Chat with image and file understanding; enable search for compatible web-enabled models.": "支持对话、图片与文件理解；搜索开关用于兼容的联网模型。"
 +    "Chat with image and file understanding; enable search for compatible web-enabled models.": "支持对话、图片与文件理解；搜索开关用于兼容的联网模型。",
-+    "Codex Setup": "Codex 接入",
++    "Codex Setup": "Codex接入",
 +    "Failed to copy configuration": "配置复制失败",
 +    "Codex configuration copied": "Codex 配置已复制",
 +    "Computer system detected automatically": "已自动识别电脑系统",

@@ -46,13 +46,15 @@ if (!data) throw new Error('Authentication file is unreadable')
 var text = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding))
 var auth = JSON.parse(text)
 var tokens = auth && auth.tokens && typeof auth.tokens === 'object' ? auth.tokens : {}
+var result
 if (auth.auth_mode !== 'apikey' && typeof tokens.access_token === 'string' && tokens.access_token && typeof tokens.refresh_token === 'string' && tokens.refresh_token) {
-  console.log('oauth')
+  result = 'oauth'
 } else if (auth.auth_mode === 'apikey' || (typeof auth.OPENAI_API_KEY === 'string' && auth.OPENAI_API_KEY)) {
-  console.log('apikey')
+  result = 'apikey'
 } else {
-  console.log('unconfigured')
+  result = 'unconfigured'
 }
+result
 JXA
     ) || { printf '%s\n' 'Codex Desktop authentication state is unreadable.' >&2; exit 1; }
   fi

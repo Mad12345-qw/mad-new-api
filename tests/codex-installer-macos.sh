@@ -68,15 +68,25 @@ api_only="$home/api-only"; mkdir -p "$api_only"
 printf '%s' 'model = "gpt-5.6-sol"' > "$api_only/config.toml"
 printf '%s' '{"OPENAI_API_KEY":"sk-existing-api-key","tokens":null,"last_refresh":null}' > "$api_only/auth.json"
 printf '{}' > "$api_only/models_cache.json"
-api_config_hash=$(hash_file "$api_only/config.toml"); api_cache_hash=$(hash_file "$api_only/models_cache.json")
-if run_install "$api_only" 'sk-macos-rejected-key'; then fail 'API-key-only state was accepted.'; fi
-[ "$(hash_file "$api_only/config.toml")" = "$api_config_hash" ] || fail 'Rejected API-key-only config changed.'
-[ "$(hash_file "$api_only/models_cache.json")" = "$api_cache_hash" ] || fail 'Rejected API-key-only cache changed.'
-! find "$api_only" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f | grep -q . || fail 'Rejected API-key-only install created a backup.'
+api_config_hash=$(hash_file "$api_only/config.toml"); api_auth_hash=$(hash_file "$api_only/auth.json")
+run_install "$api_only" 'sk-macos-api-key'
+grep -Fq 'requires_openai_auth = false' "$api_only/config.toml" || fail 'API-key auth gate is wrong.'
+grep -Fq '[model_providers.custom.auth]' "$api_only/config.toml" || fail 'API-key command auth is missing.'
+grep -Fq "printf %s 'sk-macos-api-key'" "$api_only/config.toml" || fail 'API-key command does not contain the MadAPI key.'
+! grep -Fq 'experimental_bearer_token' "$api_only/config.toml" || fail 'API-key config contains conflicting bearer auth.'
+! grep -Eq "^[[:space:]]*(model_catalog_json|\"model_catalog_json\"|'model_catalog_json')[[:space:]]*=" "$api_only/config.toml" || fail 'API-key config contains a static catalog.'
+[ ! -e "$api_only/models_cache.json" ] || fail 'API-key stale cache remains.'
+[ "$(/usr/bin/plutil -extract auth_mode raw -o - "$api_only/auth.json")" = apikey ] || fail 'API-key auth mode is wrong.'
+[ "$(/usr/bin/plutil -extract OPENAI_API_KEY raw -o - "$api_only/auth.json")" = sk-macos-api-key ] || fail 'API-key auth file was not updated.'
+api_config_backup=$(find "$api_only" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
+api_auth_backup=$(find "$api_only" -maxdepth 1 -name 'auth.json.madapi-backup-*' -type f)
+[ "$(hash_file "$api_config_backup")" = "$api_config_hash" ] || fail 'API-key config backup is not exact.'
+[ "$(hash_file "$api_auth_backup")" = "$api_auth_hash" ] || fail 'API-key auth backup is not exact.'
 
 unsigned="$home/unsigned"; mkdir -p "$unsigned"
 printf '%s' 'model = "gpt-5.6-sol"' > "$unsigned/config.toml"
-unsigned_hash=$(hash_file "$unsigned/config.toml")
-if run_install "$unsigned" 'sk-macos-rejected-key'; then fail 'Unsigned state was accepted.'; fi
-[ "$(hash_file "$unsigned/config.toml")" = "$unsigned_hash" ] || fail 'Rejected unsigned config changed.'
+run_install "$unsigned" 'sk-macos-new-key'
+grep -Fq '[model_providers.custom.auth]' "$unsigned/config.toml" || fail 'New API-key install did not configure command auth.'
+[ "$(/usr/bin/plutil -extract auth_mode raw -o - "$unsigned/auth.json")" = apikey ] || fail 'New API-key install did not create API-key auth.'
+[ "$(/usr/bin/plutil -extract OPENAI_API_KEY raw -o - "$unsigned/auth.json")" = sk-macos-new-key ] || fail 'New API-key install wrote the wrong key.'
 printf '%s\n' 'macOS desktop Codex installer acceptance passed.'

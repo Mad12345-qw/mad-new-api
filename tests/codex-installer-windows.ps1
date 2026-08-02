@@ -94,23 +94,34 @@ try {
     Write-Utf8 $apiOnlyConfig 'model = "gpt-5.6-sol"'
     Write-Utf8 (Join-Path $apiOnly 'auth.json') '{"OPENAI_API_KEY":"sk-existing-api-key","tokens":null,"last_refresh":null}'
     Write-Utf8 $apiOnlyCache '{}'
+    $apiOnlyAuth = Join-Path $apiOnly 'auth.json'
     $apiOnlyConfigHash = Hash $apiOnlyConfig
-    $apiOnlyCacheHash = Hash $apiOnlyCache
-    $apiOnlyFailed = $false
-    try { Install $apiOnly 'sk-windows-rejected-key' } catch { $apiOnlyFailed = $true }
-    Assert-True $apiOnlyFailed 'API-key-only state was accepted.'
-    Assert-True ((Hash $apiOnlyConfig) -eq $apiOnlyConfigHash) 'Rejected API-key-only config changed.'
-    Assert-True ((Hash $apiOnlyCache) -eq $apiOnlyCacheHash) 'Rejected API-key-only cache changed.'
-    Assert-True (@(Get-ChildItem -LiteralPath $apiOnly -Filter 'config.toml.madapi-backup-*' -File -ErrorAction SilentlyContinue).Count -eq 0) 'Rejected API-key-only install created a backup.'
+    $apiOnlyAuthHash = Hash $apiOnlyAuth
+    Install $apiOnly 'sk-windows-api-key'
+    $apiResult = [IO.File]::ReadAllText($apiOnlyConfig)
+    Assert-True ($apiResult.Contains('requires_openai_auth = false')) 'API-key auth gate is wrong.'
+    Assert-True ($apiResult.Contains('[model_providers.custom.auth]')) 'API-key command auth is missing.'
+    Assert-True ($apiResult.Contains("[Console]::Out.Write('sk-windows-api-key')")) 'API-key command does not contain the MadAPI key.'
+    Assert-True (-not $apiResult.Contains('experimental_bearer_token')) 'API-key config contains conflicting bearer auth.'
+    Assert-True (-not ($apiResult -match '(?m)^\s*(model_catalog_json|"model_catalog_json"|''model_catalog_json'')\s*=')) 'API-key config contains a static catalog.'
+    Assert-True (-not (Test-Path -LiteralPath $apiOnlyCache)) 'API-key stale cache remains.'
+    $apiAuth = [IO.File]::ReadAllText($apiOnlyAuth) | ConvertFrom-Json
+    Assert-True ($apiAuth.auth_mode -eq 'apikey') 'API-key auth mode is wrong.'
+    Assert-True ($apiAuth.OPENAI_API_KEY -eq 'sk-windows-api-key') 'API-key auth file was not updated.'
+    $apiConfigBackup = @(Get-ChildItem -LiteralPath $apiOnly -Filter 'config.toml.madapi-backup-*' -File)[0]
+    $apiAuthBackup = @(Get-ChildItem -LiteralPath $apiOnly -Filter 'auth.json.madapi-backup-*' -File)[0]
+    Assert-True ((Hash $apiConfigBackup.FullName) -eq $apiOnlyConfigHash) 'API-key config backup is not exact.'
+    Assert-True ((Hash $apiAuthBackup.FullName) -eq $apiOnlyAuthHash) 'API-key auth backup is not exact.'
 
     $unsigned = Join-Path $codexHome 'unsigned'
     New-Item -ItemType Directory -Path $unsigned -Force | Out-Null
     $unsignedConfig = Join-Path $unsigned 'config.toml'
     Write-Utf8 $unsignedConfig 'model = "gpt-5.6-sol"'
-    $unsignedHash = Hash $unsignedConfig
-    $unsignedFailed = $false
-    try { Install $unsigned 'sk-windows-rejected-key' } catch { $unsignedFailed = $true }
-    Assert-True $unsignedFailed 'Unsigned state was accepted.'
-    Assert-True ((Hash $unsignedConfig) -eq $unsignedHash) 'Rejected unsigned config changed.'
+    Install $unsigned 'sk-windows-new-key'
+    $unsignedResult = [IO.File]::ReadAllText($unsignedConfig)
+    Assert-True ($unsignedResult.Contains('[model_providers.custom.auth]')) 'New API-key install did not configure command auth.'
+    $unsignedAuth = [IO.File]::ReadAllText((Join-Path $unsigned 'auth.json')) | ConvertFrom-Json
+    Assert-True ($unsignedAuth.auth_mode -eq 'apikey') 'New API-key install did not create API-key auth.'
+    Assert-True ($unsignedAuth.OPENAI_API_KEY -eq 'sk-windows-new-key') 'New API-key install wrote the wrong key.'
     Write-Host 'Windows desktop Codex installer acceptance passed.'
 } finally { if (Test-Path -LiteralPath $codexHome) { Remove-Item -LiteralPath $codexHome -Recurse -Force } }

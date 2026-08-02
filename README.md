@@ -34,7 +34,7 @@ Automatic channel disabling is protected by two independent switches (global and
 
 The detector stores upstream keys encrypted at rest, runs a low-output protocol and contract suite, requires at least 80% probe coverage, and only reports an alternate channel when independent evidence reaches the channel-specific confidence threshold. Active model-output probes are disabled per upstream until an administrator explicitly enables them. Scheduled checks have a separate master switch and remain disabled by default until the operator enables them. Frontier model names are treated as unverified aliases unless stronger transport, contract, tokenizer, or calibrated reference evidence is present.
 
-The detector accepts the existing same-origin New API session only after an internal `/api/user/self` check confirms role `10` or `100`. A separate detector token remains available as an emergency fallback; neither path exposes credentials to the browser application state.
+The detector accepts the existing same-origin New API session only after an internal `/api/user/self` check confirms role `10` or `100`. The integrated browser UI enters automatically and does not present a second token prompt. A separate detector token remains available only as an emergency API fallback; neither path exposes credentials to browser application state.
 
 Detector rules are data-driven in `server/model-detector/rules/default.json`. Each report preserves the rule version, redacted response shape, model inventory, SSE sequence, error contract, token fields, evidence strength, and raw-response SHA-256 without storing raw API keys.
 

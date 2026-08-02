@@ -35,6 +35,13 @@ class AppTests(unittest.TestCase):
         self.assertIn("rule_version", response.json())
         self.assertIn("scheduler_enabled", response.json())
 
+    def test_integrated_ui_uses_new_api_admin_session_without_token_prompt(self) -> None:
+        html = self.client.get("/detector/").text
+        self.assertIn("localStorage.getItem('user')", html)
+        self.assertIn("currentNewApiUserId", html)
+        self.assertNotIn('id="loginToken"', html)
+        self.assertNotIn('id="loginForm"', html)
+
     def test_auth_and_secret_redaction(self) -> None:
         self.assertEqual(self.client.get("/detector/api/state").status_code, 401)
         self.assertEqual(self.client.post("/detector/api/login", json={"token": "wrong-token-value"}).status_code, 401)

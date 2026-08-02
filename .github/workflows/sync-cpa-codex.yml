@@ -1,0 +1,123 @@
+name: Sync CPA Codex Executor
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild the current upstream commit
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # 04:00 Asia/Shanghai. GitHub schedules are expressed in UTC.
+    - cron: '0 20 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mad-new-api-build
+  cancel-in-progress: false
+
+jobs:
+  sync-cpa-codex:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out MadAPI build configuration
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve upstream CPA commit
+        id: upstream
+        run: |
+          candidate=$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git refs/heads/main | awk '{print $1}')
+          pinned=$(tr -d '[:space:]' < guards/cpa-upstream-commit.txt)
+          test ${#candidate} -eq 40
+          test ${#pinned} -eq 40
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          if [ "$candidate" != "$pinned" ] || [ "${{ inputs.force || false }}" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out upstream CPA candidate
+        if: steps.upstream.outputs.changed == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: router-for-me/CLIProxyAPI
+          ref: ${{ steps.upstream.outputs.candidate }}
+          path: cpa-source
+          fetch-depth: 1
+
+      - name: Set up Go
+        if: steps.upstream.outputs.changed == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: cpa-source/go.mod
+          cache-dependency-path: cpa-source/go.sum
+
+      - name: Apply and test the private MadAPI dispatcher
+        if: steps.upstream.outputs.changed == 'true'
+        working-directory: cpa-source
+        run: |
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
+          gofmt -w internal/api/madapi_native_codex.go internal/api/madapi_native_codex_test.go internal/api/server_routes.go
+          go test ./internal/api ./internal/runtime/executor
+
+      - name: Build CPA Codex image
+        if: steps.upstream.outputs.changed == 'true'
+        run: docker build --pull --build-arg CPA_PATCHED=1 --file server/cpa-codex/Dockerfile --tag mad-cpa-codex:latest .
+
+      - name: Export CPA-only release assets
+        if: steps.upstream.outputs.changed == 'true'
+        run: |
+          docker save mad-cpa-codex:latest | gzip -1 > mad-cpa-codex.tar.gz
+          sha256sum mad-cpa-codex.tar.gz > mad-cpa-codex.tar.gz.sha256
+          cp server/cpa-codex/sidecar-autodeploy.sh cpa-codex-autodeploy.sh
+          cp server/cpa-codex/patch_nginx.py patch-cpa-codex-nginx.py
+          cp server/cpa-codex/compose_reconcile.py compose-cpa-codex.py
+          printf '%s\n' '${{ steps.upstream.outputs.candidate }}' > cpa-upstream-commit.txt
+          sha256sum cpa-codex-autodeploy.sh > cpa-codex-autodeploy.sh.sha256
+          sha256sum patch-cpa-codex-nginx.py > patch-cpa-codex-nginx.py.sha256
+          sha256sum compose-cpa-codex.py > compose-cpa-codex.py.sha256
+          sha256sum cpa-upstream-commit.txt > cpa-upstream-commit.txt.sha256
+
+      - name: Publish only CPA Codex assets
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload build-latest \
+            mad-cpa-codex.tar.gz \
+            mad-cpa-codex.tar.gz.sha256 \
+            cpa-codex-autodeploy.sh \
+            cpa-codex-autodeploy.sh.sha256 \
+            patch-cpa-codex-nginx.py \
+            patch-cpa-codex-nginx.py.sha256 \
+            compose-cpa-codex.py \
+            compose-cpa-codex.py.sha256 \
+            cpa-upstream-commit.txt \
+            cpa-upstream-commit.txt.sha256 \
+            --clobber
+
+      - name: Record the verified CPA commit
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          CANDIDATE: ${{ steps.upstream.outputs.candidate }}
+        run: |
+          printf '%s\n' "$CANDIDATE" > guards/cpa-upstream-commit.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add guards/cpa-upstream-commit.txt
+          git commit -m "chore: sync CPA Codex executor to ${CANDIDATE:0:12}"
+          git push origin HEAD:main
+
+      - name: Report no update
+        if: steps.upstream.outputs.changed != 'true'
+        run: echo 'CPA Codex executor is already aligned with upstream main.'

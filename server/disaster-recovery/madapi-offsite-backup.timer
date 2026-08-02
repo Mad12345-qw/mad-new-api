@@ -1,0 +1,12 @@
+[Unit]
+Description=Publish encrypted MadAPI recovery snapshots every six hours
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:30:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=3min
+Unit=madapi-offsite-backup.service
+
+[Install]
+WantedBy=timers.target
+

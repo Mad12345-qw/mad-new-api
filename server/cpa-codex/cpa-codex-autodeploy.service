@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy the verified CPA Codex executor release
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n /run/lock/new-api-maintenance.lock /usr/local/sbin/cpa-codex-autodeploy.sh
+TimeoutStartSec=20min
+

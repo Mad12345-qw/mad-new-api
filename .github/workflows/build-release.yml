@@ -44,6 +44,7 @@ jobs:
         shell: bash
         run: |
           /bin/sh tests/codex-installer-macos.sh assets/mad-codex/install.sh
+          /bin/sh tests/codex-diagnostic-macos.sh assets/mad-codex/diagnose-macos.sh
 
   build:
     needs: codex-installer-acceptance

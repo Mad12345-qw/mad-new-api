@@ -40,6 +40,7 @@ if ([string]::IsNullOrWhiteSpace($apiKey) -or $apiKey -notmatch '^sk-[A-Za-z0-9.
 $userHome = [Environment]::GetFolderPath('UserProfile')
 $codexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) { Join-Path $userHome '.codex' } else { [string]$env:CODEX_HOME }
 $configPath = Join-Path $codexHome 'config.toml'
+$authPath = Join-Path $codexHome 'auth.json'
 $modelsCachePath = Join-Path $codexHome 'models_cache.json'
 $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
@@ -47,9 +48,24 @@ $backupPath = $null
 $hadConfig = Test-Path -LiteralPath $configPath
 $configInstalled = $false
 
-New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+if (-not (Test-Path -LiteralPath $authPath)) {
+    throw 'Sign in with ChatGPT in Codex Desktop before running this installer. No files were changed.'
+}
+try {
+    $oauth = [IO.File]::ReadAllText($authPath, $utf8Strict) | ConvertFrom-Json
+} catch {
+    throw 'Codex Desktop OAuth state is unreadable. Sign in with ChatGPT again before running this installer. No files were changed.'
+}
+$oauthMode = [string]$oauth.auth_mode
+$oauthAccessToken = if ($null -eq $oauth.tokens) { '' } else { [string]$oauth.tokens.access_token }
+$oauthRefreshToken = if ($null -eq $oauth.tokens) { '' } else { [string]$oauth.tokens.refresh_token }
+if ($oauthMode -ne 'chatgpt' -or [string]::IsNullOrWhiteSpace($oauthAccessToken) -or [string]::IsNullOrWhiteSpace($oauthRefreshToken)) {
+    throw 'This installer supports ChatGPT OAuth sessions only. Sign in with ChatGPT in Codex Desktop first. No files were changed.'
+}
+
+New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
 $sourceLines = @()
 if ($hadConfig) { $sourceLines = @([IO.File]::ReadAllLines($configPath, $utf8Strict)) }
 
@@ -137,4 +153,5 @@ try {
 
 Write-Host "MadAPI Codex desktop configuration installed: $configPath"
 if ($null -ne $backupPath) { Write-Host "Backup created: $backupPath" }
+Write-Host 'Existing ChatGPT OAuth session preserved.'
 Write-Host 'Restart Codex Desktop to refresh the model list.'

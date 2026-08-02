@@ -41,7 +41,7 @@ index 00000000..bfe355b3
 +	{UpstreamModel: "gpt-5.6-luna", ClientModel: "gpt-5.6-luna"},
 +	{UpstreamModel: "grok-4.5", ClientModel: "gpt-5.4-mini"},
 +	{UpstreamModel: "kimi-k3", ClientModel: "gpt-5.3-codex"},
-+	{UpstreamModel: "deepseek-v4-flash", ClientModel: "gpt-5.3-codex-spark"},
++	{UpstreamModel: "deepseek-v4-flash", ClientModel: "gpt-5.2"},
 +}
 +
 +func isCodexCockpitModelShell(model string) bool {
@@ -260,7 +260,7 @@ index 491a798..2c7f5cc 100644
 +	require.Equal(t, "gpt-5.6-luna", clientModelByUpstream["gpt-5.6-luna"])
 +	require.Equal(t, "gpt-5.4-mini", clientModelByUpstream["grok-4.5"])
 +	require.Equal(t, "gpt-5.3-codex", clientModelByUpstream["kimi-k3"])
-+	require.Equal(t, "gpt-5.3-codex-spark", clientModelByUpstream["deepseek-v4-flash"])
++	require.Equal(t, "gpt-5.2", clientModelByUpstream["deepseek-v4-flash"])
 +	_, containsOverflow := clientModelByUpstream["deepseek-v4-pro"]
 +	require.False(t, containsOverflow)
 +}

@@ -35,9 +35,25 @@ fi
 mkdir -p "$codex_home"
 temp_path=$codex_home/madapi-cockpit-model-catalog.$$.tmp
 trap 'rm -f "$temp_path"' EXIT
-curl -fsS -H "Authorization: Bearer $key" 'https://mad.myddns.me/codex/cockpit/v1/models' -o "$temp_path"
-/usr/bin/plutil -lint "$temp_path" >/dev/null
-/usr/bin/plutil -extract models.0.slug raw -o - "$temp_path" >/dev/null 2>&1 || { printf '%s\n' 'MadAPI returned an empty Codex model catalog' >&2; exit 1; }
+if [ -n "${MADAPI_REFRESH_RESPONSE_FILE:-}" ]; then
+  cp "$MADAPI_REFRESH_RESPONSE_FILE" "$temp_path"
+else
+  curl -fsS -H "Authorization: Bearer $key" 'https://mad.myddns.me/codex/cockpit/v1/models' -o "$temp_path"
+fi
+if ! CATALOG_PATH="$temp_path" /usr/bin/osascript -l JavaScript <<'JXA' >/dev/null 2>&1
+ObjC.import('Foundation')
+var path = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('CATALOG_PATH'))
+var data = $.NSData.dataWithContentsOfFile(path)
+if (!data) throw new Error('Catalog file is unreadable')
+var text = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding))
+var catalog = JSON.parse(text)
+if (!catalog || !Array.isArray(catalog.models) || catalog.models.length < 1) throw new Error('Catalog is empty')
+if (typeof catalog.models[0].slug !== 'string' || catalog.models[0].slug.length < 1) throw new Error('Catalog model slug is missing')
+JXA
+then
+  printf '%s\n' 'MadAPI returned an invalid or empty Codex model catalog' >&2
+  exit 1
+fi
 mv -f "$temp_path" "$catalog_path"
 trap - EXIT
 printf '%s\n' 'MadAPI Codex model catalog refreshed.'

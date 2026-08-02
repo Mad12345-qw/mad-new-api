@@ -102,4 +102,21 @@ grep -Fq 'experimental_bearer_token = "sk-macos-new-key"' "$unsigned/config.toml
 grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$unsigned/config.toml" || fail 'New-user install did not configure the managed catalog.'
 grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$unsigned/config.toml" || fail 'New-user install did not configure the Cockpit route.'
 [ ! -e "$unsigned/auth.json" ] || fail 'New-user install forced API-key sign-in.'
+
+refresh_home="$home/refresh"; mkdir -p "$refresh_home"
+cat > "$refresh_home/config.toml" <<'EOF'
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://mad.myddns.me/codex/cockpit/v1"
+experimental_bearer_token = "sk-macos-refresh-key"
+EOF
+valid_catalog="$home/valid-catalog.json"
+printf '%s' '{"models":[{"slug":"gemini-3.6-flash","display_name":"gemini-3.6-flash"}]}' > "$valid_catalog"
+CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$valid_catalog" /bin/sh "$refresh_script_path"
+grep -Fq '"slug":"gemini-3.6-flash"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'Structured catalog refresh did not install the valid JSON fixture.'
+invalid_catalog="$home/invalid-catalog.json"
+printf '%s' '{not-json}' > "$invalid_catalog"
+if CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$invalid_catalog" /bin/sh "$refresh_script_path" >/dev/null 2>&1; then
+  fail 'Structured catalog refresh accepted invalid JSON.'
+fi
 printf '%s\n' 'macOS desktop Codex installer acceptance passed.'

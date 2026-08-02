@@ -3,12 +3,13 @@ set -eu
 
 installer_path=${1:?installer path is required}
 installer_path=$(CDPATH= cd -- "$(dirname -- "$installer_path")" && pwd)/$(basename -- "$installer_path")
+refresh_script_path=$(dirname -- "$installer_path")/refresh-model-catalog.sh
 temporary_root=${RUNNER_TEMP:-/tmp}
 home="$temporary_root/mad-codex-desktop-$$"
 fail() { printf 'Assertion failed: %s\n' "$1" >&2; exit 1; }
 hash_file() { shasum -a 256 "$1" | awk '{print $1}'; }
 write_oauth() { printf '%s' '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"},"last_refresh":"2026-08-02T00:00:00Z"}' > "$1"; }
-run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 /bin/sh "$installer_path"; }
+run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 MADAPI_INSTALL_TEST_MODE=1 MADAPI_REFRESH_SCRIPT_SOURCE="$refresh_script_path" /bin/sh "$installer_path"; }
 
 ! grep -Fq 'CODEX_CLI_PATH' "$installer_path" || fail 'CLI probing remains.'
 ! grep -Fq 'madapi.key' "$installer_path" || fail 'Command authentication remains.'
@@ -42,6 +43,7 @@ grep -Fq 'model = "deepseek-v4-flash"' "$config" || fail 'Default model changed.
 grep -Fq 'name = "Existing Provider"' "$config" || fail 'Provider name changed.'
 grep -Fq 'experimental_bearer_token = "sk-macos-first-key"' "$config" || fail 'Bearer token missing.'
 grep -Fq 'requires_openai_auth = true' "$config" || fail 'Desktop auth setting missing.'
+grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$config" || fail 'OAuth route changed.'
 grep -Fq 'disable_response_storage = true' "$config" || fail 'Unrelated setting changed.'
 ! grep -Eq "^[[:space:]]*(model_catalog_json|\"model_catalog_json\"|'model_catalog_json')[[:space:]]*=" "$config" || fail 'Static catalog remains.'
 ! grep -Fq '[model_providers.custom.auth]' "$config" || fail 'Command auth was added.'
@@ -61,6 +63,7 @@ fresh="$home/fresh"; mkdir -p "$fresh"; write_oauth "$fresh/auth.json"; run_inst
 grep -Fq 'model_provider = "custom"' "$fresh/config.toml" || fail 'Fresh identity is wrong.'
 grep -Fq 'model = "gpt-5.6-sol"' "$fresh/config.toml" || fail 'Fresh default missing.'
 grep -Fq 'requires_openai_auth = true' "$fresh/config.toml" || fail 'Fresh OAuth setting missing.'
+grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$fresh/config.toml" || fail 'Fresh OAuth route changed.'
 grep -Fq 'experimental_bearer_token = "sk-macos-fresh-key"' "$fresh/config.toml" || fail 'Fresh bearer token missing.'
 [ ! -e "$fresh/madapi.key" ] || fail 'Fresh install created key file.'
 
@@ -74,7 +77,11 @@ grep -Fq 'requires_openai_auth = false' "$api_only/config.toml" || fail 'API-key
 grep -Fq '[model_providers.custom.auth]' "$api_only/config.toml" || fail 'API-key command auth is missing.'
 grep -Fq "printf %s 'sk-macos-api-key'" "$api_only/config.toml" || fail 'API-key command does not contain the MadAPI key.'
 ! grep -Fq 'experimental_bearer_token' "$api_only/config.toml" || fail 'API-key config contains conflicting bearer auth.'
-! grep -Eq "^[[:space:]]*(model_catalog_json|\"model_catalog_json\"|'model_catalog_json')[[:space:]]*=" "$api_only/config.toml" || fail 'API-key config contains a static catalog.'
+grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$api_only/config.toml" || fail 'API-key managed catalog is missing.'
+grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$api_only/config.toml" || fail 'API-key Cockpit route is missing.'
+! grep -Fq 'cc-switch-model-catalog.json' "$api_only/config.toml" || fail 'Conflicting third-party catalog remains.'
+[ -f "$api_only/madapi-refresh-model-catalog.sh" ] || fail 'API-key refresh script is missing.'
+[ -f "$api_only/madapi-cockpit-model-catalog.json" ] || fail 'API-key catalog file is missing.'
 [ ! -e "$api_only/models_cache.json" ] || fail 'API-key stale cache remains.'
 [ "$(/usr/bin/plutil -extract auth_mode raw -o - "$api_only/auth.json")" = apikey ] || fail 'API-key auth mode is wrong.'
 [ "$(/usr/bin/plutil -extract OPENAI_API_KEY raw -o - "$api_only/auth.json")" = sk-macos-api-key ] || fail 'API-key auth file was not updated.'
@@ -87,6 +94,8 @@ unsigned="$home/unsigned"; mkdir -p "$unsigned"
 printf '%s' 'model = "gpt-5.6-sol"' > "$unsigned/config.toml"
 run_install "$unsigned" 'sk-macos-new-key'
 grep -Fq '[model_providers.custom.auth]' "$unsigned/config.toml" || fail 'New API-key install did not configure command auth.'
+grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$unsigned/config.toml" || fail 'New API-key install did not configure the managed catalog.'
+grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$unsigned/config.toml" || fail 'New API-key install did not configure the Cockpit route.'
 [ "$(/usr/bin/plutil -extract auth_mode raw -o - "$unsigned/auth.json")" = apikey ] || fail 'New API-key install did not create API-key auth.'
 [ "$(/usr/bin/plutil -extract OPENAI_API_KEY raw -o - "$unsigned/auth.json")" = sk-macos-new-key ] || fail 'New API-key install wrote the wrong key.'
 printf '%s\n' 'macOS desktop Codex installer acceptance passed.'

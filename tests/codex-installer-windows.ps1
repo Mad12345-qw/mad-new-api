@@ -10,9 +10,16 @@ function Write-OAuth([string]$Path) {
     Write-Utf8 $Path '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"},"last_refresh":"2026-08-02T00:00:00Z"}'
 }
 function Install([string]$CodexHome, [string]$Key) {
-    $oldHome, $oldKey = $env:CODEX_HOME, $env:MADAPI_KEY
-    try { $env:CODEX_HOME = $CodexHome; $env:MADAPI_KEY = $Key; & $InstallerPath }
-    finally { $env:CODEX_HOME = $oldHome; $env:MADAPI_KEY = $oldKey }
+    $oldHome, $oldKey, $oldTestMode, $oldRefreshSource = $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE
+    try {
+        $env:CODEX_HOME = $CodexHome
+        $env:MADAPI_KEY = $Key
+        $env:MADAPI_INSTALL_TEST_MODE = '1'
+        $env:MADAPI_REFRESH_SCRIPT_SOURCE = Join-Path (Split-Path -Parent $InstallerPath) 'refresh-model-catalog.ps1'
+        & $InstallerPath
+    } finally {
+        $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE = $oldHome, $oldKey, $oldTestMode, $oldRefreshSource
+    }
 }
 
 $installer = [IO.File]::ReadAllText($InstallerPath)
@@ -58,6 +65,7 @@ try {
     Assert-True ($result.Contains('name = "NewAPI"')) 'Provider name changed.'
     Assert-True ($result.Contains('experimental_bearer_token = "sk-windows-first-key"')) 'Bearer token missing.'
     Assert-True ($result.Contains('requires_openai_auth = true')) 'Desktop OAuth setting missing.'
+    Assert-True ($result.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'OAuth route changed.'
     Assert-True (-not $result.Contains('[model_providers.newapi.auth]')) 'Command auth remains.'
     Assert-True (-not $result.Contains('sk-stale-bearer')) 'Stale bearer remains.'
     Assert-True (-not $result.Contains('Write-Output stale')) 'Stale command auth remains.'
@@ -83,6 +91,7 @@ try {
     Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh identity is wrong.'
     Assert-True ($freshConfig.Contains('model = "gpt-5.6-sol"')) 'Fresh default missing.'
     Assert-True ($freshConfig.Contains('requires_openai_auth = true')) 'Fresh OAuth setting missing.'
+    Assert-True ($freshConfig.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'Fresh OAuth route changed.'
     Assert-True ($freshConfig.Contains('experimental_bearer_token = "sk-windows-fresh-key"')) 'Fresh bearer token missing.'
     Assert-True (-not $freshConfig.Contains('[model_providers.custom.auth]')) 'Fresh command auth remains.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fresh 'madapi.key'))) 'Fresh install created key file.'
@@ -103,7 +112,11 @@ try {
     Assert-True ($apiResult.Contains('[model_providers.custom.auth]')) 'API-key command auth is missing.'
     Assert-True ($apiResult.Contains("[Console]::Out.Write('sk-windows-api-key')")) 'API-key command does not contain the MadAPI key.'
     Assert-True (-not $apiResult.Contains('experimental_bearer_token')) 'API-key config contains conflicting bearer auth.'
-    Assert-True (-not ($apiResult -match '(?m)^\s*(model_catalog_json|"model_catalog_json"|''model_catalog_json'')\s*=')) 'API-key config contains a static catalog.'
+    Assert-True ($apiResult.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'API-key managed catalog is missing.'
+    Assert-True ($apiResult.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'API-key Cockpit route is missing.'
+    Assert-True (-not $apiResult.Contains('cc-switch-model-catalog.json')) 'Conflicting third-party catalog remains.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $apiOnly 'madapi-refresh-model-catalog.ps1')) 'API-key refresh script is missing.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $apiOnly 'madapi-cockpit-model-catalog.json')) 'API-key catalog file is missing.'
     Assert-True (-not (Test-Path -LiteralPath $apiOnlyCache)) 'API-key stale cache remains.'
     $apiAuth = [IO.File]::ReadAllText($apiOnlyAuth) | ConvertFrom-Json
     Assert-True ($apiAuth.auth_mode -eq 'apikey') 'API-key auth mode is wrong.'
@@ -120,6 +133,8 @@ try {
     Install $unsigned 'sk-windows-new-key'
     $unsignedResult = [IO.File]::ReadAllText($unsignedConfig)
     Assert-True ($unsignedResult.Contains('[model_providers.custom.auth]')) 'New API-key install did not configure command auth.'
+    Assert-True ($unsignedResult.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'New API-key install did not configure the managed catalog.'
+    Assert-True ($unsignedResult.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'New API-key install did not configure the Cockpit route.'
     $unsignedAuth = [IO.File]::ReadAllText((Join-Path $unsigned 'auth.json')) | ConvertFrom-Json
     Assert-True ($unsignedAuth.auth_mode -eq 'apikey') 'New API-key install did not create API-key auth.'
     Assert-True ($unsignedAuth.OPENAI_API_KEY -eq 'sk-windows-new-key') 'New API-key install wrote the wrong key.'

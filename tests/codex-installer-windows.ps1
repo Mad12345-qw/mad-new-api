@@ -26,6 +26,7 @@ $installer = [IO.File]::ReadAllText($InstallerPath)
 Assert-True (-not $installer.Contains('CODEX_CLI_PATH')) 'CLI probing remains.'
 Assert-True (-not $installer.Contains('madapi.key')) 'External key-file authentication remains.'
 Assert-True (-not $installer.Contains('Get-Command')) 'CLI discovery remains.'
+Assert-True ($installer -match '(?m)^\$tempRefreshPath\s*=.*\.ps1') 'Temporary refresh script does not use a PowerShell-compatible extension.'
 
 $temporaryRoot = if ([string]::IsNullOrWhiteSpace([string]$env:RUNNER_TEMP)) { [IO.Path]::GetTempPath() } else { [string]$env:RUNNER_TEMP }
 $codexHome = Join-Path $temporaryRoot ('mad-codex-desktop-' + [guid]::NewGuid().ToString('N'))

@@ -143,8 +143,6 @@ if ($providerId -notmatch '^[A-Za-z0-9_-]+$') { throw 'The existing model provid
 $providerDisplayName = Get-ProviderDisplayName $providerSourceLines $providerId
 if ([string]::IsNullOrWhiteSpace($providerDisplayName)) { $providerDisplayName = $providerId }
 $targetProviderSection = 'model_providers.' + $providerId
-$authCommand = "[Console]::Out.Write('$apiKey')"
-
 $keptLines = New-Object 'System.Collections.Generic.List[string]'
 $currentSection = ''
 $skipSection = $false
@@ -178,23 +176,13 @@ foreach ($line in $keptLines) { $configLines.Add($line) }
 $configLines.Add('')
 $configLines.Add('[' + $targetProviderSection + ']')
 $configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
-$configLines.Add('base_url = "https://mad.myddns.me/codex/cockpit/v1"')
+$configLines.Add('base_url = "' + $(if ($authKind -eq 'apikey') { 'https://mad.myddns.me/codex/cockpit/v1' } else { 'https://mad.myddns.me/codex/v1' }) + '"')
 $configLines.Add('wire_api = "responses"')
 $configLines.Add('requires_openai_auth = ' + $(if ($authKind -eq 'apikey') { 'false' } else { 'true' }))
-if ($authKind -ne 'apikey') {
-    $configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
-}
+$configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
 $configLines.Add('stream_idle_timeout_ms = 360000')
 $configLines.Add('request_max_retries = 3')
 $configLines.Add('context_window_override = 1048576')
-if ($authKind -eq 'apikey') {
-    $configLines.Add('')
-    $configLines.Add('[' + $targetProviderSection + '.auth]')
-    $configLines.Add('command = "powershell.exe"')
-    $configLines.Add('args = ["-NoProfile", "-NonInteractive", "-Command", ' + (ConvertTo-TomlBasicString $authCommand) + ']')
-    $configLines.Add('timeout_ms = 5000')
-    $configLines.Add('refresh_interval_ms = 300000')
-}
 
 try {
     [IO.File]::WriteAllText($tempConfigPath, (($configLines -join [Environment]::NewLine).Trim() + [Environment]::NewLine), $utf8NoBom)
@@ -220,7 +208,13 @@ try {
         New-Item -ItemType Directory -Path $stagingHome -Force | Out-Null
         try {
             [IO.File]::Copy($tempConfigPath, (Join-Path $stagingHome 'config.toml'), $true)
-            & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tempRefreshPath -CodexHome $stagingHome
+            $oldAuthKindOverride = [string]$env:MADAPI_CODEX_AUTH_KIND
+            try {
+                $env:MADAPI_CODEX_AUTH_KIND = $authKind
+                & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tempRefreshPath -CodexHome $stagingHome
+            } finally {
+                $env:MADAPI_CODEX_AUTH_KIND = $oldAuthKindOverride
+            }
             if ($LASTEXITCODE -ne 0) { throw 'Unable to download the initial MadAPI model catalog.' }
             Move-Item -LiteralPath (Join-Path $stagingHome 'madapi-cockpit-model-catalog.json') -Destination $tempCatalogPath -Force
         } finally {

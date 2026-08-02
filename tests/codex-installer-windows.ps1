@@ -66,7 +66,7 @@ try {
     Assert-True ($result.Contains('name = "NewAPI"')) 'Provider name changed.'
     Assert-True ($result.Contains('experimental_bearer_token = "sk-windows-first-key"')) 'Bearer token missing.'
     Assert-True ($result.Contains('requires_openai_auth = true')) 'Desktop OAuth setting missing.'
-    Assert-True ($result.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'OAuth Cockpit route is missing.'
+    Assert-True ($result.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'OAuth native route is missing.'
     Assert-True (-not $result.Contains('[model_providers.newapi.auth]')) 'Command auth remains.'
     Assert-True (-not $result.Contains('sk-stale-bearer')) 'Stale bearer remains.'
     Assert-True (-not $result.Contains('Write-Output stale')) 'Stale command auth remains.'
@@ -95,7 +95,7 @@ try {
     Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh identity is wrong.'
     Assert-True ($freshConfig.Contains('model = "gpt-5.6-sol"')) 'Fresh default missing.'
     Assert-True ($freshConfig.Contains('requires_openai_auth = true')) 'Fresh OAuth setting missing.'
-    Assert-True ($freshConfig.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'Fresh OAuth Cockpit route is missing.'
+    Assert-True ($freshConfig.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'Fresh OAuth native route is missing.'
     Assert-True ($freshConfig.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'Fresh OAuth managed catalog is missing.'
     Assert-True ($freshConfig.Contains('experimental_bearer_token = "sk-windows-fresh-key"')) 'Fresh bearer token missing.'
     Assert-True (-not $freshConfig.Contains('[model_providers.custom.auth]')) 'Fresh command auth remains.'
@@ -114,9 +114,8 @@ try {
     Install $apiOnly 'sk-windows-api-key'
     $apiResult = [IO.File]::ReadAllText($apiOnlyConfig)
     Assert-True ($apiResult.Contains('requires_openai_auth = false')) 'API-key auth gate is wrong.'
-    Assert-True ($apiResult.Contains('[model_providers.custom.auth]')) 'API-key command auth is missing.'
-    Assert-True ($apiResult.Contains("[Console]::Out.Write('sk-windows-api-key')")) 'API-key command does not contain the MadAPI key.'
-    Assert-True (-not $apiResult.Contains('experimental_bearer_token')) 'API-key config contains conflicting bearer auth.'
+    Assert-True (-not $apiResult.Contains('[model_providers.custom.auth]')) 'API-key command auth remains.'
+    Assert-True ($apiResult.Contains('experimental_bearer_token = "sk-windows-api-key"')) 'API-key bearer token is missing.'
     Assert-True ($apiResult.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'API-key managed catalog is missing.'
     Assert-True ($apiResult.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'API-key Cockpit route is missing.'
     Assert-True (-not $apiResult.Contains('cc-switch-model-catalog.json')) 'Conflicting third-party catalog remains.'
@@ -140,7 +139,38 @@ try {
     Assert-True ($unsignedResult.Contains('requires_openai_auth = true')) 'New-user install did not preserve the Codex sign-in chooser.'
     Assert-True ($unsignedResult.Contains('experimental_bearer_token = "sk-windows-new-key"')) 'New-user MadAPI bearer token is missing.'
     Assert-True ($unsignedResult.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'New-user install did not configure the managed catalog.'
-    Assert-True ($unsignedResult.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'New-user install did not configure the Cockpit route.'
+    Assert-True ($unsignedResult.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'New-user install did not configure the OAuth-native route.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $unsigned 'auth.json'))) 'New-user install forced API-key sign-in.'
+
+    $refreshHome = Join-Path $codexHome 'refresh-auth-switch'
+    New-Item -ItemType Directory -Path $refreshHome -Force | Out-Null
+    $refreshConfig = Join-Path $refreshHome 'config.toml'
+    $refreshAuth = Join-Path $refreshHome 'auth.json'
+    $refreshFixture = Join-Path $refreshHome 'fixture.json'
+    Write-Utf8 $refreshConfig @'
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://mad.myddns.me/codex/cockpit/v1"
+requires_openai_auth = false
+experimental_bearer_token = "sk-refresh-key"
+'@
+    Write-Utf8 $refreshFixture '{"models":[{"slug":"gpt-5.6-sol","display_name":"gpt-5.6-sol"}]}'
+    Write-OAuth $refreshAuth
+    $oldHome, $oldFixture = $env:CODEX_HOME, $env:MADAPI_REFRESH_RESPONSE_FILE
+    try {
+        $env:CODEX_HOME = $refreshHome
+        $env:MADAPI_REFRESH_RESPONSE_FILE = $refreshFixture
+        & (Join-Path (Split-Path -Parent $InstallerPath) 'refresh-model-catalog.ps1')
+        $oauthRefreshConfig = [IO.File]::ReadAllText($refreshConfig)
+        Assert-True ($oauthRefreshConfig.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'OAuth refresh did not select the native route.'
+        Assert-True ($oauthRefreshConfig.Contains('requires_openai_auth = true')) 'OAuth refresh did not enable the auth gate.'
+        Write-Utf8 $refreshAuth '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-local","tokens":null}'
+        & (Join-Path (Split-Path -Parent $InstallerPath) 'refresh-model-catalog.ps1')
+        $apiRefreshConfig = [IO.File]::ReadAllText($refreshConfig)
+        Assert-True ($apiRefreshConfig.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'API refresh did not select the mapped route.'
+        Assert-True ($apiRefreshConfig.Contains('requires_openai_auth = false')) 'API refresh did not disable the OAuth gate.'
+    } finally {
+        $env:CODEX_HOME, $env:MADAPI_REFRESH_RESPONSE_FILE = $oldHome, $oldFixture
+    }
     Write-Host 'Windows desktop Codex installer acceptance passed.'
 } finally { if (Test-Path -LiteralPath $codexHome) { Remove-Item -LiteralPath $codexHome -Recurse -Force } }

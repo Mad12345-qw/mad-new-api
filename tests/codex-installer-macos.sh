@@ -43,7 +43,7 @@ grep -Fq 'model = "deepseek-v4-flash"' "$config" || fail 'Default model changed.
 grep -Fq 'name = "Existing Provider"' "$config" || fail 'Provider name changed.'
 grep -Fq 'experimental_bearer_token = "sk-macos-first-key"' "$config" || fail 'Bearer token missing.'
 grep -Fq 'requires_openai_auth = true' "$config" || fail 'Desktop auth setting missing.'
-grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$config" || fail 'OAuth Cockpit route is missing.'
+  grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$config" || fail 'OAuth native route is missing.'
 grep -Fq 'disable_response_storage = true' "$config" || fail 'Unrelated setting changed.'
 grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$config" || fail 'OAuth managed catalog is missing.'
 ! grep -Fq 'cc-switch-model-catalog.json' "$config" || fail 'Conflicting third-party catalog remains.'
@@ -66,7 +66,7 @@ fresh="$home/fresh"; mkdir -p "$fresh"; write_oauth "$fresh/auth.json"; run_inst
 grep -Fq 'model_provider = "custom"' "$fresh/config.toml" || fail 'Fresh identity is wrong.'
 grep -Fq 'model = "gpt-5.6-sol"' "$fresh/config.toml" || fail 'Fresh default missing.'
 grep -Fq 'requires_openai_auth = true' "$fresh/config.toml" || fail 'Fresh OAuth setting missing.'
-grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$fresh/config.toml" || fail 'Fresh OAuth Cockpit route is missing.'
+  grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$fresh/config.toml" || fail 'Fresh OAuth native route is missing.'
 grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$fresh/config.toml" || fail 'Fresh OAuth managed catalog is missing.'
 grep -Fq 'experimental_bearer_token = "sk-macos-fresh-key"' "$fresh/config.toml" || fail 'Fresh bearer token missing.'
 [ ! -e "$fresh/madapi.key" ] || fail 'Fresh install created key file.'
@@ -78,9 +78,8 @@ printf '{}' > "$api_only/models_cache.json"
 api_config_hash=$(hash_file "$api_only/config.toml"); api_auth_hash=$(hash_file "$api_only/auth.json")
 run_install "$api_only" 'sk-macos-api-key'
 grep -Fq 'requires_openai_auth = false' "$api_only/config.toml" || fail 'API-key auth gate is wrong.'
-grep -Fq '[model_providers.custom.auth]' "$api_only/config.toml" || fail 'API-key command auth is missing.'
-grep -Fq "printf %s 'sk-macos-api-key'" "$api_only/config.toml" || fail 'API-key command does not contain the MadAPI key.'
-! grep -Fq 'experimental_bearer_token' "$api_only/config.toml" || fail 'API-key config contains conflicting bearer auth.'
+  ! grep -Fq '[model_providers.custom.auth]' "$api_only/config.toml" || fail 'API-key command auth remains.'
+  grep -Fq 'experimental_bearer_token = "sk-macos-api-key"' "$api_only/config.toml" || fail 'API-key bearer token is missing.'
 grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$api_only/config.toml" || fail 'API-key managed catalog is missing.'
 grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$api_only/config.toml" || fail 'API-key Cockpit route is missing.'
 ! grep -Fq 'cc-switch-model-catalog.json' "$api_only/config.toml" || fail 'Conflicting third-party catalog remains.'
@@ -100,7 +99,7 @@ run_install "$unsigned" 'sk-macos-new-key'
 grep -Fq 'requires_openai_auth = true' "$unsigned/config.toml" || fail 'New-user install did not preserve the Codex sign-in chooser.'
 grep -Fq 'experimental_bearer_token = "sk-macos-new-key"' "$unsigned/config.toml" || fail 'New-user MadAPI bearer token is missing.'
 grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$unsigned/config.toml" || fail 'New-user install did not configure the managed catalog.'
-grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$unsigned/config.toml" || fail 'New-user install did not configure the Cockpit route.'
+  grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$unsigned/config.toml" || fail 'New-user install did not configure the OAuth-native route.'
 [ ! -e "$unsigned/auth.json" ] || fail 'New-user install forced API-key sign-in.'
 
 refresh_home="$home/refresh"; mkdir -p "$refresh_home"
@@ -108,12 +107,19 @@ cat > "$refresh_home/config.toml" <<'EOF'
 model_provider = "custom"
 [model_providers.custom]
 base_url = "https://mad.myddns.me/codex/cockpit/v1"
+requires_openai_auth = false
 experimental_bearer_token = "sk-macos-refresh-key"
 EOF
 valid_catalog="$home/valid-catalog.json"
 printf '%s' '{"models":[{"slug":"gemini-3.6-flash","display_name":"gemini-3.6-flash"}]}' > "$valid_catalog"
 CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$valid_catalog" /bin/sh "$refresh_script_path"
 grep -Fq '"slug":"gemini-3.6-flash"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'Structured catalog refresh did not install the valid JSON fixture.'
+grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$refresh_home/config.toml" || fail 'Unsigned refresh did not select the OAuth-native route.'
+grep -Fq 'requires_openai_auth = true' "$refresh_home/config.toml" || fail 'Unsigned refresh did not enable the OAuth gate.'
+printf '%s' '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-local","tokens":null}' > "$refresh_home/auth.json"
+CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$valid_catalog" /bin/sh "$refresh_script_path"
+grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$refresh_home/config.toml" || fail 'API refresh did not select the mapped route.'
+grep -Fq 'requires_openai_auth = false' "$refresh_home/config.toml" || fail 'API refresh did not disable the OAuth gate.'
 invalid_catalog="$home/invalid-catalog.json"
 printf '%s' '{not-json}' > "$invalid_catalog"
 if CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$invalid_catalog" /bin/sh "$refresh_script_path" >/dev/null 2>&1; then

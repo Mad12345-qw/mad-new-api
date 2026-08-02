@@ -163,24 +163,17 @@ trap 'exit 1' HUP INT TERM
   cat "$body_path"
   printf '\n[model_providers.%s]\n' "$provider_id"
   printf 'name = %s\n' "$(toml_string "$provider_name")"
-  printf '%s\n' 'base_url = "https://mad.myddns.me/codex/cockpit/v1"'
-  printf '%s\n' 'wire_api = "responses"'
   if [ "$auth_kind" = 'apikey' ]; then
-    printf '%s\n' 'requires_openai_auth = false'
+    printf '%s\n' 'base_url = "https://mad.myddns.me/codex/cockpit/v1"'
   else
-    printf '%s\n' 'requires_openai_auth = true'
-    printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
+    printf '%s\n' 'base_url = "https://mad.myddns.me/codex/v1"'
   fi
+  printf '%s\n' 'wire_api = "responses"'
+  if [ "$auth_kind" = 'apikey' ]; then printf '%s\n' 'requires_openai_auth = false'; else printf '%s\n' 'requires_openai_auth = true'; fi
+  printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 3'
   printf '%s\n' 'context_window_override = 1048576'
-  if [ "$auth_kind" = 'apikey' ]; then
-    printf '\n[model_providers.%s.auth]\n' "$provider_id"
-    printf '%s\n' 'command = "/bin/sh"'
-    printf 'args = ["-c", %s]\n' "$(toml_string "printf %s '$api_key'")"
-    printf '%s\n' 'timeout_ms = 5000'
-    printf '%s\n' 'refresh_interval_ms = 300000'
-  fi
 } > "$temp_path"
 
 refresh_source=${MADAPI_REFRESH_SCRIPT_SOURCE:-}
@@ -206,7 +199,7 @@ else
   staging_home="$codex_home/madapi-catalog-stage-$transaction_id"
   mkdir -p "$staging_home"
   cp "$temp_path" "$staging_home/config.toml"
-  if ! CODEX_HOME="$staging_home" /bin/sh "$temp_refresh_path"; then
+  if ! MADAPI_CODEX_AUTH_KIND="$auth_kind" CODEX_HOME="$staging_home" /bin/sh "$temp_refresh_path"; then
     rm -rf "$staging_home"
     printf '%s\n' 'Unable to download the initial MadAPI model catalog.' >&2
     exit 1

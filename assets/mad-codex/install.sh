@@ -14,20 +14,30 @@ auth_path="$codex_home/auth.json"
 models_cache_path="$codex_home/models_cache.json"
 transaction_id="$$-$(date '+%s')"
 temp_path="$codex_home/config.toml.madapi.$transaction_id.tmp"
+temp_auth_path="$codex_home/auth.json.madapi.$transaction_id.tmp"
 body_path="$codex_home/config.toml.madapi.$transaction_id.body"
 backup_path=
+auth_backup_path=
 had_config=0
+had_auth=0
 config_installed=0
+auth_installed=0
 success=0
 
 umask 077
-[ -f "$auth_path" ] || { printf '%s\n' 'Sign in with ChatGPT in Codex Desktop before running this installer. No files were changed.' >&2; exit 1; }
-oauth_mode=$(/usr/bin/plutil -extract auth_mode raw -o - "$auth_path" 2>/dev/null || true)
-oauth_access_token=$(/usr/bin/plutil -extract tokens.access_token raw -o - "$auth_path" 2>/dev/null || true)
-oauth_refresh_token=$(/usr/bin/plutil -extract tokens.refresh_token raw -o - "$auth_path" 2>/dev/null || true)
-if [ "$oauth_mode" != 'chatgpt' ] || [ -z "$oauth_access_token" ] || [ "$oauth_access_token" = 'null' ] || [ -z "$oauth_refresh_token" ] || [ "$oauth_refresh_token" = 'null' ]; then
-  printf '%s\n' 'This installer supports ChatGPT OAuth sessions only. Sign in with ChatGPT in Codex Desktop first. No files were changed.' >&2
-  exit 1
+auth_kind=apikey
+if [ -f "$auth_path" ]; then
+  had_auth=1
+  /usr/bin/plutil -lint "$auth_path" >/dev/null 2>&1 || { printf '%s\n' 'Codex Desktop authentication state is unreadable. No files were changed.' >&2; exit 1; }
+  existing_mode=$(/usr/bin/plutil -extract auth_mode raw -o - "$auth_path" 2>/dev/null || true)
+  existing_access_token=$(/usr/bin/plutil -extract tokens.access_token raw -o - "$auth_path" 2>/dev/null || true)
+  existing_refresh_token=$(/usr/bin/plutil -extract tokens.refresh_token raw -o - "$auth_path" 2>/dev/null || true)
+  if [ "$existing_mode" != 'apikey' ] && [ -n "$existing_access_token" ] && [ "$existing_access_token" != 'null' ] && [ -n "$existing_refresh_token" ] && [ "$existing_refresh_token" != 'null' ]; then
+    auth_kind=oauth
+  elif [ "$existing_mode" = 'chatgpt' ]; then
+    printf '%s\n' 'The existing ChatGPT OAuth session is incomplete. Sign in again or sign out before using API Key setup. No files were changed.' >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$codex_home"
@@ -131,7 +141,10 @@ cleanup() {
   if [ "$success" -ne 1 ] && [ "$config_installed" -eq 1 ]; then
     if [ "$had_config" -eq 1 ] && [ -n "$backup_path" ] && [ -f "$backup_path" ]; then cp "$backup_path" "$config_path"; else rm -f "$config_path"; fi
   fi
-  rm -f "$temp_path" "$body_path"
+  if [ "$success" -ne 1 ] && [ "$auth_installed" -eq 1 ]; then
+    if [ "$had_auth" -eq 1 ] && [ -n "$auth_backup_path" ] && [ -f "$auth_backup_path" ]; then cp "$auth_backup_path" "$auth_path"; else rm -f "$auth_path"; fi
+  fi
+  rm -f "$temp_path" "$temp_auth_path" "$body_path"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
@@ -149,16 +162,40 @@ trap 'exit 1' HUP INT TERM
   printf 'name = %s\n' "$(toml_string "$provider_name")"
   printf '%s\n' 'base_url = "https://mad.myddns.me/codex/v1"'
   printf '%s\n' 'wire_api = "responses"'
-  printf '%s\n' 'requires_openai_auth = true'
-  printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
+  if [ "$auth_kind" = 'oauth' ]; then
+    printf '%s\n' 'requires_openai_auth = true'
+    printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
+  else
+    printf '%s\n' 'requires_openai_auth = false'
+  fi
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 3'
   printf '%s\n' 'context_window_override = 1048576'
+  if [ "$auth_kind" = 'apikey' ]; then
+    printf '\n[model_providers.%s.auth]\n' "$provider_id"
+    printf '%s\n' 'command = "/bin/sh"'
+    printf 'args = ["-c", %s]\n' "$(toml_string "printf %s '$api_key'")"
+    printf '%s\n' 'timeout_ms = 5000'
+    printf '%s\n' 'refresh_interval_ms = 300000'
+  fi
 } > "$temp_path"
+
+if [ "$auth_kind" = 'apikey' ]; then
+  printf '{"auth_mode":"apikey","OPENAI_API_KEY":"%s"}' "$api_key" > "$temp_auth_path"
+fi
 
 if [ "$had_config" -eq 1 ]; then
   backup_path="$config_path.madapi-backup-$(date '+%Y%m%d-%H%M%S')-$$"
   cp -p "$config_path" "$backup_path"
+fi
+if [ "$auth_kind" = 'apikey' ] && [ "$had_auth" -eq 1 ]; then
+  auth_backup_path="$auth_path.madapi-backup-$(date '+%Y%m%d-%H%M%S')-$$"
+  cp -p "$auth_path" "$auth_backup_path"
+fi
+if [ "$auth_kind" = 'apikey' ]; then
+  mv "$temp_auth_path" "$auth_path"
+  auth_installed=1
+  chmod 600 "$auth_path"
 fi
 mv "$temp_path" "$config_path"
 config_installed=1
@@ -168,5 +205,6 @@ success=1
 
 printf 'MadAPI Codex desktop configuration installed: %s\n' "$config_path"
 [ -z "$backup_path" ] || printf 'Backup created: %s\n' "$backup_path"
-printf '%s\n' 'Existing ChatGPT OAuth session preserved.'
+[ -z "$auth_backup_path" ] || printf 'Authentication backup created: %s\n' "$auth_backup_path"
+if [ "$auth_kind" = 'oauth' ]; then printf '%s\n' 'Existing ChatGPT OAuth session preserved.'; else printf '%s\n' 'Codex Desktop API Key sign-in configured.'; fi
 printf '%s\n' 'Restart Codex Desktop to refresh the model list.'

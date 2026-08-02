@@ -76,7 +76,7 @@ e9d02e3350ca469752240e386c49a8e17e1a4f0d3fe4b9c2cb1ad72591f78484  web/default/sr
 c1ceff1fcb6c5fd6ec44eb9ef8b77ef13038d01d3885e7aed6cc86681ba025fd  web/default/src/features/playground/lib/streaming/payload-builder.ts
 265aa6389fbea36bdedee34e4a5f795da99cc2b2d0e23455fff30463ac2f69ec  web/default/src/features/playground/types.ts
 441e2ae5c0c51137b920c73ea5e5dd53ab660096766bf391703db46660416c59  web/default/src/features/keys/components/api-keys-dialogs.tsx
-dbda49fe01c2ce96e242b30430a4777c100b2f366e318ca2ad677c7185bdf46a  web/default/src/features/keys/components/data-table-row-actions.tsx
+d69baed5809f8710389941574388b85149d332c8e7e7528e4a3cd7435fca6e9a  web/default/src/features/keys/components/data-table-row-actions.tsx
 d55169060f7838c4752d7fe1474c71e6ddfa6cd613706696937f8dd86d8cf132  web/default/src/features/keys/components/dialogs/codex-setup-dialog.tsx
 14932804ef9c7a13908c3f4029b2ee44ff72b1967386013b119ca03657922d38  web/default/src/features/keys/lib/codex-config.ts
 f4e20521a606e8212543b21ff9c6154bfb4c764516ead12b8dc6757a4fedabca  web/default/src/features/keys/types.ts

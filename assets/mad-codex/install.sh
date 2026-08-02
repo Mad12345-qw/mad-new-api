@@ -10,6 +10,7 @@ esac
 
 codex_home=${CODEX_HOME:-"$HOME/.codex"}
 config_path="$codex_home/config.toml"
+auth_path="$codex_home/auth.json"
 models_cache_path="$codex_home/models_cache.json"
 transaction_id="$$-$(date '+%s')"
 temp_path="$codex_home/config.toml.madapi.$transaction_id.tmp"
@@ -20,6 +21,15 @@ config_installed=0
 success=0
 
 umask 077
+[ -f "$auth_path" ] || { printf '%s\n' 'Sign in with ChatGPT in Codex Desktop before running this installer. No files were changed.' >&2; exit 1; }
+oauth_mode=$(/usr/bin/plutil -extract auth_mode raw -o - "$auth_path" 2>/dev/null || true)
+oauth_access_token=$(/usr/bin/plutil -extract tokens.access_token raw -o - "$auth_path" 2>/dev/null || true)
+oauth_refresh_token=$(/usr/bin/plutil -extract tokens.refresh_token raw -o - "$auth_path" 2>/dev/null || true)
+if [ "$oauth_mode" != 'chatgpt' ] || [ -z "$oauth_access_token" ] || [ "$oauth_access_token" = 'null' ] || [ -z "$oauth_refresh_token" ] || [ "$oauth_refresh_token" = 'null' ]; then
+  printf '%s\n' 'This installer supports ChatGPT OAuth sessions only. Sign in with ChatGPT in Codex Desktop first. No files were changed.' >&2
+  exit 1
+fi
+
 mkdir -p "$codex_home"
 [ -f "$config_path" ] && had_config=1
 
@@ -158,4 +168,5 @@ success=1
 
 printf 'MadAPI Codex desktop configuration installed: %s\n' "$config_path"
 [ -z "$backup_path" ] || printf 'Backup created: %s\n' "$backup_path"
+printf '%s\n' 'Existing ChatGPT OAuth session preserved.'
 printf '%s\n' 'Restart Codex Desktop to refresh the model list.'

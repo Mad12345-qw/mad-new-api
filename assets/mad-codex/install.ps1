@@ -40,6 +40,7 @@ if ([string]::IsNullOrWhiteSpace($apiKey) -or $apiKey -notmatch '^sk-[A-Za-z0-9.
 $userHome = [Environment]::GetFolderPath('UserProfile')
 $codexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) { Join-Path $userHome '.codex' } else { [string]$env:CODEX_HOME }
 $configPath = Join-Path $codexHome 'config.toml'
+$authPath = Join-Path $codexHome 'auth.json'
 $modelsCachePath = Join-Path $codexHome 'models_cache.json'
 $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
@@ -47,9 +48,24 @@ $backupPath = $null
 $hadConfig = Test-Path -LiteralPath $configPath
 $configInstalled = $false
 
-New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+if (-not (Test-Path -LiteralPath $authPath)) {
+    throw 'Sign in with ChatGPT in Codex Desktop before running this installer. No files were changed.'
+}
+try {
+    $oauth = [IO.File]::ReadAllText($authPath, $utf8Strict) | ConvertFrom-Json
+} catch {
+    throw 'Codex Desktop OAuth state is unreadable. Sign in with ChatGPT again before running this installer. No files were changed.'
+}
+$oauthMode = [string]$oauth.auth_mode
+$oauthAccessToken = if ($null -eq $oauth.tokens) { '' } else { [string]$oauth.tokens.access_token }
+$oauthRefreshToken = if ($null -eq $oauth.tokens) { '' } else { [string]$oauth.tokens.refresh_token }
+if ($oauthMode -ne 'chatgpt' -or [string]::IsNullOrWhiteSpace($oauthAccessToken) -or [string]::IsNullOrWhiteSpace($oauthRefreshToken)) {
+    throw 'This installer supports ChatGPT OAuth sessions only. Sign in with ChatGPT in Codex Desktop first. No files were changed.'
+}
+
+New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
 $sourceLines = @()
 if ($hadConfig) { $sourceLines = @([IO.File]::ReadAllLines($configPath, $utf8Strict)) }
 
@@ -75,7 +91,6 @@ if ($providerId -notmatch '^[A-Za-z0-9_-]+$') { throw 'The existing model provid
 $providerDisplayName = Get-ProviderDisplayName $providerSourceLines $providerId
 if ([string]::IsNullOrWhiteSpace($providerDisplayName)) { $providerDisplayName = $providerId }
 $targetProviderSection = 'model_providers.' + $providerId
-$authCommand = "[Console]::Out.Write('$apiKey')"
 
 $keptLines = New-Object 'System.Collections.Generic.List[string]'
 $currentSection = ''
@@ -111,15 +126,11 @@ $configLines.Add('[' + $targetProviderSection + ']')
 $configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
 $configLines.Add('base_url = "https://mad.myddns.me/codex/v1"')
 $configLines.Add('wire_api = "responses"')
+$configLines.Add('requires_openai_auth = true')
+$configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
 $configLines.Add('stream_idle_timeout_ms = 360000')
 $configLines.Add('request_max_retries = 3')
 $configLines.Add('context_window_override = 1048576')
-$configLines.Add('')
-$configLines.Add('[' + $targetProviderSection + '.auth]')
-$configLines.Add('command = "powershell.exe"')
-$configLines.Add('args = ["-NoProfile", "-NonInteractive", "-Command", ' + (ConvertTo-TomlBasicString $authCommand) + ']')
-$configLines.Add('timeout_ms = 5000')
-$configLines.Add('refresh_interval_ms = 300000')
 
 try {
     [IO.File]::WriteAllText($tempConfigPath, (($configLines -join [Environment]::NewLine).Trim() + [Environment]::NewLine), $utf8NoBom)
@@ -142,4 +153,5 @@ try {
 
 Write-Host "MadAPI Codex desktop configuration installed: $configPath"
 if ($null -ne $backupPath) { Write-Host "Backup created: $backupPath" }
+Write-Host 'Existing ChatGPT OAuth session preserved.'
 Write-Host 'Restart Codex Desktop to refresh the model list.'

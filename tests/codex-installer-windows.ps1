@@ -6,6 +6,9 @@ Set-StrictMode -Version 2.0
 function Assert-True([bool]$Value, [string]$Message) { if (-not $Value) { throw "Assertion failed: $Message" } }
 function Write-Utf8([string]$Path, [string]$Value) { [IO.File]::WriteAllText($Path, $Value, (New-Object System.Text.UTF8Encoding($false))) }
 function Hash([string]$Path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash }
+function Write-OAuth([string]$Path) {
+    Write-Utf8 $Path '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"},"last_refresh":"2026-08-02T00:00:00Z"}'
+}
 function Install([string]$CodexHome, [string]$Key) {
     $oldHome, $oldKey = $env:CODEX_HOME, $env:MADAPI_KEY
     try { $env:CODEX_HOME = $CodexHome; $env:MADAPI_KEY = $Key; & $InstallerPath }
@@ -22,6 +25,7 @@ $codexHome = Join-Path $temporaryRoot ('mad-codex-desktop-' + [guid]::NewGuid().
 $session = Join-Path $codexHome 'sessions\sentinel.jsonl'
 New-Item -ItemType Directory -Path (Split-Path -Parent $session) -Force | Out-Null
 $config = Join-Path $codexHome 'config.toml'
+$auth = Join-Path $codexHome 'auth.json'
 $keyFile = Join-Path $codexHome 'madapi.key'
 $cache = Join-Path $codexHome 'models_cache.json'
 $original = @'
@@ -32,44 +36,81 @@ disable_response_storage = true
 [model_providers.newapi]
 name = "NewAPI"
 base_url = "https://old.invalid/v1"
+requires_openai_auth = false
+experimental_bearer_token = "sk-stale-bearer"
+[model_providers.newapi.auth]
+command = "powershell.exe"
+args = ["-NoProfile", "-Command", "Write-Output stale"]
 [model_providers.madapi]
 name = "Old MadAPI"
 [plugins."github@openai-curated"]
 enabled = true
 '@
 try {
-    Write-Utf8 $config $original; Write-Utf8 $keyFile 'keep-me'; Write-Utf8 $cache '{}'; Write-Utf8 $session 'session'
+    Write-Utf8 $config $original; Write-OAuth $auth; Write-Utf8 $keyFile 'keep-me'; Write-Utf8 $cache '{}'; Write-Utf8 $session 'session'
     $configHash = Hash $config
+    $authHash = Hash $auth
     $sessionHash = Hash $session
     Install $codexHome 'sk-windows-first-key'
     $result = [IO.File]::ReadAllText($config)
     Assert-True ($result.Contains('model_provider = "newapi"')) 'Provider identity changed.'
     Assert-True ($result.Contains('model = "deepseek-v4-flash"')) 'Default model changed.'
     Assert-True ($result.Contains('name = "NewAPI"')) 'Provider name changed.'
-    Assert-True ($result.Contains('[model_providers.newapi.auth]')) 'Command auth missing.'
-    Assert-True ($result.Contains("[Console]::Out.Write('sk-windows-first-key')")) 'Inline key missing from command auth.'
-    Assert-True (-not $result.Contains('experimental_bearer_token')) 'Conflicting bearer token remains.'
-    Assert-True (-not $result.Contains('requires_openai_auth')) 'Conflicting desktop auth setting remains.'
+    Assert-True ($result.Contains('experimental_bearer_token = "sk-windows-first-key"')) 'Bearer token missing.'
+    Assert-True ($result.Contains('requires_openai_auth = true')) 'Desktop OAuth setting missing.'
+    Assert-True (-not $result.Contains('[model_providers.newapi.auth]')) 'Command auth remains.'
+    Assert-True (-not $result.Contains('sk-stale-bearer')) 'Stale bearer remains.'
+    Assert-True (-not $result.Contains('Write-Output stale')) 'Stale command auth remains.'
     Assert-True ($result.Contains('disable_response_storage = true')) 'Unrelated setting changed.'
     Assert-True (-not ($result -match '(?m)^\s*(model_catalog_json|"model_catalog_json"|''model_catalog_json'')\s*=')) 'Static catalog remains.'
     Assert-True (-not $result.Contains('[model_providers.madapi]')) 'Temporary provider remains.'
     Assert-True (([IO.File]::ReadAllText($keyFile)) -eq 'keep-me') 'Existing key file changed.'
     Assert-True (-not (Test-Path -LiteralPath $cache)) 'Stale cache remains.'
+    Assert-True ((Hash $auth) -eq $authHash) 'OAuth state changed.'
     Assert-True ((Hash $session) -eq $sessionHash) 'Session changed.'
     $backup = @(Get-ChildItem -LiteralPath $codexHome -Filter 'config.toml.madapi-backup-*' -File)[0]
     Assert-True ($null -ne $backup -and (Hash $backup.FullName) -eq $configHash) 'Backup is not exact.'
     Install $codexHome 'sk-windows-second-key'
     $result = [IO.File]::ReadAllText($config)
-    Assert-True ($result.Contains("[Console]::Out.Write('sk-windows-second-key')")) 'Repeat install did not update token.'
+    Assert-True ($result.Contains('experimental_bearer_token = "sk-windows-second-key"')) 'Repeat install did not update token.'
     Assert-True (-not $result.Contains('sk-windows-first-key')) 'Repeat install retained the old token.'
     Assert-True (([regex]::Matches($result, '(?m)^\[model_providers\.newapi\]\r?$')).Count -eq 1) 'Duplicate provider created.'
     $fresh = Join-Path $codexHome 'fresh'
+    New-Item -ItemType Directory -Path $fresh -Force | Out-Null
+    Write-OAuth (Join-Path $fresh 'auth.json')
     Install $fresh 'sk-windows-fresh-key'
     $freshConfig = [IO.File]::ReadAllText((Join-Path $fresh 'config.toml'))
     Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh identity is wrong.'
     Assert-True ($freshConfig.Contains('model = "gpt-5.6-sol"')) 'Fresh default missing.'
-    Assert-True ($freshConfig.Contains('[model_providers.custom.auth]')) 'Fresh command auth missing.'
-    Assert-True ($freshConfig.Contains("[Console]::Out.Write('sk-windows-fresh-key')")) 'Fresh inline key missing.'
+    Assert-True ($freshConfig.Contains('requires_openai_auth = true')) 'Fresh OAuth setting missing.'
+    Assert-True ($freshConfig.Contains('experimental_bearer_token = "sk-windows-fresh-key"')) 'Fresh bearer token missing.'
+    Assert-True (-not $freshConfig.Contains('[model_providers.custom.auth]')) 'Fresh command auth remains.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fresh 'madapi.key'))) 'Fresh install created key file.'
+
+    $apiOnly = Join-Path $codexHome 'api-only'
+    New-Item -ItemType Directory -Path $apiOnly -Force | Out-Null
+    $apiOnlyConfig = Join-Path $apiOnly 'config.toml'
+    $apiOnlyCache = Join-Path $apiOnly 'models_cache.json'
+    Write-Utf8 $apiOnlyConfig 'model = "gpt-5.6-sol"'
+    Write-Utf8 (Join-Path $apiOnly 'auth.json') '{"OPENAI_API_KEY":"sk-existing-api-key","tokens":null,"last_refresh":null}'
+    Write-Utf8 $apiOnlyCache '{}'
+    $apiOnlyConfigHash = Hash $apiOnlyConfig
+    $apiOnlyCacheHash = Hash $apiOnlyCache
+    $apiOnlyFailed = $false
+    try { Install $apiOnly 'sk-windows-rejected-key' } catch { $apiOnlyFailed = $true }
+    Assert-True $apiOnlyFailed 'API-key-only state was accepted.'
+    Assert-True ((Hash $apiOnlyConfig) -eq $apiOnlyConfigHash) 'Rejected API-key-only config changed.'
+    Assert-True ((Hash $apiOnlyCache) -eq $apiOnlyCacheHash) 'Rejected API-key-only cache changed.'
+    Assert-True (@(Get-ChildItem -LiteralPath $apiOnly -Filter 'config.toml.madapi-backup-*' -File -ErrorAction SilentlyContinue).Count -eq 0) 'Rejected API-key-only install created a backup.'
+
+    $unsigned = Join-Path $codexHome 'unsigned'
+    New-Item -ItemType Directory -Path $unsigned -Force | Out-Null
+    $unsignedConfig = Join-Path $unsigned 'config.toml'
+    Write-Utf8 $unsignedConfig 'model = "gpt-5.6-sol"'
+    $unsignedHash = Hash $unsignedConfig
+    $unsignedFailed = $false
+    try { Install $unsigned 'sk-windows-rejected-key' } catch { $unsignedFailed = $true }
+    Assert-True $unsignedFailed 'Unsigned state was accepted.'
+    Assert-True ((Hash $unsignedConfig) -eq $unsignedHash) 'Rejected unsigned config changed.'
     Write-Host 'Windows desktop Codex installer acceptance passed.'
 } finally { if (Test-Path -LiteralPath $codexHome) { Remove-Item -LiteralPath $codexHome -Recurse -Force } }

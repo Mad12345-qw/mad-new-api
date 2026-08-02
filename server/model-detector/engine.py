@@ -7,7 +7,7 @@ import secrets
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -2405,7 +2405,12 @@ class DetectorEngine:
             }
         return result, evidence
 
-    async def run_models(self, upstream: dict[str, Any], routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def run_models(
+        self,
+        upstream: dict[str, Any],
+        routes: list[dict[str, Any]],
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[dict[str, Any]]:
         if not upstream.get("allow_paid_probes"):
             return [
                 {
@@ -2428,7 +2433,9 @@ class DetectorEngine:
         limits = httpx.Limits(max_connections=4, max_keepalive_connections=2)
         async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=False, verify=True) as client:
             shared_gpt_evidence: list[Evidence] = []
-            sentinel_routes = [ModelRoute(**item) for item in routes[:30]]
+            limited_routes = routes[:30]
+            total_routes = len(limited_routes)
+            sentinel_routes = [ModelRoute(**item) for item in limited_routes]
             sentinel = next(
                 (
                     item
@@ -2438,6 +2445,15 @@ class DetectorEngine:
                 next((item for item in sentinel_routes if gpt_cross_protocol_probe_specs(item)), None),
             )
             if sentinel is not None:
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "phase": "preflight",
+                            "current": 0,
+                            "total": total_routes,
+                            "model": sentinel.model,
+                        }
+                    )
                 cross_observations: dict[str, ProbeResponse] = {}
                 for probe_name, path, protocol, payload in gpt_cross_protocol_probe_specs(sentinel):
                     try:
@@ -2460,8 +2476,17 @@ class DetectorEngine:
                             )
                         )
                 shared_gpt_evidence.extend(gpt_cross_protocol_evidence(sentinel, cross_observations))
-            for route_data in routes[:30]:
+            for route_index, route_data in enumerate(limited_routes):
                 route = ModelRoute(**route_data)
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "phase": "model_probes",
+                            "current": route_index,
+                            "total": total_routes,
+                            "model": route.model,
+                        }
+                    )
                 model_evidence: list[Evidence] = [
                     Evidence(
                         "route",
@@ -2589,6 +2614,15 @@ class DetectorEngine:
                             "evidence": model_evidence,
                         }
                     )
+                    if progress_callback:
+                        progress_callback(
+                            {
+                                "phase": "model_completed",
+                                "current": route_index + 1,
+                                "total": total_routes,
+                                "model": route.model,
+                            }
+                        )
                     continue
                 for stream in (False, True):
                     path, payload = route_probe(route, stream)
@@ -2969,6 +3003,15 @@ class DetectorEngine:
                         "evidence": model_evidence,
                     }
                 )
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "phase": "model_completed",
+                            "current": route_index + 1,
+                            "total": total_routes,
+                            "model": route.model,
+                        }
+                    )
         return results
 
     async def _probe(

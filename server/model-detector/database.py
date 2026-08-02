@@ -88,6 +88,10 @@ class Database:
                     rule_version TEXT NOT NULL,
                     started_at TEXT NOT NULL,
                     finished_at TEXT,
+                    progress_current INTEGER NOT NULL DEFAULT 0,
+                    progress_total INTEGER NOT NULL DEFAULT 0,
+                    progress_model TEXT,
+                    progress_phase TEXT NOT NULL DEFAULT 'queued',
                     FOREIGN KEY(upstream_id) REFERENCES upstreams(id) ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS evidence (
@@ -185,6 +189,10 @@ class Database:
                 "expected_channel": "TEXT",
                 "auto_action": "TEXT NOT NULL DEFAULT 'none'",
                 "auto_action_detail": "TEXT",
+                "progress_current": "INTEGER NOT NULL DEFAULT 0",
+                "progress_total": "INTEGER NOT NULL DEFAULT 0",
+                "progress_model": "TEXT",
+                "progress_phase": "TEXT NOT NULL DEFAULT 'queued'",
             }
             for name, definition in run_migrations.items():
                 if name not in run_columns:

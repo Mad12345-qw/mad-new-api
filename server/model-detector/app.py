@@ -163,6 +163,25 @@ def require_admin(request: Request, detector_session: str = Cookie(default="")) 
     raise HTTPException(status_code=401, detail="New API administrator login or detector token required")
 
 
+def localized_exception_message(exc: Exception) -> str:
+    if isinstance(exc, httpx.ConnectTimeout):
+        return "连接上游超时"
+    if isinstance(exc, httpx.ReadTimeout):
+        return "等待上游响应超时"
+    if isinstance(exc, httpx.ConnectError):
+        return "无法连接上游 API"
+    if isinstance(exc, httpx.TooManyRedirects):
+        return "上游返回了过多重定向"
+    if isinstance(exc, httpx.HTTPError):
+        return "上游 HTTP 请求失败"
+    if isinstance(exc, asyncio.TimeoutError):
+        return "等待上游响应超时"
+    if isinstance(exc, NewAPIIntegrationError):
+        return f"同步 New API 渠道失败：{str(exc)[:300]}"
+    message = str(exc).strip()
+    return f"检测任务执行失败：{message[:400]}" if message else "检测任务执行失败"
+
+
 def public_upstream(row: dict[str, Any]) -> dict[str, Any]:
     result = dict(row)
     result.pop("api_key_encrypted", None)
@@ -971,6 +990,8 @@ async def save_model_results(run_id: int, model_results: list[dict[str, Any]]) -
 
 async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) -> int:
     started = utc_now()
+    routes = routes_for_upstream(upstream)
+    progress_total = min(len(routes), 30) if mode == "active" else 0
     run_id = db.execute(
         "INSERT INTO runs(upstream_id,trigger,mode,status,expected_channel,rule_version,started_at) VALUES(?,?,?,?,?,?,?)",
         (
@@ -984,6 +1005,10 @@ async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) ->
         ),
     )
     try:
+        db.execute(
+            "UPDATE runs SET progress_total=?,progress_phase='entry_probe' WHERE id=?",
+            (progress_total, run_id),
+        )
         baseline = dict(upstream)
         baseline["api_style"] = "openai"
         result, evidence = await engine.run(baseline, "safe")
@@ -993,8 +1018,21 @@ async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) ->
         await save_evidence(run_id, evidence)
         model_results: list[dict[str, Any]] = []
         if mode == "active":
-            model_results = await engine.run_models(upstream, routes_for_upstream(upstream))
+            def update_progress(progress: dict[str, Any]) -> None:
+                db.execute(
+                    "UPDATE runs SET progress_current=?,progress_total=?,progress_model=?,progress_phase=? WHERE id=?",
+                    (
+                        int(progress.get("current") or 0),
+                        int(progress.get("total") or progress_total),
+                        str(progress.get("model") or ""),
+                        str(progress.get("phase") or "model_probes"),
+                        run_id,
+                    ),
+                )
+
+            model_results = await engine.run_models(upstream, routes, progress_callback=update_progress)
             model_results = apply_historical_route_changes(upstream["id"], model_results)
+            db.execute("UPDATE runs SET progress_phase='saving_report' WHERE id=?", (run_id,))
             await save_model_results(run_id, model_results)
             result = aggregate_model_results(model_results)
             compliance = evaluate_compliance(upstream, result, model_results)
@@ -1014,7 +1052,8 @@ async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) ->
             }
         db.execute(
             "UPDATE runs SET status='completed',verdict=?,likely_channel=?,confidence=?,summary=?,compliance_status=?,"
-            "compliance_detail_json=?,expected_channel=?,finished_at=? WHERE id=?",
+            "compliance_detail_json=?,expected_channel=?,finished_at=?,progress_current=progress_total,"
+            "progress_model=NULL,progress_phase='completed' WHERE id=?",
             (
                 result["verdict"],
                 result["likely_channel"],
@@ -1034,15 +1073,15 @@ async def execute_upstream(upstream: dict[str, Any], mode: str, trigger: str) ->
         )
     except Exception as exc:
         db.execute(
-            "UPDATE runs SET status='failed',summary=?,finished_at=? WHERE id=?",
-            (f"{type(exc).__name__}: {str(exc)[:500]}", utc_now(), run_id),
+            "UPDATE runs SET status='failed',summary=?,finished_at=?,progress_phase='failed' WHERE id=?",
+            (localized_exception_message(exc), utc_now(), run_id),
         )
     return run_id
 
 
 async def execute_batch(upstream_id: int | None, mode: str, trigger: str) -> list[int]:
     if run_lock.locked():
-        raise HTTPException(status_code=409, detail="a detector batch is already running")
+        raise HTTPException(status_code=409, detail="已有检测任务正在运行，请等待完成后再试")
     async with run_lock:
         if upstream_id is None:
             upstreams = db.rows("SELECT * FROM upstreams WHERE enabled=1 ORDER BY role DESC,id")
@@ -1145,11 +1184,11 @@ def state() -> dict[str, Any]:
 @app.post("/detector/api/new-api/sync", dependencies=[Depends(require_admin)])
 async def sync_new_api() -> dict[str, Any]:
     if not new_api.configured:
-        raise HTTPException(status_code=503, detail="New API integration is not configured")
+        raise HTTPException(status_code=503, detail="尚未配置 New API 集成")
     try:
         return await sync_new_api_channels()
     except NewAPIIntegrationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=f"同步 New API 渠道失败：{exc}") from exc
 
 
 @app.put("/detector/api/upstreams/{upstream_id}/policy", dependencies=[Depends(require_admin)])
@@ -1315,7 +1354,7 @@ async def run_detector(value: RunInput) -> dict[str, Any]:
         try:
             await sync_new_api_channels()
         except NewAPIIntegrationError as exc:
-            raise HTTPException(status_code=502, detail=f"New API channel sync failed: {exc}") from exc
+            raise HTTPException(status_code=502, detail=f"同步 New API 渠道失败：{exc}") from exc
     run_ids = await execute_batch(value.upstream_id, value.mode, "manual")
     return {"run_ids": run_ids}
 

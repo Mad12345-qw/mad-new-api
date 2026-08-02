@@ -42,6 +42,23 @@ class AppTests(unittest.TestCase):
         self.assertNotIn('id="loginToken"', html)
         self.assertNotIn('id="loginForm"', html)
 
+    def test_ui_distinguishes_all_channels_from_one_channel_and_localizes_progress(self) -> None:
+        html = self.client.get("/detector/").text
+        self.assertIn("检测全部已监控渠道", html)
+        self.assertIn("检测本渠道（", html)
+        self.assertIn("正在执行跨协议预检", html)
+        self.assertIn("已有检测任务正在运行", html)
+        self.assertNotIn("a detector batch is already running", html)
+
+    def test_duplicate_batch_error_is_chinese(self) -> None:
+        self.login()
+        fake_lock = Mock()
+        fake_lock.locked.return_value = True
+        with patch.object(service, "run_lock", fake_lock):
+            response = self.client.post("/detector/api/run", json={"upstream_id": None, "mode": "active"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "已有检测任务正在运行，请等待完成后再试")
+
     def test_auth_and_secret_redaction(self) -> None:
         self.assertEqual(self.client.get("/detector/api/state").status_code, 401)
         self.assertEqual(self.client.post("/detector/api/login", json={"token": "wrong-token-value"}).status_code, 401)

@@ -912,6 +912,7 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_gpt_image_2_run_uses_two_validation_responses_without_generation(self) -> None:
         route = route_for_model("gpt-image-2", "openai", ["openai"])
+        progress_events = []
         requests = AsyncMock(
             side_effect=[
                 self.response(400, {"error": {"type": "invalid_request_error", "code": "invalid_size"}}),
@@ -924,7 +925,13 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
             "allow_paid_probes": 1,
         }
         with patch("engine.decrypt_secret", return_value="secret"), patch("engine.captured_request", requests):
-            result = (await DetectorEngine().run_models(upstream, [route.to_dict()]))[0]
+            result = (
+                await DetectorEngine().run_models(
+                    upstream,
+                    [route.to_dict()],
+                    progress_callback=progress_events.append,
+                )
+            )[0]
 
         self.assertEqual(result["protocol"], "openai_images")
         self.assertEqual(result["success_probes"], 2)
@@ -932,6 +939,10 @@ class ActiveModelProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["verdict"], "inconclusive")
         payloads = [call.args[4] for call in requests.await_args_list]
         self.assertTrue(all(payload.get("size") == "1x1" or "prompt" not in payload for payload in payloads))
+        self.assertEqual(progress_events[0]["phase"], "model_probes")
+        self.assertEqual(progress_events[-1]["phase"], "model_completed")
+        self.assertEqual(progress_events[-1]["current"], 1)
+        self.assertEqual(progress_events[-1]["total"], 1)
 
     async def test_responses_404_falls_back_once_then_uses_chat_for_remaining_probes(self) -> None:
         route = route_for_model("gpt-5.6-sol", "openai", ["openai"])

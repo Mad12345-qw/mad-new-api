@@ -75,6 +75,7 @@ if ($providerId -notmatch '^[A-Za-z0-9_-]+$') { throw 'The existing model provid
 $providerDisplayName = Get-ProviderDisplayName $providerSourceLines $providerId
 if ([string]::IsNullOrWhiteSpace($providerDisplayName)) { $providerDisplayName = $providerId }
 $targetProviderSection = 'model_providers.' + $providerId
+$authCommand = "[Console]::Out.Write('$apiKey')"
 
 $keptLines = New-Object 'System.Collections.Generic.List[string]'
 $currentSection = ''
@@ -110,11 +111,15 @@ $configLines.Add('[' + $targetProviderSection + ']')
 $configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
 $configLines.Add('base_url = "https://mad.myddns.me/codex/v1"')
 $configLines.Add('wire_api = "responses"')
-$configLines.Add('requires_openai_auth = true')
-$configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
 $configLines.Add('stream_idle_timeout_ms = 360000')
 $configLines.Add('request_max_retries = 3')
 $configLines.Add('context_window_override = 1048576')
+$configLines.Add('')
+$configLines.Add('[' + $targetProviderSection + '.auth]')
+$configLines.Add('command = "powershell.exe"')
+$configLines.Add('args = ["-NoProfile", "-NonInteractive", "-Command", ' + (ConvertTo-TomlBasicString $authCommand) + ']')
+$configLines.Add('timeout_ms = 5000')
+$configLines.Add('refresh_interval_ms = 300000')
 
 try {
     [IO.File]::WriteAllText($tempConfigPath, (($configLines -join [Environment]::NewLine).Trim() + [Environment]::NewLine), $utf8NoBom)

@@ -14,7 +14,7 @@ function Install([string]$CodexHome, [string]$Key) {
 
 $installer = [IO.File]::ReadAllText($InstallerPath)
 Assert-True (-not $installer.Contains('CODEX_CLI_PATH')) 'CLI probing remains.'
-Assert-True (-not $installer.Contains('madapi.key')) 'Command authentication remains.'
+Assert-True (-not $installer.Contains('madapi.key')) 'External key-file authentication remains.'
 Assert-True (-not $installer.Contains('Get-Command')) 'CLI discovery remains.'
 
 $temporaryRoot = if ([string]::IsNullOrWhiteSpace([string]$env:RUNNER_TEMP)) { [IO.Path]::GetTempPath() } else { [string]$env:RUNNER_TEMP }
@@ -46,11 +46,12 @@ try {
     Assert-True ($result.Contains('model_provider = "newapi"')) 'Provider identity changed.'
     Assert-True ($result.Contains('model = "deepseek-v4-flash"')) 'Default model changed.'
     Assert-True ($result.Contains('name = "NewAPI"')) 'Provider name changed.'
-    Assert-True ($result.Contains('experimental_bearer_token = "sk-windows-first-key"')) 'Bearer token missing.'
-    Assert-True ($result.Contains('requires_openai_auth = true')) 'Desktop auth setting missing.'
+    Assert-True ($result.Contains('[model_providers.newapi.auth]')) 'Command auth missing.'
+    Assert-True ($result.Contains("[Console]::Out.Write('sk-windows-first-key')")) 'Inline key missing from command auth.'
+    Assert-True (-not $result.Contains('experimental_bearer_token')) 'Conflicting bearer token remains.'
+    Assert-True (-not $result.Contains('requires_openai_auth')) 'Conflicting desktop auth setting remains.'
     Assert-True ($result.Contains('disable_response_storage = true')) 'Unrelated setting changed.'
     Assert-True (-not ($result -match '(?m)^\s*(model_catalog_json|"model_catalog_json"|''model_catalog_json'')\s*=')) 'Static catalog remains.'
-    Assert-True (-not $result.Contains('[model_providers.newapi.auth]')) 'Command auth was added.'
     Assert-True (-not $result.Contains('[model_providers.madapi]')) 'Temporary provider remains.'
     Assert-True (([IO.File]::ReadAllText($keyFile)) -eq 'keep-me') 'Existing key file changed.'
     Assert-True (-not (Test-Path -LiteralPath $cache)) 'Stale cache remains.'
@@ -59,13 +60,16 @@ try {
     Assert-True ($null -ne $backup -and (Hash $backup.FullName) -eq $configHash) 'Backup is not exact.'
     Install $codexHome 'sk-windows-second-key'
     $result = [IO.File]::ReadAllText($config)
-    Assert-True ($result.Contains('experimental_bearer_token = "sk-windows-second-key"')) 'Repeat install did not update token.'
+    Assert-True ($result.Contains("[Console]::Out.Write('sk-windows-second-key')")) 'Repeat install did not update token.'
+    Assert-True (-not $result.Contains('sk-windows-first-key')) 'Repeat install retained the old token.'
     Assert-True (([regex]::Matches($result, '(?m)^\[model_providers\.newapi\]\r?$')).Count -eq 1) 'Duplicate provider created.'
     $fresh = Join-Path $codexHome 'fresh'
     Install $fresh 'sk-windows-fresh-key'
     $freshConfig = [IO.File]::ReadAllText((Join-Path $fresh 'config.toml'))
     Assert-True ($freshConfig.Contains('model_provider = "custom"')) 'Fresh identity is wrong.'
     Assert-True ($freshConfig.Contains('model = "gpt-5.6-sol"')) 'Fresh default missing.'
+    Assert-True ($freshConfig.Contains('[model_providers.custom.auth]')) 'Fresh command auth missing.'
+    Assert-True ($freshConfig.Contains("[Console]::Out.Write('sk-windows-fresh-key')")) 'Fresh inline key missing.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fresh 'madapi.key'))) 'Fresh install created key file.'
     Write-Host 'Windows desktop Codex installer acceptance passed.'
 } finally { if (Test-Path -LiteralPath $codexHome) { Remove-Item -LiteralPath $codexHome -Recurse -Force } }

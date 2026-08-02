@@ -1,0 +1,238 @@
+diff --git a/controller/codex_cockpit.go b/controller/codex_cockpit.go
+index bfe355b3..b5c4fb4d 100644
+--- a/controller/codex_cockpit.go
++++ b/controller/codex_cockpit.go
+@@ -6,16 +6,20 @@ import (
+ 	"fmt"
+ 	"io"
+ 	"net/http"
++	"os"
+ 	"sort"
+ 	"strings"
+ 
+ 	"github.com/QuantumNous/new-api/common"
++	appconstant "github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/dto"
+ 	"github.com/gin-gonic/gin"
+ )
+ 
+ const codexCockpitPathPrefix = "/codex/cockpit/v1/"
+ 
++const defaultCodexCPADispatchURL = "http://cpa-codex:8317/internal/madapi/codex/execute"
++
+ type codexCockpitModelSlot struct {
+ 	ClientModel   string
+ 	UpstreamModel string
+@@ -97,7 +101,7 @@ func allocateCodexCockpitModelSlots(models []dto.OpenAIModels) []codexCockpitMod
+ 	return slots
+ }
+ 
+-func loadCodexCockpitModelSlots(c *gin.Context) ([]codexCockpitModelSlot, error) {
++func loadCodexCockpitModels(c *gin.Context) ([]dto.OpenAIModels, error) {
+ 	req, err := newCodexInternalRequest(c, http.MethodGet, "/models", nil)
+ 	if err != nil {
+ 		return nil, err
+@@ -122,29 +126,80 @@ func loadCodexCockpitModelSlots(c *gin.Context) ([]codexCockpitModelSlot, error)
+ 			models = append(models, candidate)
+ 		}
+ 	}
++	sort.SliceStable(models, func(i, j int) bool {
++		return strings.ToLower(strings.TrimSpace(models[i].Id)) < strings.ToLower(strings.TrimSpace(models[j].Id))
++	})
++	return models, nil
++}
++
++func loadCodexCockpitModelSlots(c *gin.Context) ([]codexCockpitModelSlot, error) {
++	models, err := loadCodexCockpitModels(c)
++	if err != nil {
++		return nil, err
++	}
+ 	return allocateCodexCockpitModelSlots(models), nil
+ }
+ 
+ func CodexCockpitListModels(c *gin.Context) {
+-	slots, err := loadCodexCockpitModelSlots(c)
++	models, err := loadCodexCockpitModels(c)
+ 	if err != nil {
+ 		codexCompatibilityError(c, http.StatusBadGateway, err)
+ 		return
+ 	}
+-
+-	models := make([]map[string]any, 0, len(slots))
+-	for index, slot := range slots {
+-		entry := buildCodexModel(slot.Candidate, index)
+-		entry["slug"] = slot.ClientModel
+-		entry["display_name"] = slot.UpstreamModel
+-		entry["description"] = "Available through MadAPI: " + slot.UpstreamModel
+-		entry["prefer_websockets"] = false
+-		entry["priority"] = index + 1
+-		models = append(models, entry)
++	catalog, err := buildCodexCockpitNativeCatalog(c, models)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadGateway, err)
++		return
+ 	}
+ 
+ 	c.Header("Cache-Control", "private, no-store")
+-	c.JSON(http.StatusOK, codexModelsResponse{Models: models})
++	c.Data(http.StatusOK, "application/json", catalog)
++}
++
++func buildCodexCockpitNativeCatalog(c *gin.Context, models []dto.OpenAIModels) ([]byte, error) {
++	available := make([]map[string]any, 0, len(models))
++	for _, candidate := range models {
++		available = append(available, codexAvailableModel(candidate))
++	}
++	body, err := common.Marshal(gin.H{"models": available})
++	if err != nil {
++		return nil, fmt.Errorf("encode CPA model catalog request: %w", err)
++	}
++
++	dispatchURL := strings.TrimSpace(os.Getenv(appconstant.MadAPICPADispatchURLEnv))
++	if dispatchURL == "" {
++		dispatchURL = defaultCodexCPADispatchURL
++	}
++	if !strings.HasSuffix(dispatchURL, "/execute") {
++		return nil, fmt.Errorf("CPA dispatch URL must end with /execute")
++	}
++	modelsURL := strings.TrimSuffix(dispatchURL, "/execute") + "/models"
++	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, modelsURL, bytes.NewReader(body))
++	if err != nil {
++		return nil, fmt.Errorf("create CPA model catalog request: %w", err)
++	}
++	req.Header.Set("Content-Type", "application/json")
++	req.Header.Set(appconstant.MadAPICodexDispatchHeader, strings.TrimSpace(os.Getenv(appconstant.MadAPICodexDispatchTokenEnv)))
++	resp, err := codexInternalHTTPClient.Do(req)
++	if err != nil {
++		return nil, fmt.Errorf("CPA model catalog request failed: %w", err)
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		return nil, fmt.Errorf("CPA model catalog request returned HTTP %d", resp.StatusCode)
++	}
++	catalog, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
++	if err != nil {
++		return nil, fmt.Errorf("read CPA model catalog: %w", err)
++	}
++	var decoded codexModelsResponse
++	if err = json.Unmarshal(catalog, &decoded); err != nil {
++		return nil, fmt.Errorf("decode CPA model catalog: %w", err)
++	}
++	if len(decoded.Models) != len(models) {
++		return nil, fmt.Errorf("CPA model catalog count mismatch: got %d, want %d", len(decoded.Models), len(models))
++	}
++	return catalog, nil
+ }
+ 
+ func rewriteCodexCockpitRequestBody(c *gin.Context, raw []byte) ([]byte, error) {
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index 2c7f5cce..16d7e65c 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -220,8 +220,9 @@ func TestCodexListModelsReflectsNewTextModelsWithoutServerRestart(t *testing.T)
+ 	require.Equal(t, int32(2), calls.Load())
+ }
+ 
+-func TestCodexCockpitListModelsPublishesEveryModelAndReusesOnlyFreeShells(t *testing.T) {
++func TestCodexCockpitListModelsUsesCPANativeCatalogForEveryRealModel(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
++	t.Setenv("MADAPI_CODEX_DISPATCH_TOKEN", "dispatch-secret")
+ 	modelNames := []string{
+ 		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
+ 		"claude-fable-5", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5",
+@@ -233,11 +234,34 @@ func TestCodexCockpitListModelsPublishesEveryModelAndReusesOnlyFreeShells(t *tes
+ 		data = append(data, fmt.Sprintf(`{"id":%q,"object":"model","supported_endpoint_types":["openai-response"]}`, modelName))
+ 	}
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+-		require.Equal(t, "/models", r.URL.Path)
+-		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+-		w.Header().Set("Content-Type", "application/json")
+-		_, _ = io.WriteString(w, `{"object":"list","data":[`+strings.Join(data, ",")+`]}`)
++		switch r.URL.Path {
++		case "/models":
++			require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
++			w.Header().Set("Content-Type", "application/json")
++			_, _ = io.WriteString(w, `{"object":"list","data":[`+strings.Join(data, ",")+`]}`)
++		case "/internal/madapi/codex/models":
++			require.Equal(t, "dispatch-secret", r.Header.Get("X-MadAPI-Codex-Dispatch-Token"))
++			var request struct {
++				Models []map[string]any `json:"models"`
++			}
++			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++			require.Len(t, request.Models, 15)
++			entries := make([]map[string]any, 0, len(request.Models))
++			for index, model := range request.Models {
++				entries = append(entries, map[string]any{
++					"slug":         model["id"],
++					"display_name": model["id"],
++					"visibility":   "list",
++					"comp_hash":    "2911",
++					"priority":     index + 1,
++				})
++			}
++			_ = json.NewEncoder(w).Encode(gin.H{"models": entries})
++		default:
++			t.Fatalf("unexpected path: %s", r.URL.Path)
++		}
+ 	}), modelNames...)
++	t.Setenv("MADAPI_CPA_DISPATCH_URL", codexInternalBaseURL+"/internal/madapi/codex/execute")
+ 
+ 	recorder := httptest.NewRecorder()
+ 	c, _ := gin.CreateTestContext(recorder)
+@@ -250,28 +274,34 @@ func TestCodexCockpitListModelsPublishesEveryModelAndReusesOnlyFreeShells(t *tes
+ 	var payload codexModelsResponse
+ 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+ 	require.Len(t, payload.Models, 15)
+-	clientModelByUpstream := make(map[string]string, len(payload.Models))
++	clientModels := make(map[string]map[string]any, len(payload.Models))
+ 	for _, entry := range payload.Models {
+-		clientModelByUpstream[entry["display_name"].(string)] = entry["slug"].(string)
+-		require.Equal(t, false, entry["prefer_websockets"])
++		clientModels[entry["slug"].(string)] = entry
++		require.Equal(t, "2911", entry["comp_hash"])
++	}
++	for _, modelName := range modelNames {
++		require.Contains(t, clientModels, modelName)
++		require.Equal(t, modelName, clientModels[modelName]["display_name"])
+ 	}
+-	require.Equal(t, "gpt-5.6-sol", clientModelByUpstream["gpt-5.6-sol"])
+-	require.Equal(t, "gpt-5.6-terra", clientModelByUpstream["gpt-5.6-terra"])
+-	require.Equal(t, "gpt-5.6-luna", clientModelByUpstream["gpt-5.6-luna"])
+-	require.Equal(t, "gpt-5.5", clientModelByUpstream["gpt-5.5"])
+-	require.Equal(t, "gpt-5.4", clientModelByUpstream["claude-fable-5"])
+-	require.Equal(t, "gpt-5.4-mini", clientModelByUpstream["claude-opus-4-8"])
+-	require.Equal(t, "gpt-5.3-codex", clientModelByUpstream["claude-opus-5"])
+-	require.Equal(t, "gpt-5.3-codex-spark", clientModelByUpstream["claude-sonnet-5"])
+-	require.Equal(t, "gpt-5.2", clientModelByUpstream["deepseek-v4-flash"])
+-	require.Equal(t, "deepseek-v4-pro", clientModelByUpstream["deepseek-v4-pro"])
+-	require.Equal(t, "qwen3.8-max-preview", clientModelByUpstream["qwen3.8-max-preview"])
+ }
+ 
+ func TestCodexCockpitListModelsReflectsNewRealModelWithoutServerRestart(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
++	t.Setenv("MADAPI_CODEX_DISPATCH_TOKEN", "dispatch-secret")
+ 	var calls atomic.Int32
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path == "/internal/madapi/codex/models" {
++			var request struct {
++				Models []map[string]any `json:"models"`
++			}
++			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++			entries := make([]map[string]any, 0, len(request.Models))
++			for _, model := range request.Models {
++				entries = append(entries, map[string]any{"slug": model["id"], "display_name": model["id"]})
++			}
++			_ = json.NewEncoder(w).Encode(gin.H{"models": entries})
++			return
++		}
+ 		call := calls.Add(1)
+ 		w.Header().Set("Content-Type", "application/json")
+ 		if call == 1 {
+@@ -280,6 +310,7 @@ func TestCodexCockpitListModelsReflectsNewRealModelWithoutServerRestart(t *testi
+ 		}
+ 		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"existing-model","object":"model","supported_endpoint_types":["openai-response"]},{"id":"future-model","object":"model","supported_endpoint_types":["openai-response"]}]}`)
+ 	}), "existing-model", "future-model")
++	t.Setenv("MADAPI_CPA_DISPATCH_URL", codexInternalBaseURL+"/internal/madapi/codex/execute")
+ 
+ 	wantCounts := []int{1, 2}
+ 	for _, wantCount := range wantCounts {

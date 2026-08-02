@@ -1,9 +1,9 @@
 diff --git a/internal/api/madapi_native_codex.go b/internal/api/madapi_native_codex.go
 new file mode 100644
-index 00000000..372d3355
+index 00000000..a8a79704
 --- /dev/null
 +++ b/internal/api/madapi_native_codex.go
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,286 @@
 +package api
 +
 +import (
@@ -23,6 +23,7 @@ index 00000000..372d3355
 +	"github.com/gin-gonic/gin"
 +	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 +	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
++	openaihandlers "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/openai"
 +	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 +	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 +	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
@@ -55,6 +56,10 @@ index 00000000..372d3355
 +	RequestPath string            `json:"request_path,omitempty"`
 +}
 +
++type madAPICodexModelsRequest struct {
++	Models []map[string]any `json:"models"`
++}
++
 +type madAPINativeExecutor interface {
 +	Execute(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
 +	ExecuteStream(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error)
@@ -64,6 +69,34 @@ index 00000000..372d3355
 +
 +func (s *Server) madAPINativeCodexExecute(c *gin.Context) {
 +	s.madAPINativeCodexExecuteWithFactory(c, madAPINativeExecutorForChannel)
++}
++
++func (s *Server) madAPICodexModels(c *gin.Context) {
++	if !madAPICodexDispatchAuthorized(c.Request) {
++		c.Status(http.StatusNotFound)
++		return
++	}
++
++	decoder := json.NewDecoder(io.LimitReader(c.Request.Body, madAPICodexDispatchMaxBody+1))
++	var request madAPICodexModelsRequest
++	if err := decoder.Decode(&request); err != nil {
++		writeMadAPINativeError(c, http.StatusBadRequest, fmt.Errorf("invalid models request: %w", err))
++		return
++	}
++	if len(request.Models) == 0 || len(request.Models) > 1000 {
++		writeMadAPINativeError(c, http.StatusBadRequest, errors.New("one to 1000 models are required"))
++		return
++	}
++	for _, model := range request.Models {
++		id, _ := model["id"].(string)
++		if strings.TrimSpace(id) == "" {
++			writeMadAPINativeError(c, http.StatusBadRequest, errors.New("every model requires an id"))
++			return
++		}
++	}
++
++	c.Header("Cache-Control", "private, no-store")
++	c.JSON(http.StatusOK, openaihandlers.CodexClientModelsResponse(request.Models))
 +}
 +
 +func (s *Server) madAPINativeCodexExecuteWithFactory(c *gin.Context, factory madAPINativeExecutorFactory) {
@@ -259,14 +292,15 @@ index 00000000..372d3355
 +}
 diff --git a/internal/api/madapi_native_codex_test.go b/internal/api/madapi_native_codex_test.go
 new file mode 100644
-index 00000000..0ab80e6e
+index 00000000..6457b527
 --- /dev/null
 +++ b/internal/api/madapi_native_codex_test.go
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,161 @@
 +package api
 +
 +import (
 +	"context"
++	"encoding/json"
 +	"net/http"
 +	"net/http/httptest"
 +	"strings"
@@ -278,6 +312,47 @@ index 00000000..0ab80e6e
 +	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 +	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 +)
++
++func TestMadAPICodexModelsUsesNativeCatalogBuilder(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	t.Setenv(madAPICodexDispatchTokenEnv, "dispatch-secret")
++	server := &Server{cfg: &config.Config{}}
++	router := gin.New()
++	router.POST("/internal/madapi/codex/models", server.madAPICodexModels)
++
++	body := `{"models":[{"id":"gpt-5.6-sol","object":"model"},{"id":"deepseek-v4-pro","object":"model","display_name":"deepseek-v4-pro"},{"id":"gemini-3.6-flash","object":"model"}]}`
++	req := httptest.NewRequest(http.MethodPost, "/internal/madapi/codex/models", strings.NewReader(body))
++	req.RemoteAddr = "127.0.0.1:41000"
++	req.Header.Set(madAPICodexDispatchHeader, "dispatch-secret")
++	recorder := httptest.NewRecorder()
++	router.ServeHTTP(recorder, req)
++
++	if recorder.Code != http.StatusOK {
++		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
++	}
++	var response struct {
++		Models []map[string]any `json:"models"`
++	}
++	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
++		t.Fatalf("decode response: %v", err)
++	}
++	if len(response.Models) != 3 {
++		t.Fatalf("model count = %d, want 3", len(response.Models))
++	}
++	var deepseek map[string]any
++	for _, model := range response.Models {
++		if model["slug"] == "deepseek-v4-pro" {
++			deepseek = model
++			break
++		}
++	}
++	if deepseek == nil {
++		t.Fatal("CPA-native catalog omitted the real deepseek model ID")
++	}
++	if deepseek["comp_hash"] != "2911" || deepseek["visibility"] != "list" {
++		t.Fatalf("CPA-native metadata was not applied: %#v", deepseek)
++	}
++}
 +
 +type madAPICaptureExecutor struct {
 +	auth *cliproxyauth.Auth
@@ -383,14 +458,15 @@ index 00000000..0ab80e6e
 +	}
 +}
 diff --git a/internal/api/server_routes.go b/internal/api/server_routes.go
-index 98127711..d0278afa 100644
+index 98127711..f0756938 100644
 --- a/internal/api/server_routes.go
 +++ b/internal/api/server_routes.go
-@@ -48,6 +48,7 @@ func (s *Server) setupRoutes() {
+@@ -48,6 +48,8 @@ func (s *Server) setupRoutes() {
  	}
  	s.engine.GET("/healthz", healthzHandler)
  	s.engine.HEAD("/healthz", healthzHandler)
 +	s.engine.POST("/internal/madapi/codex/execute", s.madAPINativeCodexExecute)
++	s.engine.POST("/internal/madapi/codex/models", s.madAPICodexModels)
  
  	s.engine.GET("/management.html", s.serveManagementControlPanel)
  	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)

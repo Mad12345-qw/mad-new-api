@@ -5,6 +5,17 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - 'README.md'
+      - 'assets/mad-codex/**'
+      - 'guards/**'
+      - 'patches/*codex*.patch'
+      - 'server/cpa-codex/**'
+      - 'site/**'
+      - 'tests/codex-installer-*'
+      - '.github/workflows/build-release.yml'
+      - '.github/workflows/publish-home.yml'
+      - '.github/workflows/sync-cpa-codex.yml'
 
 permissions:
   contents: write

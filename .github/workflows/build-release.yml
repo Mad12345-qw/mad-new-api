@@ -5,6 +5,10 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - 'detector-patches/**'
+      - 'server/model-detector/**'
+      - '.github/workflows/build-detector-release.yml'
   schedule:
     - cron: '0 18 * * 0'
 

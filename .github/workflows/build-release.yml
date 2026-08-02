@@ -54,6 +54,13 @@ jobs:
       - name: Check out build configuration
         uses: actions/checkout@v4
 
+      - name: Read pinned CPA commit
+        id: cpa-ref
+        run: |
+          sha=$(tr -d '[:space:]' < guards/cpa-upstream-commit.txt)
+          test ${#sha} -eq 40
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
       - name: Check out upstream New API
         uses: actions/checkout@v4
         with:
@@ -66,7 +73,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: router-for-me/CLIProxyAPI
-          ref: a63da8ae76b1a4e0c0486c3eb0fb7ccf8f33e69d
+          ref: ${{ steps.cpa-ref.outputs.sha }}
           path: cpa-source
           fetch-depth: 1
 
@@ -200,11 +207,15 @@ jobs:
       - name: Test CPA native deployment reconciliation
         run: python3 -m unittest server/cpa-codex/test_compose_reconcile.py
 
+      - name: Test disaster recovery tooling
+        run: python3 -m unittest discover -s server/disaster-recovery -p 'test_*.py'
+
       - name: Verify CPA deployment scripts
         run: |
           sh -n server/new-api-autoupdate.sh
           sh -n server/cpa-codex/entrypoint.sh
           sh -n server/cpa-codex/sidecar-autodeploy.sh
+          sh -n server/disaster-recovery/install.sh
 
       - name: Apply and test CPA native dispatcher
         working-directory: cpa-source
@@ -235,6 +246,7 @@ jobs:
           cp server/cpa-codex/sidecar-autodeploy.sh cpa-codex-autodeploy.sh
           cp server/cpa-codex/patch_nginx.py patch-cpa-codex-nginx.py
           cp server/cpa-codex/compose_reconcile.py compose-cpa-codex.py
+          cp guards/cpa-upstream-commit.txt cpa-upstream-commit.txt
           sha256sum mad-home.tar.gz > mad-home.tar.gz.sha256
           sha256sum image-url-compat.py > image-url-compat.py.sha256
           sha256sum image-url-compat.service > image-url-compat.service.sha256
@@ -243,6 +255,7 @@ jobs:
           sha256sum cpa-codex-autodeploy.sh > cpa-codex-autodeploy.sh.sha256
           sha256sum patch-cpa-codex-nginx.py > patch-cpa-codex-nginx.py.sha256
           sha256sum compose-cpa-codex.py > compose-cpa-codex.py.sha256
+          sha256sum cpa-upstream-commit.txt > cpa-upstream-commit.txt.sha256
           git -C source rev-parse HEAD > upstream-commit.txt
 
       - name: Publish stable release
@@ -272,6 +285,8 @@ jobs:
             patch-cpa-codex-nginx.py.sha256 \
             compose-cpa-codex.py \
             compose-cpa-codex.py.sha256 \
+            cpa-upstream-commit.txt \
+            cpa-upstream-commit.txt.sha256 \
             upstream-commit.txt \
             --title "Mad New API latest build" \
             --notes "Automated build from the pinned upstream New API source with Mad API billing, branding, recharge, multi-model playground, and image response compatibility customizations."

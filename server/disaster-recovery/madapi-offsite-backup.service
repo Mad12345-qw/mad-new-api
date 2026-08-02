@@ -1,0 +1,13 @@
+[Unit]
+Description=Publish an encrypted MadAPI production recovery snapshot
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/madapi-disaster-recovery/backup.py --publish
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=30min
+

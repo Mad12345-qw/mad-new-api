@@ -1,0 +1,271 @@
+diff --git a/controller/codex_cockpit.go b/controller/codex_cockpit.go
+new file mode 100644
+index 00000000..971143ac
+--- /dev/null
++++ b/controller/codex_cockpit.go
+@@ -0,0 +1,128 @@
++package controller
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"strings"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/dto"
++	"github.com/gin-gonic/gin"
++)
++
++const codexCockpitPathPrefix = "/codex/cockpit/v1/"
++
++type codexCockpitModelSlot struct {
++	ClientModel   string
++	UpstreamModel string
++}
++
++// Keep this first acceptance stage deliberately small. These are the same
++// official client shells used by Cockpit, isolated behind a dedicated route so
++// existing /codex/v1 callers retain their original model semantics.
++var codexCockpitModelSlots = []codexCockpitModelSlot{
++	{ClientModel: "gpt-5.6-sol", UpstreamModel: "claude-fable-5"},
++	{ClientModel: "gpt-5.6-terra", UpstreamModel: "claude-opus-4-8"},
++	{ClientModel: "gpt-5.6-luna", UpstreamModel: "claude-opus-5"},
++	{ClientModel: "gpt-5.5", UpstreamModel: "claude-sonnet-5"},
++	{ClientModel: "gpt-5.4", UpstreamModel: "deepseek-v4-flash"},
++	{ClientModel: "gpt-5.4-mini", UpstreamModel: "deepseek-v4-pro"},
++	{ClientModel: "gpt-5.3-codex", UpstreamModel: "gemini-3.6-flash"},
++	{ClientModel: "gpt-5.3-codex-spark", UpstreamModel: "glm-5-2"},
++}
++
++var codexCockpitModelAliases = func() map[string]string {
++	aliases := make(map[string]string, len(codexCockpitModelSlots))
++	for _, slot := range codexCockpitModelSlots {
++		aliases[strings.ToLower(slot.ClientModel)] = slot.UpstreamModel
++	}
++	return aliases
++}()
++
++func CodexCockpitListModels(c *gin.Context) {
++	req, err := newCodexInternalRequest(c, http.MethodGet, "/models", nil)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusInternalServerError, err)
++		return
++	}
++
++	resp, err := codexInternalHTTPClient.Do(req)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("model catalog request failed: %w", err))
++		return
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		proxyCodexErrorResponse(c, resp)
++		return
++	}
++
++	var upstream codexOpenAIModelsResponse
++	if err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&upstream); err != nil {
++		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("invalid model catalog response: %w", err))
++		return
++	}
++
++	textPricing := codexTextPricingProvider()
++	available := make(map[string]dto.OpenAIModels, len(upstream.Data))
++	for _, candidate := range upstream.Data {
++		if isCodexConversationModel(candidate, textPricing) {
++			available[strings.ToLower(strings.TrimSpace(candidate.Id))] = candidate
++		}
++	}
++
++	models := make([]map[string]any, 0, len(codexCockpitModelSlots))
++	for index, slot := range codexCockpitModelSlots {
++		candidate, ok := available[strings.ToLower(slot.UpstreamModel)]
++		if !ok {
++			continue
++		}
++		entry := buildCodexModel(candidate, index)
++		entry["slug"] = slot.ClientModel
++		entry["display_name"] = slot.UpstreamModel
++		entry["description"] = "Available through MadAPI: " + slot.UpstreamModel
++		entry["prefer_websockets"] = false
++		entry["priority"] = index + 1
++		models = append(models, entry)
++	}
++
++	c.Header("Cache-Control", "private, no-store")
++	c.JSON(http.StatusOK, codexModelsResponse{Models: models})
++}
++
++func rewriteCodexCockpitRequestBody(c *gin.Context, raw []byte) ([]byte, error) {
++	if c.Request == nil || c.Request.URL == nil || !strings.HasPrefix(c.Request.URL.Path, codexCockpitPathPrefix) {
++		return raw, nil
++	}
++
++	var payload map[string]json.RawMessage
++	if err := common.Unmarshal(raw, &payload); err != nil {
++		return nil, err
++	}
++	var requestedModel string
++	if err := common.Unmarshal(payload["model"], &requestedModel); err != nil {
++		return nil, fmt.Errorf("model is required")
++	}
++	upstreamModel, ok := codexCockpitModelAliases[strings.ToLower(strings.TrimSpace(requestedModel))]
++	if !ok {
++		return raw, nil
++	}
++	modelJSON, err := common.Marshal(upstreamModel)
++	if err != nil {
++		return nil, err
++	}
++	payload["model"] = modelJSON
++	rewritten, err := common.Marshal(payload)
++	if err != nil {
++		return nil, err
++	}
++
++	common.CleanupBodyStorage(c)
++	c.Set(common.KeyRequestBody, rewritten)
++	c.Request.Body = io.NopCloser(bytes.NewReader(rewritten))
++	c.Request.ContentLength = int64(len(rewritten))
++	return rewritten, nil
++}
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+index e00cc73..f9e74f6 100644
+--- a/controller/codex_compat.go
++++ b/controller/codex_compat.go
+@@ -157,6 +157,11 @@ func CodexResponses(c *gin.Context) {
+ 		codexCompatibilityError(c, http.StatusBadRequest, err)
+ 		return
+ 	}
++	originalBody, err = rewriteCodexCockpitRequestBody(c, originalBody)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadRequest, err)
++		return
++	}
+ 	responsesReq, err := helper.GetAndValidateResponsesRequest(c)
+ 	if err != nil {
+ 		codexCompatibilityError(c, http.StatusBadRequest, err)
+@@ -210,6 +215,11 @@ func CodexResponsesCompact(c *gin.Context) {
+ 		codexCompatibilityError(c, http.StatusBadRequest, err)
+ 		return
+ 	}
++	originalBody, err = rewriteCodexCockpitRequestBody(c, originalBody)
++	if err != nil {
++		codexCompatibilityError(c, http.StatusBadRequest, err)
++		return
++	}
+ 	var compactReq dto.OpenAIResponsesCompactionRequest
+ 	if err = common.Unmarshal(originalBody, &compactReq); err != nil || strings.TrimSpace(compactReq.Model) == "" {
+ 		codexCompatibilityError(c, http.StatusBadRequest, fmt.Errorf("invalid Responses compact request"))
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index 491a798..6033763 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -1,6 +1,7 @@
+ package controller
+ 
+ import (
++	"bytes"
+ 	"encoding/json"
+ 	"fmt"
+ 	"io"
+@@ -219,6 +220,74 @@ func TestCodexListModelsReflectsNewTextModelsWithoutServerRestart(t *testing.T)
+ 	require.Equal(t, int32(2), calls.Load())
+ }
+ 
++func TestCodexCockpitListModelsPublishesEightIsolatedModelShells(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	modelNames := make([]string, 0, len(codexCockpitModelSlots))
++	data := make([]string, 0, len(codexCockpitModelSlots))
++	for _, slot := range codexCockpitModelSlots {
++		modelNames = append(modelNames, slot.UpstreamModel)
++		data = append(data, fmt.Sprintf(`{"id":%q,"object":"model","supported_endpoint_types":["openai-response"]}`, slot.UpstreamModel))
++	}
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		require.Equal(t, "/models", r.URL.Path)
++		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"object":"list","data":[`+strings.Join(data, ",")+`]}`)
++	}), modelNames...)
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodGet, "/codex/cockpit/v1/models", nil)
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++
++	CodexCockpitListModels(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++	var payload codexModelsResponse
++	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
++	require.Len(t, payload.Models, 8)
++	for index, slot := range codexCockpitModelSlots {
++		require.Equal(t, slot.ClientModel, payload.Models[index]["slug"])
++		require.Equal(t, slot.UpstreamModel, payload.Models[index]["display_name"])
++		require.Equal(t, false, payload.Models[index]["prefer_websockets"])
++	}
++}
++
++func TestCodexCockpitResponsesRewritesOnlyTheIsolatedRoute(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		require.Equal(t, "/responses", r.URL.Path)
++		var request dto.OpenAIResponsesRequest
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
++		require.Equal(t, "claude-fable-5", request.Model)
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"id":"resp-test","object":"response","status":"completed","model":"claude-fable-5","output":[]}`)
++	}), "claude-fable-5")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/cockpit/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","input":"hello","stream":false}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++}
++
++func TestCodexCockpitAliasDoesNotChangeEstablishedCodexRoute(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	raw := []byte(`{"model":"gpt-5.6-sol","input":"hello"}`)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", bytes.NewReader(raw))
++
++	rewritten, err := rewriteCodexCockpitRequestBody(c, raw)
++
++	require.NoError(t, err)
++	require.Equal(t, raw, rewritten)
++}
++
+ func TestBuildCodexModelUsesPinnedCPACapabilityMetadata(t *testing.T) {
+ 	model := buildCodexModel(dto.OpenAIModels{
+ 		Id:      "claude-opus-4-8",
+diff --git a/router/relay-router.go b/router/relay-router.go
+index 57e8fbb..25ea0b2 100644
+--- a/router/relay-router.go
++++ b/router/relay-router.go
+@@ -27,6 +27,17 @@ func SetRelayRouter(router *gin.Engine) {
+ 		codexRouter.POST("/responses/compact", controller.CodexResponsesCompact)
+ 	}
+ 
++	// API-key Codex Desktop clients can opt into Cockpit-style model shells
++	// without changing the established CPA-compatible /codex/v1 surface.
++	codexCockpitRouter := router.Group("/codex/cockpit/v1")
++	codexCockpitRouter.Use(middleware.RouteTag("codex_cockpit_compat"))
++	codexCockpitRouter.Use(middleware.TokenAuth())
++	{
++		codexCockpitRouter.GET("/models", controller.CodexCockpitListModels)
++		codexCockpitRouter.POST("/responses", controller.CodexResponses)
++		codexCockpitRouter.POST("/responses/compact", controller.CodexResponsesCompact)
++	}
++
+ 	// https://platform.openai.com/docs/api-reference/introduction
+ 	modelsRouter := router.Group("/v1/models")
+ 	modelsRouter.Use(middleware.RouteTag("relay"))

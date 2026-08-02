@@ -118,6 +118,7 @@ jobs:
           files=(
             constant/madapi_codex.go
             controller/codex_catalog.go
+            controller/codex_cockpit.go
             controller/codex_compat.go
             controller/codex_compat_test.go
             controller/codex_websocket.go

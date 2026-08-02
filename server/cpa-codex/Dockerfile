@@ -14,6 +14,7 @@ RUN if [ "$CPA_PATCHED" != "1" ]; then \
 		git apply --check /patches/0001-madapi-native-codex-dispatch.patch \
 		&& git apply /patches/0001-madapi-native-codex-dispatch.patch; \
 	fi \
+	&& gofmt -w internal/api/madapi_native_codex.go internal/api/madapi_native_codex_test.go internal/api/server_routes.go \
 	&& go mod download \
 	&& CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o /out/CLIProxyAPI ./cmd/server/
 

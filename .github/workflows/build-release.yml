@@ -223,8 +223,13 @@ jobs:
         run: |
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
-          gofmt -w internal/api/madapi_native_codex.go internal/api/madapi_native_codex_test.go internal/api/server_routes.go
-          go test ./internal/api ./internal/runtime/executor
+          gofmt -w \
+            internal/api/madapi_native_codex.go \
+            internal/api/madapi_native_codex_test.go \
+            internal/api/server_routes.go \
+            internal/translator/gemini/openai/responses/gemini_openai-responses_response.go \
+            internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go
+          go test ./internal/translator/gemini/openai/responses ./internal/api ./internal/runtime/executor
 
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source

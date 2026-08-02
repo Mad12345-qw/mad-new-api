@@ -7,6 +7,42 @@ function ConvertTo-TomlBasicString([string]$Value) {
     return '"' + $escaped + '"'
 }
 
+function ConvertTo-XmlText([string]$Value) {
+    return [Security.SecurityElement]::Escape($Value)
+}
+
+function Register-CatalogRefreshTask([string]$RefreshScriptPath) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $sid = $identity.User.Value
+    $taskName = 'MadAPI Codex Model Catalog Refresh - ' + $sid
+    $startBoundary = (Get-Date).AddMinutes(1).ToString('s')
+    $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $RefreshScriptPath + '"'
+    $taskXml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled><UserId>$(ConvertTo-XmlText $sid)</UserId></LogonTrigger>
+    <CalendarTrigger>
+      <Repetition><Interval>PT5M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
+      <StartBoundary>$startBoundary</StartBoundary><Enabled>true</Enabled>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals><Principal id="Author"><UserId>$(ConvertTo-XmlText $sid)</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><ExecutionTimeLimit>PT2M</ExecutionTimeLimit></Settings>
+  <Actions Context="Author"><Exec><Command>powershell.exe</Command><Arguments>$(ConvertTo-XmlText $arguments)</Arguments></Exec></Actions>
+</Task>
+"@
+    $taskXmlPath = Join-Path ([IO.Path]::GetTempPath()) ('madapi-codex-task-' + [guid]::NewGuid().ToString('N') + '.xml')
+    try {
+        [IO.File]::WriteAllText($taskXmlPath, $taskXml, [Text.Encoding]::Unicode)
+        & schtasks.exe /Create /TN $taskName /XML $taskXmlPath /F | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to register the MadAPI model catalog refresh task.' }
+    } finally {
+        if (Test-Path -LiteralPath $taskXmlPath) { Remove-Item -LiteralPath $taskXmlPath -Force }
+    }
+}
+
 function Get-RootTomlString([string[]]$Lines, [string]$Key) {
     foreach ($line in $Lines) {
         if ($line -match '^\s*\[') { break }
@@ -42,19 +78,21 @@ $codexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) { Join-P
 $configPath = Join-Path $codexHome 'config.toml'
 $authPath = Join-Path $codexHome 'auth.json'
 $modelsCachePath = Join-Path $codexHome 'models_cache.json'
+$catalogPath = Join-Path $codexHome 'madapi-cockpit-model-catalog.json'
+$refreshScriptPath = Join-Path $codexHome 'madapi-refresh-model-catalog.ps1'
 $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
-$tempAuthPath = Join-Path $codexHome ("auth.json.madapi.$transactionId.tmp")
+$tempRefreshPath = Join-Path $codexHome ("madapi-refresh-model-catalog.$transactionId.tmp")
+$tempCatalogPath = Join-Path $codexHome ("madapi-cockpit-model-catalog.$transactionId.tmp")
 $backupPath = $null
-$authBackupPath = $null
 $hadConfig = Test-Path -LiteralPath $configPath
 $hadAuth = Test-Path -LiteralPath $authPath
 $configInstalled = $false
-$authInstalled = $false
+$testMode = [string]$env:MADAPI_INSTALL_TEST_MODE -eq '1'
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
-$authKind = 'apikey'
+$authKind = 'unconfigured'
 if ($hadAuth) {
     try {
         $existingAuth = [IO.File]::ReadAllText($authPath, $utf8Strict) | ConvertFrom-Json
@@ -62,8 +100,10 @@ if ($hadAuth) {
         throw 'Codex Desktop authentication state is unreadable. No files were changed.'
     }
     $modeProperty = $existingAuth.PSObject.Properties['auth_mode']
+    $apiKeyProperty = $existingAuth.PSObject.Properties['OPENAI_API_KEY']
     $tokensProperty = $existingAuth.PSObject.Properties['tokens']
     $existingMode = if ($null -eq $modeProperty) { '' } else { [string]$modeProperty.Value }
+    $existingApiKey = if ($null -eq $apiKeyProperty) { '' } else { [string]$apiKeyProperty.Value }
     $existingTokens = if ($null -eq $tokensProperty) { $null } else { $tokensProperty.Value }
     $accessProperty = if ($null -eq $existingTokens) { $null } else { $existingTokens.PSObject.Properties['access_token'] }
     $refreshProperty = if ($null -eq $existingTokens) { $null } else { $existingTokens.PSObject.Properties['refresh_token'] }
@@ -72,8 +112,8 @@ if ($hadAuth) {
     $hasOAuthTokens = -not [string]::IsNullOrWhiteSpace($existingAccessToken) -and -not [string]::IsNullOrWhiteSpace($existingRefreshToken)
     if ($existingMode -ne 'apikey' -and $hasOAuthTokens) {
         $authKind = 'oauth'
-    } elseif ($existingMode -eq 'chatgpt') {
-        throw 'The existing ChatGPT OAuth session is incomplete. Sign in again or sign out before using API Key setup. No files were changed.'
+    } elseif ($existingMode -eq 'apikey' -or -not [string]::IsNullOrWhiteSpace($existingApiKey)) {
+        $authKind = 'apikey'
     }
 }
 
@@ -127,6 +167,7 @@ foreach ($line in $sourceLines) {
 
 $configLines = New-Object 'System.Collections.Generic.List[string]'
 $configLines.Add('model_provider = ' + (ConvertTo-TomlBasicString $providerId))
+$configLines.Add('model_catalog_json = "madapi-cockpit-model-catalog.json"')
 if (-not $hadConfig) {
     $configLines.Add('model = "gpt-5.6-sol"')
     $configLines.Add('model_reasoning_effort = "high"')
@@ -137,10 +178,10 @@ foreach ($line in $keptLines) { $configLines.Add($line) }
 $configLines.Add('')
 $configLines.Add('[' + $targetProviderSection + ']')
 $configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
-$configLines.Add('base_url = "https://mad.myddns.me/codex/v1"')
+$configLines.Add('base_url = "https://mad.myddns.me/codex/cockpit/v1"')
 $configLines.Add('wire_api = "responses"')
-$configLines.Add('requires_openai_auth = ' + $(if ($authKind -eq 'oauth') { 'true' } else { 'false' }))
-if ($authKind -eq 'oauth') {
+$configLines.Add('requires_openai_auth = ' + $(if ($authKind -eq 'apikey') { 'false' } else { 'true' }))
+if ($authKind -ne 'apikey') {
     $configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
 }
 $configLines.Add('stream_idle_timeout_ms = 360000')
@@ -157,42 +198,60 @@ if ($authKind -eq 'apikey') {
 
 try {
     [IO.File]::WriteAllText($tempConfigPath, (($configLines -join [Environment]::NewLine).Trim() + [Environment]::NewLine), $utf8NoBom)
-    if ($authKind -eq 'apikey') {
-        $apiAuth = [ordered]@{ auth_mode = 'apikey'; OPENAI_API_KEY = $apiKey } | ConvertTo-Json -Compress
-        [IO.File]::WriteAllText($tempAuthPath, $apiAuth, $utf8NoBom)
+    $refreshSource = [string]$env:MADAPI_REFRESH_SCRIPT_SOURCE
+    if ([string]::IsNullOrWhiteSpace($refreshSource) -and -not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        $candidateSource = Join-Path $PSScriptRoot 'refresh-model-catalog.ps1'
+        if (Test-Path -LiteralPath $candidateSource) { $refreshSource = $candidateSource }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($refreshSource)) {
+        [IO.File]::WriteAllBytes($tempRefreshPath, [IO.File]::ReadAllBytes($refreshSource))
+    } elseif ($testMode) {
+        throw 'MADAPI_REFRESH_SCRIPT_SOURCE is required in installer test mode.'
+    } else {
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://mad.myddns.me/mad-codex/refresh-model-catalog.ps1' -OutFile $tempRefreshPath
+    }
+    if (-not (Test-Path -LiteralPath $tempRefreshPath) -or (Get-Item -LiteralPath $tempRefreshPath).Length -lt 100) {
+        throw 'The MadAPI model catalog refresh script is invalid.'
+    }
+    if ($testMode) {
+        [IO.File]::WriteAllText($tempCatalogPath, '{"models":[{"slug":"gpt-5.6-sol","display_name":"gpt-5.6-sol"}]}', $utf8NoBom)
+    } else {
+        $stagingHome = Join-Path $codexHome ('madapi-catalog-stage-' + $transactionId)
+        New-Item -ItemType Directory -Path $stagingHome -Force | Out-Null
+        try {
+            [IO.File]::Copy($tempConfigPath, (Join-Path $stagingHome 'config.toml'), $true)
+            & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tempRefreshPath -CodexHome $stagingHome
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to download the initial MadAPI model catalog.' }
+            Move-Item -LiteralPath (Join-Path $stagingHome 'madapi-cockpit-model-catalog.json') -Destination $tempCatalogPath -Force
+        } finally {
+            if (Test-Path -LiteralPath $stagingHome) { Remove-Item -LiteralPath $stagingHome -Recurse -Force }
+        }
+        Register-CatalogRefreshTask $refreshScriptPath
     }
     if ($hadConfig) {
         $backupPath = '{0}.madapi-backup-{1}' -f $configPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
         [IO.File]::Copy($configPath, $backupPath, $false)
     }
-    if ($authKind -eq 'apikey' -and $hadAuth) {
-        $authBackupPath = '{0}.madapi-backup-{1}' -f $authPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
-        [IO.File]::Copy($authPath, $authBackupPath, $false)
-    }
-    if ($authKind -eq 'apikey') {
-        Move-Item -LiteralPath $tempAuthPath -Destination $authPath -Force
-        $authInstalled = $true
-    }
     Move-Item -LiteralPath $tempConfigPath -Destination $configPath -Force
     $configInstalled = $true
+    Move-Item -LiteralPath $tempRefreshPath -Destination $refreshScriptPath -Force
+    Move-Item -LiteralPath $tempCatalogPath -Destination $catalogPath -Force
     if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
 } catch {
     if ($configInstalled) {
         if ($hadConfig -and $null -ne $backupPath -and (Test-Path -LiteralPath $backupPath)) { [IO.File]::Copy($backupPath, $configPath, $true) }
         elseif (-not $hadConfig -and (Test-Path -LiteralPath $configPath)) { Remove-Item -LiteralPath $configPath -Force }
     }
-    if ($authInstalled) {
-        if ($hadAuth -and $null -ne $authBackupPath -and (Test-Path -LiteralPath $authBackupPath)) { [IO.File]::Copy($authBackupPath, $authPath, $true) }
-        elseif (-not $hadAuth -and (Test-Path -LiteralPath $authPath)) { Remove-Item -LiteralPath $authPath -Force }
-    }
     throw
 } finally {
     if (Test-Path -LiteralPath $tempConfigPath) { Remove-Item -LiteralPath $tempConfigPath -Force }
-    if (Test-Path -LiteralPath $tempAuthPath) { Remove-Item -LiteralPath $tempAuthPath -Force }
+    if (Test-Path -LiteralPath $tempRefreshPath) { Remove-Item -LiteralPath $tempRefreshPath -Force }
+    if (Test-Path -LiteralPath $tempCatalogPath) { Remove-Item -LiteralPath $tempCatalogPath -Force }
 }
 
 Write-Host "MadAPI Codex desktop configuration installed: $configPath"
 if ($null -ne $backupPath) { Write-Host "Backup created: $backupPath" }
-if ($null -ne $authBackupPath) { Write-Host "Authentication backup created: $authBackupPath" }
-if ($authKind -eq 'oauth') { Write-Host 'Existing ChatGPT OAuth session preserved.' } else { Write-Host 'Codex Desktop API Key sign-in configured.' }
+if ($authKind -eq 'oauth') { Write-Host 'Existing ChatGPT OAuth session preserved.' }
+elseif ($authKind -eq 'apikey') { Write-Host 'Existing Codex Desktop API Key sign-in preserved.' }
+else { Write-Host 'Codex Desktop sign-in was not changed. Choose ChatGPT OAuth or API Key when Codex opens.' }
 Write-Host 'Restart Codex Desktop to refresh the model list.'

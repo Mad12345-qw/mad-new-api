@@ -1,9 +1,9 @@
 diff --git a/internal/api/madapi_native_codex.go b/internal/api/madapi_native_codex.go
 new file mode 100644
-index 00000000..cb3bf0da
+index 00000000..372d3355
 --- /dev/null
 +++ b/internal/api/madapi_native_codex.go
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,253 @@
 +package api
 +
 +import (
@@ -98,7 +98,7 @@ index 00000000..cb3bf0da
 +
 +	metadata := map[string]any{
 +		cliproxyexecutor.RequestedModelMetadataKey: dispatch.Model,
-+		cliproxyexecutor.RequestPathMetadataKey:   dispatch.RequestPath,
++		cliproxyexecutor.RequestPathMetadataKey:    dispatch.RequestPath,
 +	}
 +	req := cliproxyexecutor.Request{
 +		Model:    dispatch.Model,
@@ -156,8 +156,8 @@ index 00000000..cb3bf0da
 +
 +func madAPINativeAuth(dispatch madAPINativeCodexRequest, provider string) *cliproxyauth.Auth {
 +	attributes := map[string]string{
-+		"api_key":  dispatch.APIKey,
-+		"base_url": madAPINativeBaseURL(dispatch.BaseURL, provider),
++		"api_key":   dispatch.APIKey,
++		"base_url":  strings.TrimRight(strings.TrimSpace(dispatch.BaseURL), "/"),
 +		"auth_kind": "api",
 +	}
 +	if provider == "xai" {
@@ -175,17 +175,6 @@ index 00000000..cb3bf0da
 +		Provider:   provider,
 +		Attributes: attributes,
 +	}
-+}
-+
-+func madAPINativeBaseURL(rawBaseURL, provider string) string {
-+	baseURL := strings.TrimRight(strings.TrimSpace(rawBaseURL), "/")
-+	switch provider {
-+	case "xai", "madapi-selected-channel":
-+		if baseURL != "" && !strings.HasSuffix(strings.ToLower(baseURL), "/v1") {
-+			baseURL += "/v1"
-+		}
-+	}
-+	return baseURL
 +}
 +
 +func madAPICodexDispatchAuthorized(request *http.Request) bool {
@@ -270,10 +259,10 @@ index 00000000..cb3bf0da
 +}
 diff --git a/internal/api/madapi_native_codex_test.go b/internal/api/madapi_native_codex_test.go
 new file mode 100644
-index 00000000..5eafc2fa
+index 00000000..0ab80e6e
 --- /dev/null
 +++ b/internal/api/madapi_native_codex_test.go
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,119 @@
 +package api
 +
 +import (
@@ -393,25 +382,6 @@ index 00000000..5eafc2fa
 +		}
 +	}
 +}
-+
-+func TestMadAPINativeBaseURLMatchesCPAExecutorContract(t *testing.T) {
-+	tests := []struct {
-+		baseURL  string
-+		provider string
-+		want     string
-+	}{
-+		{"https://api.x.ai", "xai", "https://api.x.ai/v1"},
-+		{"https://api.x.ai/v1/", "xai", "https://api.x.ai/v1"},
-+		{"https://proxy.example/openai", "madapi-selected-channel", "https://proxy.example/openai/v1"},
-+		{"https://api.anthropic.com/", "claude", "https://api.anthropic.com"},
-+		{"https://generativelanguage.googleapis.com/", "gemini", "https://generativelanguage.googleapis.com"},
-+	}
-+	for _, test := range tests {
-+		if got := madAPINativeBaseURL(test.baseURL, test.provider); got != test.want {
-+			t.Fatalf("base URL %q provider %q => %q, want %q", test.baseURL, test.provider, got, test.want)
-+		}
-+	}
-+}
 diff --git a/internal/api/server_routes.go b/internal/api/server_routes.go
 index 98127711..d0278afa 100644
 --- a/internal/api/server_routes.go
@@ -424,3 +394,260 @@ index 98127711..d0278afa 100644
  
  	s.engine.GET("/management.html", s.serveManagementControlPanel)
  	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
+diff --git a/internal/translator/gemini/openai/responses/gemini_openai-responses_response.go b/internal/translator/gemini/openai/responses/gemini_openai-responses_response.go
+index 4fb0bf00..e3a5af2b 100644
+--- a/internal/translator/gemini/openai/responses/gemini_openai-responses_response.go
++++ b/internal/translator/gemini/openai/responses/gemini_openai-responses_response.go
+@@ -68,6 +68,7 @@ type geminiToResponsesState struct {
+ 	FuncNames        map[int]string
+ 	FuncCallIDs      map[int]string
+ 	FuncDone         map[int]bool
++	PendingFuncIndex int
+ 	SanitizedNameMap map[string]string
+ }
+ 
+@@ -122,6 +123,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
+ 			FuncNames:               make(map[int]string),
+ 			FuncCallIDs:             make(map[int]string),
+ 			FuncDone:                make(map[int]bool),
++			PendingFuncIndex:        -1,
+ 			DetachedReasoning:       make(map[int]geminiDetachedReasoningItem),
+ 			CompletedMessages:       make(map[int]geminiCompletedMessageItem),
+ 			CompletedReasoning:      make(map[int]geminiCompletedReasoningItem),
+@@ -181,6 +183,56 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
+ 
+ 	var out [][]byte
+ 	nextSeq := func() int { st.Seq++; return st.Seq }
++	emitFunctionCall := func(idx int) {
++		if idx < 0 || st.FuncDone[idx] {
++			return
++		}
++		argsJSON := "{}"
++		if builder := st.FuncArgsBuf[idx]; builder != nil && builder.Len() > 0 {
++			argsJSON = builder.String()
++		}
++		callID := st.FuncCallIDs[idx]
++		itemID := fmt.Sprintf("fc_%s", callID)
++
++		item := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}`)
++		item, _ = sjson.SetBytes(item, "sequence_number", nextSeq())
++		item, _ = sjson.SetBytes(item, "output_index", idx)
++		item, _ = sjson.SetBytes(item, "item.id", itemID)
++		item, _ = sjson.SetBytes(item, "item.call_id", callID)
++		item, _ = sjson.SetBytes(item, "item.name", st.FuncNames[idx])
++		out = append(out, emitEvent("response.output_item.added", item))
++
++		argsDelta := []byte(`{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`)
++		argsDelta, _ = sjson.SetBytes(argsDelta, "sequence_number", nextSeq())
++		argsDelta, _ = sjson.SetBytes(argsDelta, "item_id", itemID)
++		argsDelta, _ = sjson.SetBytes(argsDelta, "output_index", idx)
++		argsDelta, _ = sjson.SetBytes(argsDelta, "delta", argsJSON)
++		out = append(out, emitEvent("response.function_call_arguments.delta", argsDelta))
++
++		argsDone := []byte(`{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}`)
++		argsDone, _ = sjson.SetBytes(argsDone, "sequence_number", nextSeq())
++		argsDone, _ = sjson.SetBytes(argsDone, "item_id", itemID)
++		argsDone, _ = sjson.SetBytes(argsDone, "output_index", idx)
++		argsDone, _ = sjson.SetBytes(argsDone, "arguments", argsJSON)
++		out = append(out, emitEvent("response.function_call_arguments.done", argsDone))
++
++		itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}`)
++		itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
++		itemDone, _ = sjson.SetBytes(itemDone, "output_index", idx)
++		itemDone, _ = sjson.SetBytes(itemDone, "item.id", itemID)
++		itemDone, _ = sjson.SetBytes(itemDone, "item.arguments", argsJSON)
++		itemDone, _ = sjson.SetBytes(itemDone, "item.call_id", callID)
++		itemDone, _ = sjson.SetBytes(itemDone, "item.name", st.FuncNames[idx])
++		out = append(out, emitEvent("response.output_item.done", itemDone))
++		st.FuncDone[idx] = true
++	}
++	flushPendingFunction := func() {
++		if st.PendingFuncIndex < 0 {
++			return
++		}
++		emitFunctionCall(st.PendingFuncIndex)
++		st.PendingFuncIndex = -1
++	}
+ 
+ 	reasoningEncryptedContent := func() string {
+ 		if st.ReasoningEnc == "" || st.ReasoningDirection == "" {
+@@ -458,6 +510,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
+ 
+ 			// Reasoning text
+ 			if isThought {
++				flushPendingFunction()
+ 				if st.PendingReasoningSignature != "" && st.MsgOpened && !st.MsgClosed {
+ 					emitTrailingDetachedReasoning(st.PendingReasoningSignature)
+ 					st.PendingReasoningSignature = ""
+@@ -513,6 +566,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
+ 
+ 			// Assistant visible text
+ 			if t := part.Get("text"); t.Exists() && t.String() != "" {
++				flushPendingFunction()
+ 				if signature == "" && st.PendingReasoningSignature != "" && st.MsgOpened && !st.MsgClosed {
+ 					emitTrailingDetachedReasoning(st.PendingReasoningSignature)
+ 					st.PendingReasoningSignature = ""
+@@ -562,64 +616,42 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
+ 				finalizeMessage()
+ 				st.LastSemanticKind = geminiResponsesCarrierFunction
+ 				name := util.RestoreSanitizedToolName(st.SanitizedNameMap, fc.Get("name").String())
+-				idx := st.NextIndex
+-				st.NextIndex++
+-				// Ensure buffers
+-				if st.FuncArgsBuf[idx] == nil {
+-					st.FuncArgsBuf[idx] = &strings.Builder{}
++				args := fc.Get("args")
++				argsJSON := "{}"
++				if args.Exists() && args.Raw != "" {
++					argsJSON = args.Raw
+ 				}
+-				if st.FuncCallIDs[idx] == "" {
++
++				idx := st.PendingFuncIndex
++				if idx >= 0 {
++					pendingName := st.FuncNames[idx]
++					mergeContinuation := name == "" || (pendingName == name && args.Exists() && argsJSON != "{}")
++					if !mergeContinuation {
++						flushPendingFunction()
++						idx = -1
++					}
++				}
++				if idx < 0 {
++					idx = st.NextIndex
++					st.NextIndex++
++					st.PendingFuncIndex = idx
++					st.FuncArgsBuf[idx] = &strings.Builder{}
+ 					st.FuncCallIDs[idx] = fmt.Sprintf("call_%d_%d", time.Now().UnixNano(), atomic.AddUint64(&funcCallIDCounter, 1))
+ 				}
+-				st.FuncNames[idx] = name
+-
+-				argsJSON := "{}"
+-				if args := fc.Get("args"); args.Exists() {
+-					argsJSON = args.Raw
++				if name != "" {
++					st.FuncNames[idx] = name
+ 				}
+-				if st.FuncArgsBuf[idx].Len() == 0 && argsJSON != "" {
++				if args.Exists() {
++					st.FuncArgsBuf[idx].Reset()
+ 					st.FuncArgsBuf[idx].WriteString(argsJSON)
+ 				}
+ 
+-				// Emit item.added for function call
+-				item := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}`)
+-				item, _ = sjson.SetBytes(item, "sequence_number", nextSeq())
+-				item, _ = sjson.SetBytes(item, "output_index", idx)
+-				item, _ = sjson.SetBytes(item, "item.id", fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]))
+-				item, _ = sjson.SetBytes(item, "item.call_id", st.FuncCallIDs[idx])
+-				item, _ = sjson.SetBytes(item, "item.name", name)
+-				out = append(out, emitEvent("response.output_item.added", item))
+-
+-				// Emit arguments delta (full args in one chunk).
+-				// When Gemini omits args, emit "{}" to keep Responses streaming event order consistent.
+-				if argsJSON != "" {
+-					ad := []byte(`{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`)
+-					ad, _ = sjson.SetBytes(ad, "sequence_number", nextSeq())
+-					ad, _ = sjson.SetBytes(ad, "item_id", fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]))
+-					ad, _ = sjson.SetBytes(ad, "output_index", idx)
+-					ad, _ = sjson.SetBytes(ad, "delta", argsJSON)
+-					out = append(out, emitEvent("response.function_call_arguments.delta", ad))
+-				}
+-
+-				// Gemini emits the full function call payload at once, so we can finalize it immediately.
+-				if !st.FuncDone[idx] {
+-					fcDone := []byte(`{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}`)
+-					fcDone, _ = sjson.SetBytes(fcDone, "sequence_number", nextSeq())
+-					fcDone, _ = sjson.SetBytes(fcDone, "item_id", fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]))
+-					fcDone, _ = sjson.SetBytes(fcDone, "output_index", idx)
+-					fcDone, _ = sjson.SetBytes(fcDone, "arguments", argsJSON)
+-					out = append(out, emitEvent("response.function_call_arguments.done", fcDone))
+-
+-					itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}`)
+-					itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
+-					itemDone, _ = sjson.SetBytes(itemDone, "output_index", idx)
+-					itemDone, _ = sjson.SetBytes(itemDone, "item.id", fmt.Sprintf("fc_%s", st.FuncCallIDs[idx]))
+-					itemDone, _ = sjson.SetBytes(itemDone, "item.arguments", argsJSON)
+-					itemDone, _ = sjson.SetBytes(itemDone, "item.call_id", st.FuncCallIDs[idx])
+-					itemDone, _ = sjson.SetBytes(itemDone, "item.name", st.FuncNames[idx])
+-					out = append(out, emitEvent("response.output_item.done", itemDone))
+-
+-					st.FuncDone[idx] = true
++				// Some Gemini-compatible providers split one function call into a
++				// name-only empty object followed by an args-only fragment. Keep
++				// incomplete calls pending, then publish exactly one Responses item.
++				if st.FuncNames[idx] != "" && args.Exists() && argsJSON != "{}" && argsJSON != "null" {
++					emitFunctionCall(idx)
++					st.PendingFuncIndex = -1
+ 				}
+ 
+ 				return true
+@@ -631,6 +663,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
+ 
+ 	// Finalization on finishReason
+ 	if fr := root.Get("candidates.0.finishReason"); fr.Exists() && fr.String() != "" {
++		flushPendingFunction()
+ 		if st.PendingReasoningSignature != "" {
+ 			emitTrailingDetachedReasoning(st.PendingReasoningSignature)
+ 			st.PendingReasoningSignature = ""
+diff --git a/internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go b/internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go
+index 4e86ef16..cba1660c 100644
+--- a/internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go
++++ b/internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go
+@@ -1255,6 +1255,57 @@ func TestConvertGeminiResponseToOpenAIResponses_FunctionCallEventOrder(t *testin
+ 	}
+ }
+ 
++func TestConvertGeminiResponseToOpenAIResponses_MergesSplitFunctionCall(t *testing.T) {
++	in := []string{
++		`data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"shell_command","args":{}}}]}}],"modelVersion":"gemini-compatible","responseId":"split-function"}}`,
++		`data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"","args":{"command":"Get-ChildItem"}}}]}}],"modelVersion":"gemini-compatible","responseId":"split-function"}}`,
++		`data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":""}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":1,"totalTokenCount":11},"modelVersion":"gemini-compatible","responseId":"split-function"}}`,
++	}
++
++	var param any
++	var out [][]byte
++	for _, line := range in {
++		out = append(out, ConvertGeminiResponseToOpenAIResponses(context.Background(), "gemini-compatible", nil, nil, []byte(line), &param)...)
++	}
++
++	added := 0
++	done := 0
++	completedCalls := 0
++	for _, chunk := range out {
++		event, data := parseSSEEvent(t, chunk)
++		switch event {
++		case "response.output_item.added":
++			if data.Get("item.type").String() == "function_call" {
++				added++
++				if data.Get("item.name").String() != "shell_command" {
++					t.Fatalf("added function name = %q", data.Get("item.name").String())
++				}
++			}
++		case "response.output_item.done":
++			if data.Get("item.type").String() == "function_call" {
++				done++
++				if data.Get("item.name").String() != "shell_command" || gjson.Get(data.Get("item.arguments").String(), "command").String() != "Get-ChildItem" {
++					t.Fatalf("invalid merged function item: %s", data.Get("item").Raw)
++				}
++			}
++		case "response.completed":
++			for _, item := range data.Get("response.output").Array() {
++				if item.Get("type").String() != "function_call" {
++					continue
++				}
++				completedCalls++
++				if item.Get("name").String() != "shell_command" || gjson.Get(item.Get("arguments").String(), "command").String() != "Get-ChildItem" {
++					t.Fatalf("invalid completed function item: %s", item.Raw)
++				}
++			}
++		}
++	}
++
++	if added != 1 || done != 1 || completedCalls != 1 {
++		t.Fatalf("split function emitted duplicates: added=%d done=%d completed=%d", added, done, completedCalls)
++	}
++}
++
+ func TestConvertGeminiResponseToOpenAIResponses_ResponseOutputOrdering(t *testing.T) {
+ 	in := []string{
+ 		`data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"tool0","args":{"x":"y"}}}]}}],"modelVersion":"test-model","responseId":"req_vrtx_2"},"traceId":"t2"}`,

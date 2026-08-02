@@ -1,9 +1,9 @@
 diff --git a/internal/api/madapi_native_codex.go b/internal/api/madapi_native_codex.go
 new file mode 100644
-index 00000000..8ddfcacc
+index 00000000..cb3bf0da
 --- /dev/null
 +++ b/internal/api/madapi_native_codex.go
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,264 @@
 +package api
 +
 +import (
@@ -157,7 +157,7 @@ index 00000000..8ddfcacc
 +func madAPINativeAuth(dispatch madAPINativeCodexRequest, provider string) *cliproxyauth.Auth {
 +	attributes := map[string]string{
 +		"api_key":  dispatch.APIKey,
-+		"base_url": strings.TrimRight(strings.TrimSpace(dispatch.BaseURL), "/"),
++		"base_url": madAPINativeBaseURL(dispatch.BaseURL, provider),
 +		"auth_kind": "api",
 +	}
 +	if provider == "xai" {
@@ -175,6 +175,17 @@ index 00000000..8ddfcacc
 +		Provider:   provider,
 +		Attributes: attributes,
 +	}
++}
++
++func madAPINativeBaseURL(rawBaseURL, provider string) string {
++	baseURL := strings.TrimRight(strings.TrimSpace(rawBaseURL), "/")
++	switch provider {
++	case "xai", "madapi-selected-channel":
++		if baseURL != "" && !strings.HasSuffix(strings.ToLower(baseURL), "/v1") {
++			baseURL += "/v1"
++		}
++	}
++	return baseURL
 +}
 +
 +func madAPICodexDispatchAuthorized(request *http.Request) bool {
@@ -259,10 +270,10 @@ index 00000000..8ddfcacc
 +}
 diff --git a/internal/api/madapi_native_codex_test.go b/internal/api/madapi_native_codex_test.go
 new file mode 100644
-index 00000000..0ab80e6e
+index 00000000..5eafc2fa
 --- /dev/null
 +++ b/internal/api/madapi_native_codex_test.go
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,138 @@
 +package api
 +
 +import (
@@ -379,6 +390,25 @@ index 00000000..0ab80e6e
 +		exec, provider := madAPINativeExecutorForChannel(cfg, test.channelType)
 +		if exec == nil || provider != test.provider {
 +			t.Fatalf("channel %d => executor %T provider %q", test.channelType, exec, provider)
++		}
++	}
++}
++
++func TestMadAPINativeBaseURLMatchesCPAExecutorContract(t *testing.T) {
++	tests := []struct {
++		baseURL  string
++		provider string
++		want     string
++	}{
++		{"https://api.x.ai", "xai", "https://api.x.ai/v1"},
++		{"https://api.x.ai/v1/", "xai", "https://api.x.ai/v1"},
++		{"https://proxy.example/openai", "madapi-selected-channel", "https://proxy.example/openai/v1"},
++		{"https://api.anthropic.com/", "claude", "https://api.anthropic.com"},
++		{"https://generativelanguage.googleapis.com/", "gemini", "https://generativelanguage.googleapis.com"},
++	}
++	for _, test := range tests {
++		if got := madAPINativeBaseURL(test.baseURL, test.provider); got != test.want {
++			t.Fatalf("base URL %q provider %q => %q, want %q", test.baseURL, test.provider, got, test.want)
 +		}
 +	}
 +}

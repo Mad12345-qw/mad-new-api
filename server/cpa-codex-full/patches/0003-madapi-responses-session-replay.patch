@@ -1,0 +1,228 @@
+diff --git a/sdk/api/handlers/openai/madapi_responses_session.go b/sdk/api/handlers/openai/madapi_responses_session.go
+new file mode 100644
+index 0000000..93468a5
+--- /dev/null
++++ b/sdk/api/handlers/openai/madapi_responses_session.go
+@@ -0,0 +1,74 @@
++package openai
++
++import (
++	"bytes"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++const (
++	madAPIResponseSessionTTL = 30 * time.Minute
++	madAPIResponseSessionMaxBytes = 8 << 20
++	madAPIResponseSessionMaxItems = 4096
++)
++
++type madAPIResponseSessionState struct { input, output []byte; updated time.Time }
++var madAPIResponseSessions = struct { sync.Mutex; entries map[string]madAPIResponseSessionState }{entries: make(map[string]madAPIResponseSessionState)}
++
++func madAPIResponseSessionScope(request *http.Request) string {
++	if request == nil { return "" }
++	credential := strings.TrimSpace(request.Header.Get("X-MadAPI-Authorization"))
++	if credential == "" { return "" }
++	digest := sha256.Sum256([]byte(credential))
++	return hex.EncodeToString(digest[:])
++}
++
++func prepareMadAPIResponseSessionRequest(scope string, rawJSON []byte) ([]byte, error) {
++	if scope == "" { return rawJSON, nil }
++	previousID := strings.TrimSpace(gjson.GetBytes(rawJSON, "previous_response_id").String())
++	if previousID == "" { return rawJSON, nil }
++	state, ok := getMadAPIResponseSession(scope, previousID)
++	if !ok { return nil, errors.New("Codex response context expired; compact or restart the conversation") }
++	nextInput := gjson.GetBytes(rawJSON, "input")
++	if !nextInput.IsArray() { return nil, errors.New("Codex continuation requires array input") }
++	merged, err := mergeMadAPIResponseItems(state.input, state.output, []byte(nextInput.Raw))
++	if err != nil { return nil, err }
++	if len(merged) > madAPIResponseSessionMaxBytes { return nil, errors.New("Codex response context exceeds the replay limit; compact the conversation") }
++	prepared, err := sjson.SetRawBytes(rawJSON, "input", merged)
++	if err != nil { return nil, err }
++	return sjson.DeleteBytes(prepared, "previous_response_id")
++}
++
++func mergeMadAPIResponseItems(parts ...[]byte) ([]byte, error) {
++	items := make([]json.RawMessage, 0)
++	for _, part := range parts { var current []json.RawMessage; if err := json.Unmarshal(part, &current); err != nil { return nil, errors.New("decode Codex response transcript") }; items = append(items, current...) }
++	return json.Marshal(items)
++}
++
++func rememberMadAPIResponseSession(scope string, rawJSON, response []byte) {
++	if scope == "" { return }
++	if nested := gjson.GetBytes(response, "response"); gjson.GetBytes(response, "type").String() == "response.completed" && nested.IsObject() { response = []byte(nested.Raw) }
++	responseID := strings.TrimSpace(gjson.GetBytes(response, "id").String()); input := gjson.GetBytes(rawJSON, "input"); output := gjson.GetBytes(response, "output")
++	if responseID == "" || !input.IsArray() || !output.IsArray() || len(input.Raw)+len(output.Raw) > madAPIResponseSessionMaxBytes { return }
++	now := time.Now(); madAPIResponseSessions.Lock(); defer madAPIResponseSessions.Unlock()
++	for key, state := range madAPIResponseSessions.entries { if now.Sub(state.updated) > madAPIResponseSessionTTL { delete(madAPIResponseSessions.entries, key) } }
++	if len(madAPIResponseSessions.entries) >= madAPIResponseSessionMaxItems { oldestKey := ""; var oldest time.Time; for key, state := range madAPIResponseSessions.entries { if oldestKey == "" || state.updated.Before(oldest) { oldestKey, oldest = key, state.updated } }; delete(madAPIResponseSessions.entries, oldestKey) }
++	madAPIResponseSessions.entries[madAPIResponseSessionKey(scope, responseID)] = madAPIResponseSessionState{input: bytes.Clone([]byte(input.Raw)), output: bytes.Clone([]byte(output.Raw)), updated: now}
++}
++
++func getMadAPIResponseSession(scope, responseID string) (madAPIResponseSessionState, bool) {
++	key := madAPIResponseSessionKey(scope, responseID); if key == "" { return madAPIResponseSessionState{}, false }; now := time.Now(); madAPIResponseSessions.Lock(); defer madAPIResponseSessions.Unlock(); state, ok := madAPIResponseSessions.entries[key]
++	if !ok || now.Sub(state.updated) > madAPIResponseSessionTTL { delete(madAPIResponseSessions.entries, key); return madAPIResponseSessionState{}, false }
++	state.updated = now; madAPIResponseSessions.entries[key] = state; state.input, state.output = bytes.Clone(state.input), bytes.Clone(state.output); return state, true
++}
++
++func madAPIResponseSessionKey(scope, responseID string) string { if strings.TrimSpace(scope) == "" || strings.TrimSpace(responseID) == "" { return "" }; return scope + "\x00" + responseID }
+diff --git a/sdk/api/handlers/openai/madapi_responses_session_test.go b/sdk/api/handlers/openai/madapi_responses_session_test.go
+new file mode 100644
+index 0000000..e9b6fe6
+--- /dev/null
++++ b/sdk/api/handlers/openai/madapi_responses_session_test.go
+@@ -0,0 +1,39 @@
++package openai
++
++import (
++	"strings"
++	"testing"
++)
++
++func TestMadAPIResponseSessionReplaysReasoningAndToolCall(t *testing.T) {
++	madAPIResponseSessions.Lock()
++	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
++	madAPIResponseSessions.Unlock()
++	first := []byte(`{"input":[{"type":"message","role":"user","content":"run tool"}]}`)
++	response := []byte(`{"id":"resp-1","output":[{"type":"reasoning","id":"rs-1"},{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"}]}`)
++	rememberMadAPIResponseSession("scope-a", first, response)
++	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"previous_response_id":"resp-1","input":[{"type":"function_call_output","call_id":"call-1","output":"ok"}]}`))
++	if err != nil { t.Fatalf("prepare continuation: %v", err) }
++	for _, want := range []string{`"type":"reasoning"`, `"type":"function_call"`, `"type":"function_call_output"`} {
++		if !strings.Contains(string(continued), want) { t.Fatalf("continuation lost %s: %s", want, continued) }
++	}
++	if strings.Contains(string(continued), "previous_response_id") { t.Fatalf("provider state leaked: %s", continued) }
++}
++
++func TestMadAPIResponseSessionIsTokenScoped(t *testing.T) {
++	madAPIResponseSessions.Lock()
++	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
++	madAPIResponseSessions.Unlock()
++	rememberMadAPIResponseSession("scope-a", []byte(`{"input":[]}`), []byte(`{"id":"resp-1","output":[]}`))
++	if _, err := prepareMadAPIResponseSessionRequest("scope-b", []byte(`{"previous_response_id":"resp-1","input":[]}`)); err == nil { t.Fatal("scope isolation failed") }
++}
++
++func TestMadAPIResponseSessionStoresCompletedSSEEvent(t *testing.T) {
++	madAPIResponseSessions.Lock()
++	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
++	madAPIResponseSessions.Unlock()
++	request := []byte(`{"input":[{"type":"message","role":"user","content":"run tool"}]}`)
++	event := []byte(`{"type":"response.completed","response":{"id":"resp-stream","output":[{"type":"reasoning","id":"rs-1"},{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"}]}}`)
++	rememberMadAPIResponseSession("scope-a", request, event)
++	if _, ok := getMadAPIResponseSession("scope-a", "resp-stream"); !ok { t.Fatal("completed SSE response was not stored") }
++}
+diff --git a/sdk/api/handlers/openai/openai_responses_handlers.go b/sdk/api/handlers/openai/openai_responses_handlers.go
+index e9063b8..a395eb0 100644
+--- a/sdk/api/handlers/openai/openai_responses_handlers.go
++++ b/sdk/api/handlers/openai/openai_responses_handlers.go
+@@ -50,6 +50,7 @@ type responsesSSEFramer struct {
+ 	outputItems          map[int][]byte
+ 	outputOrder          []int
+ 	unindexedOutputItems [][]byte
++	onCompleted          func([]byte)
+ }
+ 
+ func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
+@@ -111,6 +112,9 @@ func (f *responsesSSEFramer) repairFrame(frame []byte) []byte {
+ 		f.recordOutputItem(payload)
+ 	case "response.completed":
+ 		repaired := f.repairCompletedPayload(payload)
++		if f.onCompleted != nil {
++			f.onCompleted(repaired)
++		}
+ 		if !bytes.Equal(repaired, payload) {
+ 			return responsesSSEFrameWithData(frame, repaired)
+ 		}
+@@ -382,12 +386,19 @@ func (h *OpenAIResponsesAPIHandler) Responses(c *gin.Context) {
+ 		return
+ 	}
+ 
++	sessionScope := madAPIResponseSessionScope(c.Request)
++	rawJSON, err = prepareMadAPIResponseSessionRequest(sessionScope, rawJSON)
++	if err != nil {
++		c.JSON(http.StatusConflict, handlers.ErrorResponse{Error: handlers.ErrorDetail{Message: err.Error(), Type: "invalid_request_error"}})
++		return
++	}
++
+ 	// Check if the client requested a streaming response.
+ 	streamResult := gjson.GetBytes(rawJSON, "stream")
+ 	if streamResult.Type == gjson.True {
+-		h.handleStreamingResponse(c, rawJSON)
++		h.handleStreamingResponse(c, rawJSON, sessionScope)
+ 	} else {
+-		h.handleNonStreamingResponse(c, rawJSON)
++		h.handleNonStreamingResponse(c, rawJSON, sessionScope)
+ 	}
+ 
+ }
+@@ -404,6 +415,13 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
+ 		return
+ 	}
+ 
++	sessionScope := madAPIResponseSessionScope(c.Request)
++	rawJSON, err = prepareMadAPIResponseSessionRequest(sessionScope, rawJSON)
++	if err != nil {
++		c.JSON(http.StatusConflict, handlers.ErrorResponse{Error: handlers.ErrorDetail{Message: err.Error(), Type: "invalid_request_error"}})
++		return
++	}
++
+ 	streamResult := gjson.GetBytes(rawJSON, "stream")
+ 	if streamResult.Type == gjson.True {
+ 		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
+@@ -432,6 +450,7 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
+ 		return
+ 	}
+ 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
++	rememberMadAPIResponseSession(sessionScope, rawJSON, resp)
+ 	_, _ = c.Writer.Write(resp)
+ 	cliCancel()
+ }
+@@ -443,7 +462,7 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
+ // Parameters:
+ //   - c: The Gin context containing the HTTP request and response
+ //   - rawJSON: The raw JSON bytes of the OpenAIResponses-compatible request
+-func (h *OpenAIResponsesAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []byte) {
++func (h *OpenAIResponsesAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []byte, sessionScope string) {
+ 	c.Header("Content-Type", "application/json")
+ 
+ 	modelName := gjson.GetBytes(rawJSON, "model").String()
+@@ -458,6 +477,7 @@ func (h *OpenAIResponsesAPIHandler) handleNonStreamingResponse(c *gin.Context, r
+ 		return
+ 	}
+ 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
++	rememberMadAPIResponseSession(sessionScope, rawJSON, resp)
+ 	_, _ = c.Writer.Write(resp)
+ 	cliCancel()
+ }
+@@ -469,7 +489,7 @@ func (h *OpenAIResponsesAPIHandler) handleNonStreamingResponse(c *gin.Context, r
+ // Parameters:
+ //   - c: The Gin context containing the HTTP request and response
+ //   - rawJSON: The raw JSON bytes of the OpenAIResponses-compatible request
+-func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byte) {
++func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byte, sessionScope string) {
+ 	// Get the http.Flusher interface to manually flush the response.
+ 	flusher, ok := c.Writer.(http.Flusher)
+ 	if !ok {
+@@ -493,7 +513,9 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
+ 		c.Header("Connection", "keep-alive")
+ 		c.Header("Access-Control-Allow-Origin", "*")
+ 	}
+-	framer := &responsesSSEFramer{}
++	framer := &responsesSSEFramer{onCompleted: func(response []byte) {
++		rememberMadAPIResponseSession(sessionScope, rawJSON, response)
++	}}
+ 
+ 	// Peek at the first chunk
+ 	for {

@@ -1,0 +1,56 @@
+name: CPA Full Responses Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'server/cpa-codex-full/**'
+      - 'server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch'
+      - '.github/workflows/cpa-full-responses-acceptance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned CPA commit
+        id: cpa-ref
+        run: |
+          sha=$(tr -d '[:space:]' < guards/cpa-upstream-commit.txt)
+          test ${#sha} -eq 40
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out pinned CPA
+        uses: actions/checkout@v4
+        with:
+          repository: router-for-me/CLIProxyAPI
+          ref: ${{ steps.cpa-ref.outputs.sha }}
+          path: cpa-source
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cpa-source/go.mod
+          cache-dependency-path: cpa-source/go.sum
+
+      - name: Apply the full Responses service patches
+        working-directory: cpa-source
+        run: |
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
+          gofmt -w sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go
+
+      - name: Verify session replay and CPA handler build
+        working-directory: cpa-source
+        run: |
+          go test ./sdk/api/handlers/openai
+          go build ./cmd/server

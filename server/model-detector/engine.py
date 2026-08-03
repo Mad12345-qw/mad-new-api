@@ -89,6 +89,11 @@ def sanitize_error_message(value: Any) -> str | None:
         message,
     )
     message = re.sub(r"\b(?:sk-ant-|sk-|AIza)[A-Za-z0-9_-]{12,}\b", "<凭据已脱敏>", message)
+    lowered = message.lower()
+    if "organization has been disabled" in lowered:
+        return "该上游组织账户已被禁用"
+    if "organization has been suspended" in lowered:
+        return "该上游组织账户已被暂停"
     return message[:300]
 
 

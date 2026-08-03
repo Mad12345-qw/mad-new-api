@@ -169,6 +169,10 @@ class EngineTests(unittest.TestCase):
         self.assertIn("model route failed", message)
         self.assertNotIn("sk-secret-value", message)
 
+    def test_disabled_organization_error_is_localized(self) -> None:
+        message = sanitize_error_message("This organization has been disabled. (request id: req_1)")
+        self.assertEqual(message, "该上游组织账户已被禁用")
+
     def test_zero_success_summary_explains_rejected_probes(self) -> None:
         responses = [
             ProbeResponse(

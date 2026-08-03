@@ -386,3 +386,56 @@ index 079505b..81e8425 100644
              </div>
            </div>
          )
+diff --git a/web/default/src/features/keys/types.ts b/web/default/src/features/keys/types.ts
+index 7696413..f1ec12c 100644
+--- a/web/default/src/features/keys/types.ts
++++ b/web/default/src/features/keys/types.ts
+@@ -29,6 +29,8 @@ export const apiKeySchema = z.object({
+   status: z.number(), // 1: enabled, 2: disabled, 3: expired, 4: exhausted
+   remain_quota: z.number(),
+   used_quota: z.number(),
++  lifetime_used_quota: z.number().nullable().optional(),
++  recent_7d_used_quota: z.number().nullable().optional(),
+   unlimited_quota: z.boolean(),
+   expired_time: z.number(), // -1 for never expires
+   created_time: z.number(),
+diff --git a/web/default/src/i18n/locales/en.json b/web/default/src/i18n/locales/en.json
+index c9f2857..0d2bde1 100644
+--- a/web/default/src/i18n/locales/en.json
++++ b/web/default/src/i18n/locales/en.json
+@@ -2422,6 +2422,7 @@
+     "Last Tested": "Last Tested",
+     "Last updated:": "Last updated:",
+     "Last Used": "Last Used",
++    "Last 7 Days": "Last 7 Days",
+     "Last used:": "Last used:",
+     "Latency": "Latency",
+     "Latency check": "Latency check",
+@@ -2519,6 +2520,7 @@
+     "Logged in successfully via {{method}}": "Logged in successfully via {{method}}",
+     "Logic": "Logic",
+     "Login": "Login",
++    "Lifetime Usage": "Lifetime Usage",
+     "Login failed": "Login failed",
+     "Login Info": "Login Info",
+     "Login Method": "Login Method",
+diff --git a/web/default/src/i18n/locales/zh.json b/web/default/src/i18n/locales/zh.json
+index 519e3ba..fc0f874 100644
+--- a/web/default/src/i18n/locales/zh.json
++++ b/web/default/src/i18n/locales/zh.json
+@@ -2422,6 +2422,7 @@
+     "Last Tested": "上次测试",
+     "Last updated:": "上次更新时间：",
+     "Last Used": "最后使用时间",
++    "Last 7 Days": "近 7 天",
+     "Last used:": "上次使用时间：",
+     "Latency": "延迟",
+     "Latency check": "延迟检测",
+@@ -2519,6 +2520,7 @@
+     "Logged in successfully via {{method}}": "登录成功（通过 {{method}}）",
+     "Logic": "逻辑",
+     "Login": "登录",
++    "Lifetime Usage": "累计消费",
+     "Login failed": "登录失败",
+     "Login Info": "登录信息",
+     "Login Method": "登录方式",

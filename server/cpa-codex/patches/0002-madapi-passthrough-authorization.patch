@@ -17,6 +17,14 @@ diff --git a/internal/runtime/executor/openai_compat_executor.go b/internal/runt
 index 763141cc..c24a0b6e 100644
 --- a/internal/runtime/executor/openai_compat_executor.go
 +++ b/internal/runtime/executor/openai_compat_executor.go
+@@ -10,6 +10,7 @@ import (
+ 	"mime/multipart"
+ 	"net/http"
+ 	"net/textproto"
++	"os"
+ 	"strconv"
+ 	"strings"
+ 	"time"
 @@ -139,6 +139,10 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
  	if apiKey != "" {
  		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
@@ -61,7 +69,7 @@ index 763141cc..c24a0b6e 100644
  	httpReq.Header.Set("User-Agent", "cli-proxy-openai-compat")
  	var attrs map[string]string
  	if auth != nil {
-@@ -745,6 +761,21 @@ func (e *OpenAICompatExecutor) resolveCredentials(auth *cliproxyauth.Auth) (base
+@@ -745,6 +761,26 @@ func (e *OpenAICompatExecutor) resolveCredentials(auth *cliproxyauth.Auth) (base
  	return
  }
  
@@ -76,7 +84,12 @@ index 763141cc..c24a0b6e 100644
 +	if callerAuthorization == "" {
 +		return false
 +	}
++	frontToken := strings.TrimSpace(os.Getenv("MADAPI_INTERNAL_CATALOG_TOKEN"))
++	if frontToken == "" {
++		return false
++	}
 +	req.Header.Set("Authorization", callerAuthorization)
++	req.Header.Set("X-MadAPI-CPA-Front-Token", frontToken)
 +	return true
 +}
 +
@@ -88,7 +101,7 @@ new file mode 100644
 index 00000000..698d1b0a
 --- /dev/null
 +++ b/internal/runtime/executor/openai_compat_executor_madapi_test.go
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,61 @@
 +package executor
 +
 +import (
@@ -100,6 +113,7 @@ index 00000000..698d1b0a
 +
 +func TestApplyMadAPIPassthroughAuthorization(t *testing.T) {
 +	t.Run("replaces selector credential with caller authorization", func(t *testing.T) {
++		t.Setenv("MADAPI_INTERNAL_CATALOG_TOKEN", "front-token")
 +		req := httptest.NewRequest("POST", "http://example.test/v1/responses", nil)
 +		req.Header.Set("Authorization", "Bearer selector-key")
 +		auth := &cliproxyauth.Auth{Attributes: map[string]string{"madapi_passthrough": "true"}}
@@ -112,9 +126,13 @@ index 00000000..698d1b0a
 +		if got := req.Header.Get("Authorization"); got != "Bearer caller-key" {
 +			t.Fatalf("Authorization = %q, want caller credential", got)
 +		}
++		if got := req.Header.Get("X-MadAPI-CPA-Front-Token"); got != "front-token" {
++			t.Fatalf("X-MadAPI-CPA-Front-Token = %q, want internal token", got)
++		}
 +	})
 +
 +	t.Run("rejects missing caller authorization for passthrough", func(t *testing.T) {
++		t.Setenv("MADAPI_INTERNAL_CATALOG_TOKEN", "front-token")
 +		req := httptest.NewRequest("POST", "http://example.test/v1/responses", nil)
 +		auth := &cliproxyauth.Auth{Attributes: map[string]string{"madapi_passthrough": "true"}}
 +		if applyMadAPIPassthroughAuthorization(req, auth, req.Header) {
@@ -122,11 +140,26 @@ index 00000000..698d1b0a
 +		}
 +	})
 +
++	t.Run("rejects missing internal front token", func(t *testing.T) {
++		t.Setenv("MADAPI_INTERNAL_CATALOG_TOKEN", "")
++		req := httptest.NewRequest("POST", "http://example.test/v1/responses", nil)
++		auth := &cliproxyauth.Auth{Attributes: map[string]string{"madapi_passthrough": "true"}}
++		headers := req.Header.Clone()
++		headers.Set("X-MadAPI-Authorization", "Bearer caller-key")
++		if applyMadAPIPassthroughAuthorization(req, auth, headers) {
++			t.Fatal("expected missing internal token to be rejected")
++		}
++	})
++
 +	t.Run("leaves normal compatibility providers unchanged", func(t *testing.T) {
++		t.Setenv("MADAPI_INTERNAL_CATALOG_TOKEN", "front-token")
 +		req := httptest.NewRequest("POST", "http://example.test/v1/responses", nil)
 +		auth := &cliproxyauth.Auth{Attributes: map[string]string{}}
 +		if !applyMadAPIPassthroughAuthorization(req, auth, req.Header) {
 +			t.Fatal("expected normal provider to remain valid")
++		}
++		if got := req.Header.Get("X-MadAPI-CPA-Front-Token"); got != "" {
++			t.Fatalf("unexpected internal front token %q", got)
 +		}
 +	})
 +}

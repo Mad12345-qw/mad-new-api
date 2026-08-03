@@ -94,3 +94,94 @@ index 00000000..00000000 100644
  	// https://platform.openai.com/docs/api-reference/introduction
  	modelsRouter := router.Group("/v1/models")
  	modelsRouter.Use(middleware.RouteTag("relay"))
+diff --git a/middleware/distributor.go b/middleware/distributor.go
+index 00000000..00000000 100644
+--- a/middleware/distributor.go
++++ b/middleware/distributor.go
+@@ -1,10 +1,12 @@
+ package middleware
+ 
+ import (
++	"crypto/subtle"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"net/http"
++	"os"
+ 	"slices"
+ 	"strconv"
+ 	"strings"
+@@ -403,10 +405,19 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
+ 		common.SetContextKey(c, constant.ContextKeyTokenGroup, modelRequest.Group)
+ 	}
+ 
+-	if strings.HasPrefix(c.Request.URL.Path, "/v1/responses/compact") && modelRequest.Model != "" {
++	if strings.HasPrefix(c.Request.URL.Path, "/v1/responses/compact") && modelRequest.Model != "" && !isMadAPICPAFrontRequest(c) {
+ 		modelRequest.Model = ratio_setting.WithCompactModelSuffix(modelRequest.Model)
+ 	}
+ 	return &modelRequest, shouldSelectChannel, nil
+ }
+ 
++func isMadAPICPAFrontRequest(c *gin.Context) bool {
++	expected := strings.TrimSpace(os.Getenv("MADAPI_INTERNAL_CATALOG_TOKEN"))
++	provided := strings.TrimSpace(c.GetHeader("X-MadAPI-CPA-Front-Token"))
++	if expected == "" || provided == "" {
++		return false
++	}
++	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
++}
++
+ // 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，
+diff --git a/middleware/distributor_madapi_test.go b/middleware/distributor_madapi_test.go
+new file mode 100644
+index 00000000..00000000
+--- /dev/null
++++ b/middleware/distributor_madapi_test.go
+@@ -0,0 +1,47 @@
++package middleware
++
++import (
++	"net/http/httptest"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++)
++
++func TestIsMadAPICPAFrontRequest(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	t.Setenv("MADAPI_INTERNAL_CATALOG_TOKEN", "front-secret")
++
++	tests := []struct {
++		name   string
++		header string
++		want   bool
++	}{
++		{name: "matching token", header: "front-secret", want: true},
++		{name: "wrong token", header: "wrong-secret", want: false},
++		{name: "missing token", header: "", want: false},
++	}
++
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			context, _ := gin.CreateTestContext(httptest.NewRecorder())
++			context.Request = httptest.NewRequest("POST", "/v1/responses/compact", nil)
++			if test.header != "" {
++				context.Request.Header.Set("X-MadAPI-CPA-Front-Token", test.header)
++			}
++			if got := isMadAPICPAFrontRequest(context); got != test.want {
++				t.Fatalf("isMadAPICPAFrontRequest() = %v, want %v", got, test.want)
++			}
++		})
++	}
++}
++
++func TestIsMadAPICPAFrontRequestRejectsUnsetServerToken(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	t.Setenv("MADAPI_INTERNAL_CATALOG_TOKEN", "")
++	context, _ := gin.CreateTestContext(httptest.NewRecorder())
++	context.Request = httptest.NewRequest("POST", "/v1/responses/compact", nil)
++	context.Request.Header.Set("X-MadAPI-CPA-Front-Token", "front-secret")
++	if isMadAPICPAFrontRequest(context) {
++		t.Fatal("expected an unset server token to reject CPA front routing")
++	}
++}

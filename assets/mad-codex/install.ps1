@@ -72,6 +72,11 @@ $apiKey = [string]$env:MADAPI_KEY
 if ([string]::IsNullOrWhiteSpace($apiKey) -or $apiKey -notmatch '^sk-[A-Za-z0-9._-]+$') {
     throw 'MADAPI_KEY is missing or invalid.'
 }
+$requestedLoginMode = ([string]$env:MADAPI_CODEX_LOGIN_MODE).Trim().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($requestedLoginMode)) { $requestedLoginMode = 'auto' }
+if (@('auto', 'oauth', 'apikey') -notcontains $requestedLoginMode) {
+    throw 'MADAPI_CODEX_LOGIN_MODE must be auto, oauth, or apikey.'
+}
 
 $userHome = [Environment]::GetFolderPath('UserProfile')
 $codexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) { Join-Path $userHome '.codex' } else { [string]$env:CODEX_HOME }
@@ -84,10 +89,13 @@ $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
 $tempRefreshPath = Join-Path $codexHome ("madapi-refresh-model-catalog.$transactionId.ps1")
 $tempCatalogPath = Join-Path $codexHome ("madapi-cockpit-model-catalog.$transactionId.tmp")
+$tempAuthPath = Join-Path $codexHome ("auth.json.madapi.$transactionId.tmp")
 $backupPath = $null
+$authBackupPath = $null
 $hadConfig = Test-Path -LiteralPath $configPath
 $hadAuth = Test-Path -LiteralPath $authPath
 $configInstalled = $false
+$authChanged = $false
 $testMode = [string]$env:MADAPI_INSTALL_TEST_MODE -eq '1'
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -115,6 +123,15 @@ if ($hadAuth) {
     } elseif ($existingMode -eq 'apikey' -or -not [string]::IsNullOrWhiteSpace($existingApiKey)) {
         $authKind = 'apikey'
     }
+}
+$existingAuthKind = $authKind
+$authMutation = 'none'
+if ($requestedLoginMode -eq 'oauth') {
+    $authKind = 'oauth'
+    if ($existingAuthKind -ne 'oauth' -and $hadAuth) { $authMutation = 'clear' }
+} elseif ($requestedLoginMode -eq 'apikey') {
+    $authKind = 'apikey'
+    $authMutation = 'write'
 }
 
 New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
@@ -186,6 +203,10 @@ $configLines.Add('context_window_override = 1048576')
 
 try {
     [IO.File]::WriteAllText($tempConfigPath, (($configLines -join [Environment]::NewLine).Trim() + [Environment]::NewLine), $utf8NoBom)
+    if ($authMutation -eq 'write') {
+        $apiAuth = [ordered]@{ auth_mode = 'apikey'; OPENAI_API_KEY = $apiKey }
+        [IO.File]::WriteAllText($tempAuthPath, ($apiAuth | ConvertTo-Json -Compress), $utf8NoBom)
+    }
     $refreshSource = [string]$env:MADAPI_REFRESH_SCRIPT_SOURCE
     if ([string]::IsNullOrWhiteSpace($refreshSource) -and -not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
         $candidateSource = Join-Path $PSScriptRoot 'refresh-model-catalog.ps1'
@@ -230,8 +251,24 @@ try {
     $configInstalled = $true
     Move-Item -LiteralPath $tempRefreshPath -Destination $refreshScriptPath -Force
     Move-Item -LiteralPath $tempCatalogPath -Destination $catalogPath -Force
+    if ($authMutation -ne 'none') {
+        if ($hadAuth) {
+            $authBackupPath = '{0}.madapi-backup-{1}' -f $authPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
+            [IO.File]::Copy($authPath, $authBackupPath, $false)
+        }
+        $authChanged = $true
+        if ($authMutation -eq 'clear') {
+            if (Test-Path -LiteralPath $authPath) { Remove-Item -LiteralPath $authPath -Force }
+        } else {
+            Move-Item -LiteralPath $tempAuthPath -Destination $authPath -Force
+        }
+    }
     if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
 } catch {
+    if ($authChanged) {
+        if ($hadAuth -and $null -ne $authBackupPath -and (Test-Path -LiteralPath $authBackupPath)) { [IO.File]::Copy($authBackupPath, $authPath, $true) }
+        elseif (-not $hadAuth -and (Test-Path -LiteralPath $authPath)) { Remove-Item -LiteralPath $authPath -Force }
+    }
     if ($configInstalled) {
         if ($hadConfig -and $null -ne $backupPath -and (Test-Path -LiteralPath $backupPath)) { [IO.File]::Copy($backupPath, $configPath, $true) }
         elseif (-not $hadConfig -and (Test-Path -LiteralPath $configPath)) { Remove-Item -LiteralPath $configPath -Force }
@@ -241,11 +278,15 @@ try {
     if (Test-Path -LiteralPath $tempConfigPath) { Remove-Item -LiteralPath $tempConfigPath -Force }
     if (Test-Path -LiteralPath $tempRefreshPath) { Remove-Item -LiteralPath $tempRefreshPath -Force }
     if (Test-Path -LiteralPath $tempCatalogPath) { Remove-Item -LiteralPath $tempCatalogPath -Force }
+    if (Test-Path -LiteralPath $tempAuthPath) { Remove-Item -LiteralPath $tempAuthPath -Force }
 }
 
 Write-Host "MadAPI Codex desktop configuration installed: $configPath"
 if ($null -ne $backupPath) { Write-Host "Backup created: $backupPath" }
-if ($authKind -eq 'oauth') { Write-Host 'Existing ChatGPT OAuth session preserved.' }
+if ($null -ne $authBackupPath) { Write-Host "Authentication backup created: $authBackupPath" }
+if ($requestedLoginMode -eq 'oauth' -and $existingAuthKind -ne 'oauth') { Write-Host 'OAuth mode prepared. Restart Codex Desktop and sign in with ChatGPT.' }
+elseif ($requestedLoginMode -eq 'apikey') { Write-Host 'Codex Desktop API Key sign-in configured.' }
+elseif ($authKind -eq 'oauth') { Write-Host 'Existing ChatGPT OAuth session preserved.' }
 elseif ($authKind -eq 'apikey') { Write-Host 'Existing Codex Desktop API Key sign-in preserved.' }
 else { Write-Host 'Codex Desktop sign-in was not changed. Choose ChatGPT OAuth or API Key when Codex opens.' }
 Write-Host 'Restart Codex Desktop to refresh the model list.'

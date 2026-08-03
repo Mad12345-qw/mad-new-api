@@ -9,7 +9,7 @@ home="$temporary_root/mad-codex-desktop-$$"
 fail() { printf 'Assertion failed: %s\n' "$1" >&2; exit 1; }
 hash_file() { shasum -a 256 "$1" | awk '{print $1}'; }
 write_oauth() { printf '%s' '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"},"last_refresh":"2026-08-02T00:00:00Z"}' > "$1"; }
-run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 MADAPI_INSTALL_TEST_MODE=1 MADAPI_REFRESH_SCRIPT_SOURCE="$refresh_script_path" /bin/sh "$installer_path"; }
+run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 MADAPI_CODEX_LOGIN_MODE=${3:-auto} MADAPI_INSTALL_TEST_MODE=1 MADAPI_REFRESH_SCRIPT_SOURCE="$refresh_script_path" /bin/sh "$installer_path"; }
 
 ! grep -Fq 'CODEX_CLI_PATH' "$installer_path" || fail 'CLI probing remains.'
 ! grep -Fq 'madapi.key' "$installer_path" || fail 'Command authentication remains.'
@@ -101,6 +101,25 @@ grep -Fq 'experimental_bearer_token = "sk-macos-new-key"' "$unsigned/config.toml
 grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$unsigned/config.toml" || fail 'New-user install did not configure the managed catalog.'
   grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$unsigned/config.toml" || fail 'New-user install did not configure the OAuth-native route.'
 [ ! -e "$unsigned/auth.json" ] || fail 'New-user install forced API-key sign-in.'
+
+switch_home="$home/login-switch"; mkdir -p "$switch_home"
+printf '%s' 'model = "gpt-5.6-sol"' > "$switch_home/config.toml"
+write_oauth "$switch_home/auth.json"
+switch_oauth_hash=$(hash_file "$switch_home/auth.json")
+run_install "$switch_home" 'sk-macos-switch-api' apikey
+grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$switch_home/config.toml" || fail 'Explicit API mode did not select the mapped route.'
+grep -Fq 'requires_openai_auth = false' "$switch_home/config.toml" || fail 'Explicit API mode auth gate is wrong.'
+[ "$(/usr/bin/plutil -extract auth_mode raw -o - "$switch_home/auth.json")" = apikey ] || fail 'Explicit API mode did not set API authentication.'
+[ "$(/usr/bin/plutil -extract OPENAI_API_KEY raw -o - "$switch_home/auth.json")" = sk-macos-switch-api ] || fail 'Explicit API mode wrote the wrong key.'
+switch_oauth_backup=$(find "$switch_home" -maxdepth 1 -name 'auth.json.madapi-backup-*' -type f | sort | head -n 1)
+[ -n "$switch_oauth_backup" ] && [ "$(hash_file "$switch_oauth_backup")" = "$switch_oauth_hash" ] || fail 'OAuth state backup is not exact.'
+switch_api_hash=$(hash_file "$switch_home/auth.json")
+run_install "$switch_home" 'sk-macos-switch-oauth' oauth
+grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$switch_home/config.toml" || fail 'Explicit OAuth mode did not select the native route.'
+grep -Fq 'requires_openai_auth = true' "$switch_home/config.toml" || fail 'Explicit OAuth mode auth gate is wrong.'
+[ ! -e "$switch_home/auth.json" ] || fail 'Explicit OAuth mode did not exit API-key login.'
+switch_api_backup=$(find "$switch_home" -maxdepth 1 -name 'auth.json.madapi-backup-*' -type f | sort | tail -n 1)
+[ -n "$switch_api_backup" ] && [ "$(hash_file "$switch_api_backup")" = "$switch_api_hash" ] || fail 'API state backup is not exact.'
 
 refresh_home="$home/refresh"; mkdir -p "$refresh_home"
 cat > "$refresh_home/config.toml" <<'EOF'

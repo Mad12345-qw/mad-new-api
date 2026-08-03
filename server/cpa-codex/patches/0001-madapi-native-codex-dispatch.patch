@@ -312,7 +312,7 @@ index 0000000..a0e2ef7
 +	if (len(bytes.TrimSpace(state.Input)) > 0 || len(bytes.TrimSpace(state.Output)) > 0) && len(nextInput.Array()) > 0 {
 +		merged = append(merged, ',')
 +	}
-+	merged = append(merged, bytes.TrimSpace([]byte(nextInput.Raw))...)
++	merged = append(merged, bytes.TrimSpace(nextInput.Raw)...)
 +	merged = append(merged, ']')
 +	updated, err := sjson.SetRawBytes(body, "input", merged)
 +	if err != nil {

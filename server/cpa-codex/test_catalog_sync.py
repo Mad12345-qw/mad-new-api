@@ -29,6 +29,7 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertIn("max-retry-credentials: 3", rendered)
         self.assertEqual(rendered.count("      - api-key:"), 3)
         self.assertIn("madapi-passthrough: true", rendered)
+        self.assertIn('base-url: "http://new-api:3000/codex/v1"', rendered)
         self.assertNotIn("force-mapping: true", rendered)
 
     def test_cockpit_config_maps_all_eight_shells(self):

@@ -297,23 +297,21 @@ index 0000000..a0e2ef7
 +	if !nextInput.IsArray() {
 +		return nil, errors.New("Codex continuation requires an array input")
 +	}
-+	mergedInput := append([]byte(nil), state.Input...)
-+	mergedInput = append(mergedInput, state.Output...)
-+	mergedInput = append(mergedInput, nextInput.Raw...)
-+	if len(mergedInput) > madAPICodexSessionMaxBytes {
++	var mergedItems []json.RawMessage
++	for _, raw := range [][]byte{state.Input, state.Output, []byte(nextInput.Raw)} {
++		var items []json.RawMessage
++		if err := json.Unmarshal(raw, &items); err != nil {
++			return nil, fmt.Errorf("decode Codex session transcript: %w", err)
++		}
++		mergedItems = append(mergedItems, items...)
++	}
++	merged, err := json.Marshal(mergedItems)
++	if err != nil {
++		return nil, fmt.Errorf("encode Codex session transcript: %w", err)
++	}
++	if len(merged) > madAPICodexSessionMaxBytes {
 +		return nil, errors.New("Codex session state exceeds the safe replay limit; compact the conversation")
 +	}
-+	merged := []byte("[")
-+	merged = append(merged, bytes.TrimSpace(state.Input)...)
-+	if len(bytes.TrimSpace(state.Input)) > 0 && len(bytes.TrimSpace(state.Output)) > 0 {
-+		merged = append(merged, ',')
-+	}
-+	merged = append(merged, bytes.TrimSpace(state.Output)...)
-+	if (len(bytes.TrimSpace(state.Input)) > 0 || len(bytes.TrimSpace(state.Output)) > 0) && len(nextInput.Array()) > 0 {
-+		merged = append(merged, ',')
-+	}
-+	merged = append(merged, bytes.TrimSpace([]byte(nextInput.Raw))...)
-+	merged = append(merged, ']')
 +	updated, err := sjson.SetRawBytes(body, "input", merged)
 +	if err != nil {
 +		return nil, fmt.Errorf("prepare Codex session replay: %w", err)

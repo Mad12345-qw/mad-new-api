@@ -85,7 +85,7 @@ def render_config(model_ids: list[str], mode: str) -> str:
         '  - "madapi-codex-gateway"',
         "openai-compatibility:",
         f'  - name: "madapi-{mode}"',
-        f"    base-url: {json.dumps(MADAPI_INTERNAL_URL + '/codex/v1')}",
+        f"    base-url: {json.dumps(MADAPI_INTERNAL_URL + '/v1')}",
         "    madapi-passthrough: true",
         "    disable-cooling: true",
         "    api-key-entries:",

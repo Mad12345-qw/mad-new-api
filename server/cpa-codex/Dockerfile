@@ -9,8 +9,7 @@ RUN apt-get update \
 COPY cpa-source/ ./
 COPY server/cpa-codex/patches/ /patches/
 COPY server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch /patches/
-COPY server/cpa-codex-full/patches/0004-madapi-web-search-bridge.patch /patches/
-COPY server/cpa-codex-full/patches/0005-openai-chat-root-tool-schema.patch /patches/
+COPY server/cpa-codex-full/patches/0004-openai-chat-root-tool-schema.patch /patches/
 
 ARG CPA_PATCHED=0
 RUN if [ "$CPA_PATCHED" != "1" ]; then \
@@ -18,10 +17,8 @@ RUN if [ "$CPA_PATCHED" != "1" ]; then \
 		&& git apply /patches/0002-madapi-passthrough-authorization.patch \
 		&& git apply --check /patches/0003-madapi-responses-session-replay.patch \
 		&& git apply /patches/0003-madapi-responses-session-replay.patch \
-		&& git apply --check /patches/0004-madapi-web-search-bridge.patch \
-		&& git apply /patches/0004-madapi-web-search-bridge.patch \
-		&& git apply --check /patches/0005-openai-chat-root-tool-schema.patch \
-		&& git apply /patches/0005-openai-chat-root-tool-schema.patch; \
+		&& git apply --check /patches/0004-openai-chat-root-tool-schema.patch \
+		&& git apply /patches/0004-openai-chat-root-tool-schema.patch; \
 	fi \
 	&& gofmt -w internal/config/config_types.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/translator/openai/openai/responses/openai_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_tools.go internal/watcher/synthesizer/config.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go \
 	&& go mod download \

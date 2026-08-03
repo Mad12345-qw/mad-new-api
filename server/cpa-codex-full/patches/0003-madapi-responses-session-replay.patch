@@ -1,3 +1,82 @@
+diff --git a/sdk/api/handlers/openai/madapi_responses_session.go b/sdk/api/handlers/openai/madapi_responses_session.go
+new file mode 100644
+index 0000000..d8f163e
+--- /dev/null
++++ b/sdk/api/handlers/openai/madapi_responses_session.go
+@@ -0,0 +1,73 @@
++package openai
++
++import (
++	"bytes"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++const (
++	madAPIResponseSessionTTL = 30 * time.Minute
++	madAPIResponseSessionMaxBytes = 8 << 20
++	madAPIResponseSessionMaxItems = 4096
++)
++
++type madAPIResponseSessionState struct { input, output []byte; updated time.Time }
++var madAPIResponseSessions = struct { sync.Mutex; entries map[string]madAPIResponseSessionState }{entries: make(map[string]madAPIResponseSessionState)}
++
++func madAPIResponseSessionScope(request *http.Request) string {
++	if request == nil { return "" }
++	credential := strings.TrimSpace(request.Header.Get("X-MadAPI-Authorization"))
++	if credential == "" { return "" }
++	digest := sha256.Sum256([]byte(credential))
++	return hex.EncodeToString(digest[:])
++}
++
++func prepareMadAPIResponseSessionRequest(scope string, rawJSON []byte) ([]byte, error) {
++	if scope == "" { return rawJSON, nil }
++	previousID := strings.TrimSpace(gjson.GetBytes(rawJSON, "previous_response_id").String())
++	if previousID == "" { return rawJSON, nil }
++	state, ok := getMadAPIResponseSession(scope, previousID)
++	if !ok { return nil, errors.New("Codex response context expired; compact or restart the conversation") }
++	nextInput := gjson.GetBytes(rawJSON, "input")
++	if !nextInput.IsArray() { return nil, errors.New("Codex continuation requires array input") }
++	merged, err := mergeMadAPIResponseItems(state.input, state.output, []byte(nextInput.Raw))
++	if err != nil { return nil, err }
++	if len(merged) > madAPIResponseSessionMaxBytes { return nil, errors.New("Codex response context exceeds the replay limit; compact the conversation") }
++	prepared, err := sjson.SetRawBytes(rawJSON, "input", merged)
++	if err != nil { return nil, err }
++	return sjson.DeleteBytes(prepared, "previous_response_id")
++}
++
++func mergeMadAPIResponseItems(parts ...[]byte) ([]byte, error) {
++	items := make([]json.RawMessage, 0)
++	for _, part := range parts { var current []json.RawMessage; if err := json.Unmarshal(part, &current); err != nil { return nil, errors.New("decode Codex response transcript") }; items = append(items, current...) }
++	return json.Marshal(items)
++}
++
++func rememberMadAPIResponseSession(scope string, rawJSON, response []byte) {
++	if scope == "" { return }
++	responseID := strings.TrimSpace(gjson.GetBytes(response, "id").String()); input := gjson.GetBytes(rawJSON, "input"); output := gjson.GetBytes(response, "output")
++	if responseID == "" || !input.IsArray() || !output.IsArray() || len(input.Raw)+len(output.Raw) > madAPIResponseSessionMaxBytes { return }
++	now := time.Now(); madAPIResponseSessions.Lock(); defer madAPIResponseSessions.Unlock()
++	for key, state := range madAPIResponseSessions.entries { if now.Sub(state.updated) > madAPIResponseSessionTTL { delete(madAPIResponseSessions.entries, key) } }
++	if len(madAPIResponseSessions.entries) >= madAPIResponseSessionMaxItems { oldestKey := ""; var oldest time.Time; for key, state := range madAPIResponseSessions.entries { if oldestKey == "" || state.updated.Before(oldest) { oldestKey, oldest = key, state.updated } }; delete(madAPIResponseSessions.entries, oldestKey) }
++	madAPIResponseSessions.entries[madAPIResponseSessionKey(scope, responseID)] = madAPIResponseSessionState{input: bytes.Clone([]byte(input.Raw)), output: bytes.Clone([]byte(output.Raw)), updated: now}
++}
++
++func getMadAPIResponseSession(scope, responseID string) (madAPIResponseSessionState, bool) {
++	key := madAPIResponseSessionKey(scope, responseID); if key == "" { return madAPIResponseSessionState{}, false }; now := time.Now(); madAPIResponseSessions.Lock(); defer madAPIResponseSessions.Unlock(); state, ok := madAPIResponseSessions.entries[key]
++	if !ok || now.Sub(state.updated) > madAPIResponseSessionTTL { delete(madAPIResponseSessions.entries, key); return madAPIResponseSessionState{}, false }
++	state.updated = now; madAPIResponseSessions.entries[key] = state; state.input, state.output = bytes.Clone(state.input), bytes.Clone(state.output); return state, true
++}
++
++func madAPIResponseSessionKey(scope, responseID string) string { if strings.TrimSpace(scope) == "" || strings.TrimSpace(responseID) == "" { return "" }; return scope + "\x00" + responseID }
 diff --git a/sdk/api/handlers/openai/madapi_responses_session_test.go b/sdk/api/handlers/openai/madapi_responses_session_test.go
 new file mode 100644
 index 0000000..3fbb262

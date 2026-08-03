@@ -3,7 +3,7 @@ new file mode 100644
 index 00000000..bfe355b3
 --- /dev/null
 +++ b/controller/codex_cockpit.go
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,170 @@
 +package controller
 +
 +import (
@@ -12,7 +12,6 @@ index 00000000..bfe355b3
 +	"fmt"
 +	"io"
 +	"net/http"
-+	"sort"
 +	"strings"
 +
 +	"github.com/QuantumNous/new-api/common"
@@ -28,25 +27,27 @@ index 00000000..bfe355b3
 +	Candidate     dto.OpenAIModels
 +}
 +
-+// Cockpit uses official client shells first, then keeps real upstream IDs when
-+// the reusable shell pool is exhausted. This is a compatibility pool, not a
-+// model limit: every remaining text model is still included in the catalog.
-+var codexCockpitModelShellPool = []string{
-+	"gpt-5.6-sol",
-+	"gpt-5.6-terra",
-+	"gpt-5.6-luna",
-+	"gpt-5.5",
-+	"gpt-5.4",
-+	"gpt-5.4-mini",
-+	"gpt-5.3-codex",
-+	"gpt-5.3-codex-spark",
-+	"gpt-5.2",
++// API-key Codex Desktop sessions only retain a bounded set of official model
++// shells after a cold restart. Keep the user-visible selection explicit and
++// deterministic; OAuth sessions use the native /codex/v1 catalog instead.
++var codexCockpitModelTargets = []struct {
++	UpstreamModel string
++	ClientModel   string
++}{
++	{UpstreamModel: "claude-fable-5", ClientModel: "gpt-5.5"},
++	{UpstreamModel: "claude-opus-5", ClientModel: "gpt-5.4"},
++	{UpstreamModel: "gpt-5.6-sol", ClientModel: "gpt-5.6-sol"},
++	{UpstreamModel: "gpt-5.6-terra", ClientModel: "gpt-5.6-terra"},
++	{UpstreamModel: "gpt-5.6-luna", ClientModel: "gpt-5.6-luna"},
++	{UpstreamModel: "grok-4.5", ClientModel: "gpt-5.4-mini"},
++	{UpstreamModel: "kimi-k3", ClientModel: "gpt-5.3-codex"},
++	{UpstreamModel: "deepseek-v4-flash", ClientModel: "gpt-5.2"},
 +}
 +
 +func isCodexCockpitModelShell(model string) bool {
 +	model = strings.TrimSpace(model)
-+	for _, shell := range codexCockpitModelShellPool {
-+		if strings.EqualFold(model, shell) {
++	for _, target := range codexCockpitModelTargets {
++		if strings.EqualFold(model, target.ClientModel) {
 +			return true
 +		}
 +	}
@@ -54,49 +55,23 @@ index 00000000..bfe355b3
 +}
 +
 +func allocateCodexCockpitModelSlots(models []dto.OpenAIModels) []codexCockpitModelSlot {
-+	models = append([]dto.OpenAIModels(nil), models...)
-+	sort.SliceStable(models, func(i, j int) bool {
-+		return strings.ToLower(strings.TrimSpace(models[i].Id)) < strings.ToLower(strings.TrimSpace(models[j].Id))
-+	})
-+
-+	usedShells := make(map[string]struct{}, len(codexCockpitModelShellPool))
-+	slots := make([]codexCockpitModelSlot, 0, len(models))
-+	deferred := make([]dto.OpenAIModels, 0, len(models))
++	available := make(map[string]dto.OpenAIModels, len(models))
 +	for _, candidate := range models {
 +		modelID := strings.TrimSpace(candidate.Id)
 +		if modelID == "" {
 +			continue
 +		}
-+		if isCodexCockpitModelShell(modelID) {
-+			key := strings.ToLower(modelID)
-+			if _, exists := usedShells[key]; !exists {
-+				usedShells[key] = struct{}{}
-+				slots = append(slots, codexCockpitModelSlot{
-+					ClientModel:   modelID,
-+					UpstreamModel: modelID,
-+					Candidate:     candidate,
-+				})
-+				continue
-+			}
-+		}
-+		deferred = append(deferred, candidate)
++		available[strings.ToLower(modelID)] = candidate
 +	}
-+
-+	freeShells := make([]string, 0, len(codexCockpitModelShellPool))
-+	for _, shell := range codexCockpitModelShellPool {
-+		if _, used := usedShells[strings.ToLower(shell)]; !used {
-+			freeShells = append(freeShells, shell)
-+		}
-+	}
-+	for index, candidate := range deferred {
-+		upstreamModel := strings.TrimSpace(candidate.Id)
-+		clientModel := upstreamModel
-+		if index < len(freeShells) {
-+			clientModel = freeShells[index]
++	slots := make([]codexCockpitModelSlot, 0, len(codexCockpitModelTargets))
++	for _, target := range codexCockpitModelTargets {
++		candidate, ok := available[strings.ToLower(target.UpstreamModel)]
++		if !ok {
++			continue
 +		}
 +		slots = append(slots, codexCockpitModelSlot{
-+			ClientModel:   clientModel,
-+			UpstreamModel: upstreamModel,
++			ClientModel:   target.ClientModel,
++			UpstreamModel: target.UpstreamModel,
 +			Candidate:     candidate,
 +		})
 +	}
@@ -239,11 +214,11 @@ index 491a798..2c7f5cc 100644
  	"encoding/json"
  	"fmt"
  	"io"
-@@ -219,6 +220,121 @@ func TestCodexListModelsReflectsNewTextModelsWithoutServerRestart(t *testing.T)
+@@ -219,6 +220,120 @@ func TestCodexListModelsReflectsNewTextModelsWithoutServerRestart(t *testing.T)
  	require.Equal(t, int32(2), calls.Load())
  }
  
-+func TestCodexCockpitListModelsPublishesEveryModelAndReusesOnlyFreeShells(t *testing.T) {
++func TestCodexCockpitListModelsPublishesTheStableAPIKeySelection(t *testing.T) {
 +	gin.SetMode(gin.TestMode)
 +	modelNames := []string{
 +		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
@@ -272,37 +247,36 @@ index 491a798..2c7f5cc 100644
 +	require.Equal(t, http.StatusOK, recorder.Code)
 +	var payload codexModelsResponse
 +	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
-+	require.Len(t, payload.Models, 15)
++	require.Len(t, payload.Models, 8)
 +	clientModelByUpstream := make(map[string]string, len(payload.Models))
 +	for _, entry := range payload.Models {
 +		clientModelByUpstream[entry["display_name"].(string)] = entry["slug"].(string)
 +		require.Equal(t, false, entry["prefer_websockets"])
 +	}
++	require.Equal(t, "gpt-5.5", clientModelByUpstream["claude-fable-5"])
++	require.Equal(t, "gpt-5.4", clientModelByUpstream["claude-opus-5"])
 +	require.Equal(t, "gpt-5.6-sol", clientModelByUpstream["gpt-5.6-sol"])
 +	require.Equal(t, "gpt-5.6-terra", clientModelByUpstream["gpt-5.6-terra"])
 +	require.Equal(t, "gpt-5.6-luna", clientModelByUpstream["gpt-5.6-luna"])
-+	require.Equal(t, "gpt-5.5", clientModelByUpstream["gpt-5.5"])
-+	require.Equal(t, "gpt-5.4", clientModelByUpstream["claude-fable-5"])
-+	require.Equal(t, "gpt-5.4-mini", clientModelByUpstream["claude-opus-4-8"])
-+	require.Equal(t, "gpt-5.3-codex", clientModelByUpstream["claude-opus-5"])
-+	require.Equal(t, "gpt-5.3-codex-spark", clientModelByUpstream["claude-sonnet-5"])
++	require.Equal(t, "gpt-5.4-mini", clientModelByUpstream["grok-4.5"])
++	require.Equal(t, "gpt-5.3-codex", clientModelByUpstream["kimi-k3"])
 +	require.Equal(t, "gpt-5.2", clientModelByUpstream["deepseek-v4-flash"])
-+	require.Equal(t, "deepseek-v4-pro", clientModelByUpstream["deepseek-v4-pro"])
-+	require.Equal(t, "qwen3.8-max-preview", clientModelByUpstream["qwen3.8-max-preview"])
++	_, containsOverflow := clientModelByUpstream["deepseek-v4-pro"]
++	require.False(t, containsOverflow)
 +}
 +
-+func TestCodexCockpitListModelsReflectsNewRealModelWithoutServerRestart(t *testing.T) {
++func TestCodexCockpitListModelsRefreshesSelectedAvailabilityWithoutServerRestart(t *testing.T) {
 +	gin.SetMode(gin.TestMode)
 +	var calls atomic.Int32
 +	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 +		call := calls.Add(1)
 +		w.Header().Set("Content-Type", "application/json")
 +		if call == 1 {
-+			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"existing-model","object":"model","supported_endpoint_types":["openai-response"]}]}`)
++			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"gpt-5.6-sol","object":"model","supported_endpoint_types":["openai-response"]}]}`)
 +			return
 +		}
-+		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"existing-model","object":"model","supported_endpoint_types":["openai-response"]},{"id":"future-model","object":"model","supported_endpoint_types":["openai-response"]}]}`)
-+	}), "existing-model", "future-model")
++		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"gpt-5.6-sol","object":"model","supported_endpoint_types":["openai-response"]},{"id":"grok-4.5","object":"model","supported_endpoint_types":["openai-response"]},{"id":"future-model","object":"model","supported_endpoint_types":["openai-response"]}]}`)
++	}), "gpt-5.6-sol", "grok-4.5", "future-model")
 +
 +	wantCounts := []int{1, 2}
 +	for _, wantCount := range wantCounts {
@@ -336,7 +310,7 @@ index 491a798..2c7f5cc 100644
 +
 +	recorder := httptest.NewRecorder()
 +	c, _ := gin.CreateTestContext(recorder)
-+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/cockpit/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","input":"hello","stream":false}`))
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/cockpit/v1/responses", strings.NewReader(`{"model":"gpt-5.5","input":"hello","stream":false}`))
 +	c.Request.Header.Set("Authorization", "Bearer test-token")
 +	c.Request.Header.Set("Content-Type", "application/json")
 +

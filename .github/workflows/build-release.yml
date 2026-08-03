@@ -128,6 +128,8 @@ jobs:
             controller/codex_websocket.go
             controller/internal_codex_catalog.go
             controller/internal_codex_catalog_test.go
+            controller/token.go
+            controller/token_test.go
             controller/playground.go
             controller/relay.go
             controller/relay_task_retry_test.go
@@ -148,10 +150,12 @@ jobs:
             relay/responses_handler.go
             relay/responses_handler_madapi_test.go
             model/main.go
+            model/log.go
             model/task.go
             model/task_cas_test.go
             model/task_request_reservation.go
             model/task_request_reservation_test.go
+            model/token.go
             relay/channel/api_request.go
             relay/channel/zhipu_4v/relay-zhipu_v4.go
             relay/channel/zhipu_4v/relay-zhipu_v4_test.go

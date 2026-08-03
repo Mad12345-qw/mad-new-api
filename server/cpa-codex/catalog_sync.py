@@ -79,7 +79,7 @@ def render_config(model_ids: list[str], mode: str) -> str:
         "logging-to-file: false",
         "request-log: false",
         "request-retry: 2",
-        "max-retry-credentials: 0",
+        "max-retry-credentials: 3",
         "disable-cooling: true",
         "api-keys:",
         '  - "madapi-codex-gateway"',
@@ -89,7 +89,9 @@ def render_config(model_ids: list[str], mode: str) -> str:
         "    madapi-passthrough: true",
         "    disable-cooling: true",
         "    api-key-entries:",
-        f'      - api-key: "madapi-{mode}-selector"',
+        f'      - api-key: "madapi-{mode}-selector-1"',
+        f'      - api-key: "madapi-{mode}-selector-2"',
+        f'      - api-key: "madapi-{mode}-selector-3"',
         "    models:",
     ]
     for upstream, client, force_mapping in models:

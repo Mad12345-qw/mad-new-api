@@ -26,7 +26,8 @@ class CatalogSyncTests(unittest.TestCase):
         rendered = catalog_sync.render_config(["gpt-5.6-sol", "grok-4.5"], "native")
         self.assertIn('alias: "gpt-5.6-sol"', rendered)
         self.assertIn("request-retry: 2", rendered)
-        self.assertIn("max-retry-credentials: 0", rendered)
+        self.assertIn("max-retry-credentials: 3", rendered)
+        self.assertEqual(rendered.count("      - api-key:"), 3)
         self.assertIn("madapi-passthrough: true", rendered)
         self.assertNotIn("force-mapping: true", rendered)
 

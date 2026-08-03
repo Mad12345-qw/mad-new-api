@@ -132,6 +132,7 @@ jobs:
             controller/relay.go
             controller/relay_task_retry_test.go
             middleware/distributor.go
+            middleware/distributor_madapi_test.go
             middleware/playground_path.go
             middleware/playground_path_test.go
             relay/channel/claude/adaptor.go
@@ -144,6 +145,8 @@ jobs:
             relay/channel/openai/cpa_responses_via_chat.go
             relay/channel/openai/cpa_responses_via_chat_test.go
             relay/common/relay_info.go
+            relay/responses_handler.go
+            relay/responses_handler_madapi_test.go
             model/main.go
             model/task.go
             model/task_cas_test.go

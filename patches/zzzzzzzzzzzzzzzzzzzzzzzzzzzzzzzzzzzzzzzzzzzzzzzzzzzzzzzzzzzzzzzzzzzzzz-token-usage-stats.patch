@@ -201,7 +201,7 @@ index 5d62258..bfa1a53 100644
  	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
  	DeletedAt          gorm.DeletedAt `gorm:"index"`
 diff --git a/web/default/src/features/keys/components/api-keys-columns.tsx b/web/default/src/features/keys/components/api-keys-columns.tsx
-index a3584a1..c8d6c16 100644
+index a3584a1..dd254d9 100644
 --- a/web/default/src/features/keys/components/api-keys-columns.tsx
 +++ b/web/default/src/features/keys/components/api-keys-columns.tsx
 @@ -24,7 +24,6 @@ import { BadgeCell, TruncatedCell } from '@/components/data-table'
@@ -212,15 +212,7 @@ index a3584a1..c8d6c16 100644
  import {
    Tooltip,
    TooltipContent,
-@@ -34,7 +33,6 @@ import { toIntlLocale } from '@/i18n/languages'
- import { getUserGroups } from '@/lib/api'
- import dayjs from '@/lib/dayjs'
- import { formatQuota } from '@/lib/format'
--import { cn } from '@/lib/utils'
- 
- import { API_KEY_STATUSES } from '../constants'
- import type { ApiKey } from '../types'
-@@ -46,10 +44,50 @@ import {
+@@ -46,10 +45,50 @@ import {
  } from './api-keys-cells'
  import { DataTableRowActions } from './data-table-row-actions'
  
@@ -275,7 +267,7 @@ index a3584a1..c8d6c16 100644
  }
  
  function useGroupRatios(): Record<string, number> {
-@@ -142,57 +180,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
+@@ -142,57 +181,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
        id: 'quota',
        accessorKey: 'remain_quota',
        header: t('Quota'),

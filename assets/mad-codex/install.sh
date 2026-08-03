@@ -265,7 +265,6 @@ if [ "$test_mode" != 1 ]; then
 <key>Label</key><string>me.madapi.codex-model-catalog</string>
 <key>ProgramArguments</key><array><string>/bin/sh</string><string>$escaped_script</string></array>
 <key>RunAtLoad</key><true/>
-<key>StartInterval</key><integer>300</integer>
 <key>StandardOutPath</key><string>/dev/null</string>
 <key>StandardErrorPath</key><string>/dev/null</string>
 </dict></plist>

@@ -11,26 +11,28 @@ function ConvertTo-XmlText([string]$Value) {
     return [Security.SecurityElement]::Escape($Value)
 }
 
-function Register-CatalogRefreshTask([string]$RefreshScriptPath) {
+function Write-HiddenRefreshLauncher([string]$LauncherPath, [string]$RefreshScriptPath) {
+    $powerShellPath = Join-Path $PSHOME 'powershell.exe'
+    $command = '"' + $powerShellPath + '" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $RefreshScriptPath + '"'
+    $escapedCommand = $command.Replace('"', '""')
+    $launcher = "Option Explicit`r`nDim shell`r`nSet shell = CreateObject(`"WScript.Shell`")`r`nWScript.Quit shell.Run(`"$escapedCommand`", 0, True)`r`n"
+    [IO.File]::WriteAllText($LauncherPath, $launcher, [Text.Encoding]::Unicode)
+}
+
+function Register-CatalogRefreshTask([string]$RefreshLauncherPath) {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $sid = $identity.User.Value
     $taskName = 'MadAPI Codex Model Catalog Refresh - ' + $sid
-    $startBoundary = (Get-Date).AddMinutes(1).ToString('s')
-    $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $RefreshScriptPath + '"'
+    $arguments = '//B //NoLogo "' + $RefreshLauncherPath + '"'
     $taskXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
     <LogonTrigger><Enabled>true</Enabled><UserId>$(ConvertTo-XmlText $sid)</UserId></LogonTrigger>
-    <CalendarTrigger>
-      <Repetition><Interval>PT5M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
-      <StartBoundary>$startBoundary</StartBoundary><Enabled>true</Enabled>
-      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
-    </CalendarTrigger>
   </Triggers>
   <Principals><Principal id="Author"><UserId>$(ConvertTo-XmlText $sid)</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
-  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><ExecutionTimeLimit>PT2M</ExecutionTimeLimit></Settings>
-  <Actions Context="Author"><Exec><Command>powershell.exe</Command><Arguments>$(ConvertTo-XmlText $arguments)</Arguments></Exec></Actions>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>true</Hidden><ExecutionTimeLimit>PT2M</ExecutionTimeLimit></Settings>
+  <Actions Context="Author"><Exec><Command>wscript.exe</Command><Arguments>$(ConvertTo-XmlText $arguments)</Arguments></Exec></Actions>
 </Task>
 "@
     $taskXmlPath = Join-Path ([IO.Path]::GetTempPath()) ('madapi-codex-task-' + [guid]::NewGuid().ToString('N') + '.xml')
@@ -85,9 +87,11 @@ $authPath = Join-Path $codexHome 'auth.json'
 $modelsCachePath = Join-Path $codexHome 'models_cache.json'
 $catalogPath = Join-Path $codexHome 'madapi-cockpit-model-catalog.json'
 $refreshScriptPath = Join-Path $codexHome 'madapi-refresh-model-catalog.ps1'
+$refreshLauncherPath = Join-Path $codexHome 'madapi-refresh-model-catalog.vbs'
 $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
 $tempRefreshPath = Join-Path $codexHome ("madapi-refresh-model-catalog.$transactionId.ps1")
+$tempRefreshLauncherPath = Join-Path $codexHome ("madapi-refresh-model-catalog.$transactionId.vbs")
 $tempCatalogPath = Join-Path $codexHome ("madapi-cockpit-model-catalog.$transactionId.tmp")
 $tempAuthPath = Join-Path $codexHome ("auth.json.madapi.$transactionId.tmp")
 $backupPath = $null
@@ -222,6 +226,7 @@ try {
     if (-not (Test-Path -LiteralPath $tempRefreshPath) -or (Get-Item -LiteralPath $tempRefreshPath).Length -lt 100) {
         throw 'The MadAPI model catalog refresh script is invalid.'
     }
+    Write-HiddenRefreshLauncher $tempRefreshLauncherPath $refreshScriptPath
     if ($testMode) {
         [IO.File]::WriteAllText($tempCatalogPath, '{"models":[{"slug":"gpt-5.6-sol","display_name":"gpt-5.6-sol"}]}', $utf8NoBom)
     } else {
@@ -241,7 +246,6 @@ try {
         } finally {
             if (Test-Path -LiteralPath $stagingHome) { Remove-Item -LiteralPath $stagingHome -Recurse -Force }
         }
-        Register-CatalogRefreshTask $refreshScriptPath
     }
     if ($hadConfig) {
         $backupPath = '{0}.madapi-backup-{1}' -f $configPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
@@ -250,6 +254,7 @@ try {
     Move-Item -LiteralPath $tempConfigPath -Destination $configPath -Force
     $configInstalled = $true
     Move-Item -LiteralPath $tempRefreshPath -Destination $refreshScriptPath -Force
+    Move-Item -LiteralPath $tempRefreshLauncherPath -Destination $refreshLauncherPath -Force
     Move-Item -LiteralPath $tempCatalogPath -Destination $catalogPath -Force
     if ($authMutation -ne 'none') {
         if ($hadAuth) {
@@ -264,6 +269,7 @@ try {
         }
     }
     if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
+    if (-not $testMode) { Register-CatalogRefreshTask $refreshLauncherPath }
 } catch {
     if ($authChanged) {
         if ($hadAuth -and $null -ne $authBackupPath -and (Test-Path -LiteralPath $authBackupPath)) { [IO.File]::Copy($authBackupPath, $authPath, $true) }
@@ -277,6 +283,7 @@ try {
 } finally {
     if (Test-Path -LiteralPath $tempConfigPath) { Remove-Item -LiteralPath $tempConfigPath -Force }
     if (Test-Path -LiteralPath $tempRefreshPath) { Remove-Item -LiteralPath $tempRefreshPath -Force }
+    if (Test-Path -LiteralPath $tempRefreshLauncherPath) { Remove-Item -LiteralPath $tempRefreshLauncherPath -Force }
     if (Test-Path -LiteralPath $tempCatalogPath) { Remove-Item -LiteralPath $tempCatalogPath -Force }
     if (Test-Path -LiteralPath $tempAuthPath) { Remove-Item -LiteralPath $tempAuthPath -Force }
 }

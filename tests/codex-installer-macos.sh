@@ -14,6 +14,9 @@ run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 MADAPI_CODEX_LOGIN_MODE=${3:-auto} M
 ! grep -Fq 'CODEX_CLI_PATH' "$installer_path" || fail 'CLI probing remains.'
 ! grep -Fq 'madapi.key' "$installer_path" || fail 'Command authentication remains.'
 ! grep -Fq 'command -v codex' "$installer_path" || fail 'CLI discovery remains.'
+grep -Fq '<key>RunAtLoad</key><true/>' "$installer_path" || fail 'macOS login refresh trigger is missing.'
+! grep -Fq '<key>StartInterval</key>' "$installer_path" || fail 'A periodic macOS catalog refresh trigger remains.'
+! grep -Fq '<integer>300</integer>' "$installer_path" || fail 'The five-minute macOS catalog refresh remains.'
 trap 'rm -rf "$home"' EXIT
 mkdir -p "$home/sessions"
 config="$home/config.toml"; auth="$home/auth.json"; key_file="$home/madapi.key"; cache="$home/models_cache.json"; session="$home/sessions/sentinel.jsonl"

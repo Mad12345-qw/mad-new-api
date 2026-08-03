@@ -28,6 +28,11 @@ Assert-True (-not $installer.Contains('CODEX_CLI_PATH')) 'CLI probing remains.'
 Assert-True (-not $installer.Contains('madapi.key')) 'External key-file authentication remains.'
 Assert-True (-not $installer.Contains('Get-Command')) 'CLI discovery remains.'
 Assert-True ($installer -match '(?m)^\$tempRefreshPath\s*=.*\.ps1') 'Temporary refresh script does not use a PowerShell-compatible extension.'
+Assert-True ($installer.Contains('<LogonTrigger>')) 'Windows login refresh trigger is missing.'
+Assert-True (-not $installer.Contains('<CalendarTrigger>')) 'A periodic catalog refresh trigger remains.'
+Assert-True (-not $installer.Contains('PT5M')) 'The five-minute catalog refresh remains.'
+Assert-True ($installer.Contains('<Command>wscript.exe</Command>')) 'The silent Windows launcher is missing.'
+Assert-True (-not $installer.Contains('<Command>powershell.exe</Command>')) 'The scheduled task still opens PowerShell directly.'
 
 $temporaryRoot = if ([string]::IsNullOrWhiteSpace([string]$env:RUNNER_TEMP)) { [IO.Path]::GetTempPath() } else { [string]$env:RUNNER_TEMP }
 $codexHome = Join-Path $temporaryRoot ('mad-codex-desktop-' + [guid]::NewGuid().ToString('N'))
@@ -80,6 +85,22 @@ try {
     Assert-True ((Hash $auth) -eq $authHash) 'OAuth state changed.'
     Assert-True ((Hash $session) -eq $sessionHash) 'Session changed.'
     Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-refresh-model-catalog.ps1')) 'OAuth refresh script is missing.'
+    $refreshLauncher = Join-Path $codexHome 'madapi-refresh-model-catalog.vbs'
+    Assert-True (Test-Path -LiteralPath $refreshLauncher) 'OAuth silent refresh launcher is missing.'
+    $refreshLauncherText = [IO.File]::ReadAllText($refreshLauncher)
+    Assert-True ($refreshLauncherText.Contains('shell.Run') -and $refreshLauncherText.Contains(', 0, True')) 'OAuth refresh launcher is not hidden.'
+    $launcherFixture = Join-Path $codexHome 'silent-launcher-fixture.json'
+    Write-Utf8 $launcherFixture '{"models":[{"slug":"silent-launcher-test","display_name":"silent-launcher-test"}]}'
+    $oldHome, $oldFixture = $env:CODEX_HOME, $env:MADAPI_REFRESH_RESPONSE_FILE
+    try {
+        $env:CODEX_HOME = $codexHome
+        $env:MADAPI_REFRESH_RESPONSE_FILE = $launcherFixture
+        $launcherProcess = Start-Process -FilePath "$env:WINDIR\System32\wscript.exe" -ArgumentList @('//B', '//NoLogo', ('"' + $refreshLauncher + '"')) -WindowStyle Hidden -Wait -PassThru
+        Assert-True ($launcherProcess.ExitCode -eq 0) 'OAuth silent refresh launcher failed.'
+    } finally {
+        $env:CODEX_HOME, $env:MADAPI_REFRESH_RESPONSE_FILE = $oldHome, $oldFixture
+    }
+    Assert-True (([IO.File]::ReadAllText((Join-Path $codexHome 'madapi-cockpit-model-catalog.json'))).Contains('silent-launcher-test')) 'OAuth silent refresh launcher did not update the catalog.'
     Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json')) 'OAuth catalog file is missing.'
     $backup = @(Get-ChildItem -LiteralPath $codexHome -Filter 'config.toml.madapi-backup-*' -File)[0]
     Assert-True ($null -ne $backup -and (Hash $backup.FullName) -eq $configHash) 'Backup is not exact.'
@@ -121,6 +142,7 @@ try {
     Assert-True ($apiResult.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'API-key Cockpit route is missing.'
     Assert-True (-not $apiResult.Contains('cc-switch-model-catalog.json')) 'Conflicting third-party catalog remains.'
     Assert-True (Test-Path -LiteralPath (Join-Path $apiOnly 'madapi-refresh-model-catalog.ps1')) 'API-key refresh script is missing.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $apiOnly 'madapi-refresh-model-catalog.vbs')) 'API-key silent refresh launcher is missing.'
     Assert-True (Test-Path -LiteralPath (Join-Path $apiOnly 'madapi-cockpit-model-catalog.json')) 'API-key catalog file is missing.'
     Assert-True (-not (Test-Path -LiteralPath $apiOnlyCache)) 'API-key stale cache remains.'
     $apiAuth = [IO.File]::ReadAllText($apiOnlyAuth) | ConvertFrom-Json

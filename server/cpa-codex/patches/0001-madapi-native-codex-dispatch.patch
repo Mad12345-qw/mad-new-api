@@ -1,9 +1,9 @@
 diff --git a/internal/api/madapi_native_codex.go b/internal/api/madapi_native_codex.go
 new file mode 100644
-index 0000000..bcba1ca
+index 0000000..a0e2ef7
 --- /dev/null
 +++ b/internal/api/madapi_native_codex.go
-@@ -0,0 +1,402 @@
+@@ -0,0 +1,404 @@
 +package api
 +
 +import (

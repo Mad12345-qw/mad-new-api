@@ -9,16 +9,17 @@ function Hash([string]$Path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $Pat
 function Write-OAuth([string]$Path) {
     Write-Utf8 $Path '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"},"last_refresh":"2026-08-02T00:00:00Z"}'
 }
-function Install([string]$CodexHome, [string]$Key) {
-    $oldHome, $oldKey, $oldTestMode, $oldRefreshSource = $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE
+function Install([string]$CodexHome, [string]$Key, [string]$LoginMode = 'auto') {
+    $oldHome, $oldKey, $oldLoginMode, $oldTestMode, $oldRefreshSource = $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_CODEX_LOGIN_MODE, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE
     try {
         $env:CODEX_HOME = $CodexHome
         $env:MADAPI_KEY = $Key
+        $env:MADAPI_CODEX_LOGIN_MODE = $LoginMode
         $env:MADAPI_INSTALL_TEST_MODE = '1'
         $env:MADAPI_REFRESH_SCRIPT_SOURCE = Join-Path (Split-Path -Parent $InstallerPath) 'refresh-model-catalog.ps1'
         & $InstallerPath
     } finally {
-        $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE = $oldHome, $oldKey, $oldTestMode, $oldRefreshSource
+        $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_CODEX_LOGIN_MODE, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE = $oldHome, $oldKey, $oldLoginMode, $oldTestMode, $oldRefreshSource
     }
 }
 
@@ -141,6 +142,30 @@ try {
     Assert-True ($unsignedResult.Contains('model_catalog_json = "madapi-cockpit-model-catalog.json"')) 'New-user install did not configure the managed catalog.'
     Assert-True ($unsignedResult.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'New-user install did not configure the OAuth-native route.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $unsigned 'auth.json'))) 'New-user install forced API-key sign-in.'
+
+    $switchHome = Join-Path $codexHome 'login-switch'
+    New-Item -ItemType Directory -Path $switchHome -Force | Out-Null
+    $switchConfig = Join-Path $switchHome 'config.toml'
+    $switchAuth = Join-Path $switchHome 'auth.json'
+    Write-Utf8 $switchConfig 'model = "gpt-5.6-sol"'
+    Write-OAuth $switchAuth
+    $switchOAuthHash = Hash $switchAuth
+    Install $switchHome 'sk-windows-switch-api' 'apikey'
+    $switchApiConfig = [IO.File]::ReadAllText($switchConfig)
+    $switchApiAuth = [IO.File]::ReadAllText($switchAuth) | ConvertFrom-Json
+    Assert-True ($switchApiConfig.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'Explicit API mode did not select the mapped route.'
+    Assert-True ($switchApiConfig.Contains('requires_openai_auth = false')) 'Explicit API mode auth gate is wrong.'
+    Assert-True ($switchApiAuth.auth_mode -eq 'apikey' -and $switchApiAuth.OPENAI_API_KEY -eq 'sk-windows-switch-api') 'Explicit API mode did not replace the login state.'
+    $oauthSwitchBackup = @(Get-ChildItem -LiteralPath $switchHome -Filter 'auth.json.madapi-backup-*' -File | Sort-Object LastWriteTime)[0]
+    Assert-True ($null -ne $oauthSwitchBackup -and (Hash $oauthSwitchBackup.FullName) -eq $switchOAuthHash) 'OAuth state backup is not exact.'
+    $switchApiHash = Hash $switchAuth
+    Install $switchHome 'sk-windows-switch-oauth' 'oauth'
+    $switchOAuthConfig = [IO.File]::ReadAllText($switchConfig)
+    Assert-True ($switchOAuthConfig.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'Explicit OAuth mode did not select the native route.'
+    Assert-True ($switchOAuthConfig.Contains('requires_openai_auth = true')) 'Explicit OAuth mode auth gate is wrong.'
+    Assert-True (-not (Test-Path -LiteralPath $switchAuth)) 'Explicit OAuth mode did not exit API-key login.'
+    $apiSwitchBackup = @(Get-ChildItem -LiteralPath $switchHome -Filter 'auth.json.madapi-backup-*' -File | Sort-Object LastWriteTime)[-1]
+    Assert-True ($null -ne $apiSwitchBackup -and (Hash $apiSwitchBackup.FullName) -eq $switchApiHash) 'API state backup is not exact.'
 
     $refreshHome = Join-Path $codexHome 'refresh-auth-switch'
     New-Item -ItemType Directory -Path $refreshHome -Force | Out-Null

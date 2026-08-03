@@ -7,6 +7,8 @@ case "$api_key" in
   sk-*) ;;
   *) printf '%s\n' 'MADAPI_KEY is missing or invalid.' >&2; exit 1 ;;
 esac
+requested_login_mode=${MADAPI_CODEX_LOGIN_MODE:-auto}
+case "$requested_login_mode" in auto|oauth|apikey) ;; *) printf '%s\n' 'MADAPI_CODEX_LOGIN_MODE must be auto, oauth, or apikey.' >&2; exit 1 ;; esac
 
 codex_home=${CODEX_HOME:-"$HOME/.codex"}
 config_path="$codex_home/config.toml"
@@ -18,12 +20,15 @@ transaction_id="$$-$(date '+%s')"
 temp_path="$codex_home/config.toml.madapi.$transaction_id.tmp"
 temp_refresh_path="$codex_home/madapi-refresh-model-catalog.$transaction_id.tmp"
 temp_catalog_path="$codex_home/madapi-cockpit-model-catalog.$transaction_id.tmp"
+temp_auth_path="$codex_home/auth.json.madapi.$transaction_id.tmp"
 temp_plist_path="$codex_home/madapi-model-catalog.$transaction_id.plist"
 body_path="$codex_home/config.toml.madapi.$transaction_id.body"
 backup_path=
+auth_backup_path=
 had_config=0
 had_auth=0
 config_installed=0
+auth_changed=0
 success=0
 test_mode=${MADAPI_INSTALL_TEST_MODE:-0}
 staging_home=
@@ -42,6 +47,15 @@ if [ -f "$auth_path" ]; then
   elif [ "$existing_mode" = 'apikey' ] || { [ -n "$existing_api_key" ] && [ "$existing_api_key" != 'null' ]; }; then
     auth_kind=apikey
   fi
+fi
+existing_auth_kind=$auth_kind
+auth_mutation=none
+if [ "$requested_login_mode" = oauth ]; then
+  auth_kind=oauth
+  if [ "$existing_auth_kind" != oauth ] && [ "$had_auth" -eq 1 ]; then auth_mutation=clear; fi
+elif [ "$requested_login_mode" = apikey ]; then
+  auth_kind=apikey
+  auth_mutation=write
 fi
 
 mkdir -p "$codex_home"
@@ -142,10 +156,13 @@ else
 fi
 
 cleanup() {
+  if [ "$success" -ne 1 ] && [ "$auth_changed" -eq 1 ]; then
+    if [ "$had_auth" -eq 1 ] && [ -n "$auth_backup_path" ] && [ -f "$auth_backup_path" ]; then cp "$auth_backup_path" "$auth_path"; else rm -f "$auth_path"; fi
+  fi
   if [ "$success" -ne 1 ] && [ "$config_installed" -eq 1 ]; then
     if [ "$had_config" -eq 1 ] && [ -n "$backup_path" ] && [ -f "$backup_path" ]; then cp "$backup_path" "$config_path"; else rm -f "$config_path"; fi
   fi
-  rm -f "$temp_path" "$temp_refresh_path" "$temp_catalog_path" "$temp_plist_path" "$body_path"
+  rm -f "$temp_path" "$temp_refresh_path" "$temp_catalog_path" "$temp_auth_path" "$temp_plist_path" "$body_path"
   [ -z "$staging_home" ] || rm -rf "$staging_home"
 }
 trap cleanup EXIT
@@ -175,6 +192,9 @@ trap 'exit 1' HUP INT TERM
   printf '%s\n' 'request_max_retries = 3'
   printf '%s\n' 'context_window_override = 1048576'
 } > "$temp_path"
+if [ "$auth_mutation" = write ]; then
+  printf '{"auth_mode":"apikey","OPENAI_API_KEY":"%s"}' "$api_key" > "$temp_auth_path"
+fi
 
 refresh_source=${MADAPI_REFRESH_SCRIPT_SOURCE:-}
 if [ -z "$refresh_source" ]; then
@@ -220,6 +240,19 @@ mv "$temp_refresh_path" "$refresh_script_path"
 chmod 700 "$refresh_script_path"
 mv "$temp_catalog_path" "$catalog_path"
 chmod 600 "$catalog_path"
+if [ "$auth_mutation" != none ]; then
+  if [ "$had_auth" -eq 1 ]; then
+    auth_backup_path="$auth_path.madapi-backup-$(date '+%Y%m%d-%H%M%S')-$$"
+    cp -p "$auth_path" "$auth_backup_path"
+  fi
+  auth_changed=1
+  if [ "$auth_mutation" = clear ]; then
+    rm -f "$auth_path"
+  else
+    mv "$temp_auth_path" "$auth_path"
+    chmod 600 "$auth_path"
+  fi
+fi
 
 if [ "$test_mode" != 1 ]; then
     launch_agents="$HOME/Library/LaunchAgents"
@@ -250,7 +283,12 @@ success=1
 
 printf 'MadAPI Codex desktop configuration installed: %s\n' "$config_path"
 [ -z "$backup_path" ] || printf 'Backup created: %s\n' "$backup_path"
-if [ "$auth_kind" = 'oauth' ]; then
+[ -z "$auth_backup_path" ] || printf 'Authentication backup created: %s\n' "$auth_backup_path"
+if [ "$requested_login_mode" = oauth ] && [ "$existing_auth_kind" != oauth ]; then
+  printf '%s\n' 'OAuth mode prepared. Restart Codex Desktop and sign in with ChatGPT.'
+elif [ "$requested_login_mode" = apikey ]; then
+  printf '%s\n' 'Codex Desktop API Key sign-in configured.'
+elif [ "$auth_kind" = 'oauth' ]; then
   printf '%s\n' 'Existing ChatGPT OAuth session preserved.'
 elif [ "$auth_kind" = 'apikey' ]; then
   printf '%s\n' 'Existing Codex Desktop API Key sign-in preserved.'

@@ -2,6 +2,13 @@ name: CPA Full Responses Acceptance
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'server/cpa-codex-full/**'
+      - 'server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch'
+      - '.github/workflows/cpa-full-responses-acceptance.yml'
 
 permissions:
   contents: read

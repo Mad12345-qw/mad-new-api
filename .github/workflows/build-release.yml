@@ -126,6 +126,8 @@ jobs:
             controller/codex_compat.go
             controller/codex_compat_test.go
             controller/codex_websocket.go
+            controller/internal_codex_catalog.go
+            controller/internal_codex_catalog_test.go
             controller/playground.go
             controller/relay.go
             controller/relay_task_retry_test.go
@@ -209,7 +211,10 @@ jobs:
       - name: Test Codex route reconciliation
         run: python3 -m unittest server/cpa-codex/test_patch_nginx.py
 
-      - name: Test CPA native deployment reconciliation
+      - name: Test CPA front-proxy catalogs
+        run: python3 -m unittest server/cpa-codex/test_catalog_sync.py
+
+      - name: Test CPA front-proxy deployment reconciliation
         run: python3 -m unittest server/cpa-codex/test_compose_reconcile.py
 
       - name: Test disaster recovery tooling
@@ -222,23 +227,29 @@ jobs:
           sh -n server/cpa-codex/sidecar-autodeploy.sh
           sh -n server/disaster-recovery/install.sh
 
-      - name: Apply and test CPA native dispatcher
+      - name: Apply and test CPA full Codex front proxy
         working-directory: cpa-source
         run: |
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           gofmt -w \
             internal/api/madapi_native_codex.go \
             internal/api/madapi_native_codex_test.go \
             internal/api/server_routes.go \
+            internal/config/config_types.go \
+            internal/runtime/executor/openai_compat_executor.go \
+            internal/runtime/executor/openai_compat_executor_madapi_test.go \
             internal/translator/gemini/openai/responses/gemini_openai-responses_response.go \
-            internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go
-          go test ./internal/translator/gemini/openai/responses ./internal/api ./internal/runtime/executor
+            internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go \
+            internal/watcher/synthesizer/config.go
+          go test ./internal/translator/gemini/openai/responses ./internal/api ./internal/runtime/executor ./internal/watcher/synthesizer ./sdk/api/handlers/openai
 
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
 
-      - name: Build CPA native Codex image
+      - name: Build CPA full Codex front-proxy image
         run: docker build --pull --build-arg CPA_PATCHED=1 --file server/cpa-codex/Dockerfile --tag mad-cpa-codex:latest .
 
       - name: Export image

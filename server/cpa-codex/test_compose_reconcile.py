@@ -24,12 +24,15 @@ BASE = """services:
 
 
 class ComposeReconcileTests(unittest.TestCase):
-    def test_adds_private_executor_and_new_api_dispatch_environment(self):
+    def test_adds_two_front_proxies_and_required_environment(self):
         result = compose_reconcile.reconcile_compose(BASE)
         self.assertIn("MADAPI_CODEX_DISPATCH_TOKEN: ${MADAPI_CODEX_DISPATCH_TOKEN}", result)
         self.assertIn("MADAPI_CPA_DISPATCH_URL: http://cpa-codex:8317/internal/madapi/codex/execute", result)
+        self.assertIn("MADAPI_INTERNAL_CATALOG_TOKEN: ${MADAPI_INTERNAL_CATALOG_TOKEN}", result)
         self.assertIn("127.0.0.1:8318:8317", result)
-        self.assertNotIn("MADAPI_INTERNAL_CATALOG_TOKEN", result)
+        self.assertIn("127.0.0.1:8319:8317", result)
+        self.assertIn("CPA_CATALOG_MODE: native", result)
+        self.assertIn("CPA_CATALOG_MODE: cockpit", result)
 
     def test_replaces_legacy_sidecar_service_and_is_idempotent(self):
         legacy = BASE + """
@@ -43,7 +46,8 @@ class ComposeReconcileTests(unittest.TestCase):
         second = compose_reconcile.reconcile_compose(first)
         self.assertEqual(first, second)
         self.assertEqual(first.count("  cpa-codex:\n"), 1)
-        self.assertNotIn("MADAPI_INTERNAL_CATALOG_TOKEN", first)
+        self.assertEqual(first.count("  cpa-codex-cockpit:\n"), 1)
+        self.assertIn("MADAPI_INTERNAL_CATALOG_TOKEN", first)
 
 
 if __name__ == "__main__":

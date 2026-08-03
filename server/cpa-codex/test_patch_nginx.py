@@ -10,14 +10,22 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(patch_nginx)
 
 
-LEGACY_BLOCK = """server {
+BASE = """server {
+    listen 443 ssl;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+    }
+}
+"""
+
+LEGACY = """server {
     listen 443 ssl;
 
     # MadAPI CPA Codex sidecar
     location ^~ /codex/v1/ {
         proxy_pass http://127.0.0.1:8318/v1/;
-        proxy_http_version 1.1;
-        proxy_set_header Authorization \"Bearer madapi-codex-gateway\";
+        proxy_set_header Authorization "Bearer madapi-codex-gateway";
     }
 
     location / {
@@ -28,27 +36,33 @@ LEGACY_BLOCK = """server {
 
 
 class PatchNginxTests(unittest.TestCase):
-    def test_removes_only_the_obsolete_front_sidecar_location(self):
-        restored, removed = patch_nginx.remove_legacy_sidecar_routes(LEGACY_BLOCK)
-        self.assertEqual(removed, 1)
-        self.assertNotIn("127.0.0.1:8318", restored)
-        self.assertIn("proxy_pass http://127.0.0.1:3001;", restored)
-        self.assertIn("listen 443 ssl;", restored)
+    def test_installs_native_and_cockpit_front_routes(self):
+        result = patch_nginx.reconcile_routes(BASE)
+        self.assertIn("location = /codex/v1/models", result)
+        self.assertIn("location = /codex/cockpit/v1/models", result)
+        self.assertIn("proxy_pass http://127.0.0.1:8318/v1/;", result)
+        self.assertIn("proxy_pass http://127.0.0.1:8319/v1/;", result)
+        self.assertIn("X-MadAPI-Authorization $http_authorization", result)
+        self.assertLess(result.index("location = /codex/v1/models"), result.index("location / {"))
 
     def test_is_idempotent(self):
-        restored, _ = patch_nginx.remove_legacy_sidecar_routes(LEGACY_BLOCK)
-        second, removed = patch_nginx.remove_legacy_sidecar_routes(restored)
-        self.assertEqual(removed, 0)
-        self.assertEqual(second, restored)
+        first = patch_nginx.reconcile_routes(BASE)
+        second = patch_nginx.reconcile_routes(first)
+        self.assertEqual(first, second)
+        self.assertEqual(first.count(patch_nginx.BEGIN_MARKER), 1)
 
-    def test_preserves_an_unmanaged_codex_location(self):
-        source = LEGACY_BLOCK.replace(
-            "# MadAPI CPA Codex sidecar\n    location ^~ /codex/v1/ {\n        proxy_pass http://127.0.0.1:8318/v1/;",
-            "# Operator-managed Codex route\n    location ^~ /codex/v1/ {\n        proxy_pass http://127.0.0.1:3001/codex/v1/;",
+    def test_replaces_legacy_front_route(self):
+        result = patch_nginx.reconcile_routes(LEGACY)
+        self.assertEqual(result.count("proxy_pass http://127.0.0.1:8318/v1/;"), 1)
+        self.assertIn("proxy_pass http://127.0.0.1:8319/v1/;", result)
+
+    def test_rejects_unmanaged_codex_route(self):
+        unmanaged = BASE.replace(
+            "    location / {",
+            "    location ^~ /codex/v1/ { proxy_pass http://127.0.0.1:9999; }\n\n    location / {",
         )
-        restored, removed = patch_nginx.remove_legacy_sidecar_routes(source)
-        self.assertEqual(removed, 0)
-        self.assertEqual(restored, source)
+        with self.assertRaisesRegex(RuntimeError, "unmanaged Codex"):
+            patch_nginx.reconcile_routes(unmanaged)
 
 
 if __name__ == "__main__":

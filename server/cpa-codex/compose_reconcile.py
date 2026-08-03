@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconcile the private CPA executor without changing public routes."""
+"""Reconcile the native and Cockpit CPA front proxies."""
 
 from __future__ import annotations
 
@@ -60,6 +60,18 @@ def ensure_environment(lines: list[str], service: str, values: dict[str, str]) -
     return lines
 
 
+def replace_service(lines: list[str], name: str, block: list[str]) -> list[str]:
+    bounds = service_bounds(lines, name)
+    if bounds is None:
+        if lines and lines[-1].strip():
+            lines.append("\n")
+        lines.extend(block)
+        return lines
+    start, end = bounds
+    lines[start:end] = block
+    return lines
+
+
 def reconcile_compose(source: str) -> str:
     lines = source.splitlines(keepends=True)
     if not lines:
@@ -70,10 +82,11 @@ def reconcile_compose(source: str) -> str:
         {
             "MADAPI_CODEX_DISPATCH_TOKEN": "${MADAPI_CODEX_DISPATCH_TOKEN}",
             "MADAPI_CPA_DISPATCH_URL": "http://cpa-codex:8317/internal/madapi/codex/execute",
+            "MADAPI_INTERNAL_CATALOG_TOKEN": "${MADAPI_INTERNAL_CATALOG_TOKEN}",
         },
     )
 
-    block = [
+    native_block = [
         "  cpa-codex:\n",
         "    image: mad-cpa-codex:latest\n",
         "    container_name: cpa-codex\n",
@@ -85,15 +98,32 @@ def reconcile_compose(source: str) -> str:
         "    environment:\n",
         "      TZ: Asia/Shanghai\n",
         "      MADAPI_CODEX_DISPATCH_TOKEN: ${MADAPI_CODEX_DISPATCH_TOKEN}\n",
+        "      MADAPI_INTERNAL_URL: http://new-api:3000\n",
+        "      MADAPI_INTERNAL_CATALOG_TOKEN: ${MADAPI_INTERNAL_CATALOG_TOKEN}\n",
+        "      CPA_CATALOG_MODE: native\n",
+        "      CPA_CONFIG_PATH: /data/native-config.yaml\n",
+        "\n",
     ]
-    bounds = service_bounds(lines, "cpa-codex")
-    if bounds is None:
-        if lines and lines[-1].strip():
-            lines.append("\n")
-        lines.extend(block)
-    else:
-        start, end = bounds
-        lines[start:end] = block
+    lines = replace_service(lines, "cpa-codex", native_block)
+
+    cockpit_block = [
+        "  cpa-codex-cockpit:\n",
+        "    image: mad-cpa-codex:latest\n",
+        "    container_name: cpa-codex-cockpit\n",
+        "    restart: unless-stopped\n",
+        "    ports:\n",
+        '      - "127.0.0.1:8319:8317"\n',
+        "    volumes:\n",
+        "      - ./cpa-codex:/data\n",
+        "    environment:\n",
+        "      TZ: Asia/Shanghai\n",
+        "      MADAPI_INTERNAL_URL: http://new-api:3000\n",
+        "      MADAPI_INTERNAL_CATALOG_TOKEN: ${MADAPI_INTERNAL_CATALOG_TOKEN}\n",
+        "      CPA_CATALOG_MODE: cockpit\n",
+        "      CPA_CONFIG_PATH: /data/cockpit-config.yaml\n",
+        "\n",
+    ]
+    lines = replace_service(lines, "cpa-codex-cockpit", cockpit_block)
     return "".join(lines)
 
 

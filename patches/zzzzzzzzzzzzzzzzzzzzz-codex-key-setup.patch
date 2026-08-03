@@ -43,7 +43,7 @@ index 5a75d5f..734d798 100644
 +          setOpen('codex-setup')
 +        }}
 +        aria-label={t('Codex Setup')}
-+        className='h-7 min-w-0 shrink-0 whitespace-nowrap px-1.5 text-[10px] sm:h-8 sm:px-2.5 sm:text-xs'
++        className='h-7 min-w-0 shrink-0 whitespace-nowrap px-1.5 text-[10px] sm:text-[11px]'
 +      >
 +        {t('Codex Setup')}
 +      </Button>
@@ -453,8 +453,8 @@ index 815f297..13b9b3e 100644
 +    "Restart Codex and choose an available model": "重启 Codex 后选择可用模型",
 +    "Restart Codex and complete ChatGPT sign-in": "重启 Codex 后完成 ChatGPT 登录",
 +    "Login mode": "登录方式",
-+    "OAuth login": "OAuth 登录",
-+    "API Key login": "API Key 登录",
++    "OAuth login": "OAuth登录（有GPT账号）",
++    "API Key login": "API Key（无GPT账号）",
 +    "Copy one-command setup": "复制一键配置命令"
    }
  }

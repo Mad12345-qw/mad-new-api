@@ -37,9 +37,11 @@ from engine import (
     payload_evidence,
     provenance_evidence,
     route_probe,
+    sanitize_error_message,
     sanitize_headers,
     transport_evidence,
     within_run_route_divergence_evidence,
+    zero_success_summary,
 )
 from security import decrypt_secret, encrypt_secret, mask_secret
 
@@ -161,6 +163,27 @@ class EngineTests(unittest.TestCase):
         shaped = body_shape({"token": "secret", "nested": {"count": 2}})
         self.assertEqual(shaped["token"], "str")
         self.assertEqual(shaped["nested"]["count"], "int")
+
+    def test_error_message_is_useful_but_credentials_are_redacted(self) -> None:
+        message = sanitize_error_message("model route failed; api_key=sk-secret-value-123456789012345")
+        self.assertIn("model route failed", message)
+        self.assertNotIn("sk-secret-value", message)
+
+    def test_zero_success_summary_explains_rejected_probes(self) -> None:
+        responses = [
+            ProbeResponse(
+                400,
+                10,
+                {},
+                "{}",
+                {"error": {"message": "model mapping not found"}},
+                "digest",
+            )
+            for _ in range(8)
+        ]
+        summary = zero_success_summary(responses, 8, [])
+        self.assertIn("HTTP 400×8", summary)
+        self.assertIn("model mapping not found", summary)
 
     def test_multihop_chain_separates_outer_translation_and_unknown_terminal(self) -> None:
         route = route_for_model("claude-fable-5", "claude", ["openai"])

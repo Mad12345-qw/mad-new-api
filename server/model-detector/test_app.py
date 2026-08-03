@@ -49,6 +49,25 @@ class AppTests(unittest.TestCase):
         self.assertIn("正在执行跨协议预检", html)
         self.assertIn("已有检测任务正在运行", html)
         self.assertNotIn("a detector batch is already running", html)
+        self.assertIn("判定与原因", html)
+        self.assertIn("为什么是 0% / 无法判断", html)
+
+    def test_zero_confidence_run_gets_a_visible_http_failure_reason(self) -> None:
+        runs = [{"id": 7001, "mode": "active", "status": "completed", "confidence": 0.0}]
+        with patch.object(
+            service.db,
+            "rows",
+            side_effect=[
+                [{"run_id": 7001, "planned": 8, "succeeded": 0}],
+                [
+                    {"run_id": 7001, "detail_json": json.dumps({"status_code": 400})}
+                    for _ in range(8)
+                ],
+            ],
+        ):
+            service.attach_run_failure_reasons(runs)
+        self.assertIn("HTTP 400×8", runs[0]["failure_reason"])
+        self.assertIn("模型映射", runs[0]["failure_reason"])
 
     def test_duplicate_batch_error_is_chinese(self) -> None:
         self.login()

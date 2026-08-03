@@ -525,6 +525,79 @@ def aggregate_model_results(model_results: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def attach_run_failure_reasons(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates = [
+        run
+        for run in runs
+        if run.get("mode") == "active"
+        and run.get("status") == "completed"
+        and float(run.get("confidence") or 0.0) == 0.0
+    ]
+    if not candidates:
+        return runs
+    run_ids = [int(run["id"]) for run in candidates]
+    placeholders = ",".join("?" for _ in run_ids)
+    totals = {
+        int(row["run_id"]): row
+        for row in db.rows(
+            f"SELECT run_id,SUM(planned_probes) AS planned,SUM(success_probes) AS succeeded "
+            f"FROM model_results WHERE run_id IN ({placeholders}) GROUP BY run_id",
+            tuple(run_ids),
+        )
+    }
+    observations: dict[int, list[dict[str, Any]]] = {run_id: [] for run_id in run_ids}
+    for row in db.rows(
+        f"SELECT run_id,detail_json FROM evidence WHERE model IS NOT NULL AND category='observation' "
+        f"AND run_id IN ({placeholders}) ORDER BY id",
+        tuple(run_ids),
+    ):
+        try:
+            observations[int(row["run_id"])].append(json.loads(row["detail_json"] or "{}"))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    hints = {
+        400: "上游拒绝了模型请求，通常是模型映射、协议或请求参数不兼容",
+        401: "上游鉴权失败，请检查该渠道 Key",
+        402: "上游余额或计费状态异常",
+        403: "上游拒绝访问，可能是权限或区域限制",
+        404: "上游找不到模型或调用端点",
+        429: "上游限流或额度已耗尽",
+        503: "上游没有可用模型路由或服务暂不可用",
+    }
+    for run in candidates:
+        run_id = int(run["id"])
+        total = totals.get(run_id, {})
+        planned = int(total.get("planned") or 0)
+        succeeded = int(total.get("succeeded") or 0)
+        if planned == 0:
+            run["failure_reason"] = "未启用主动模型探针，本轮没有发送模型请求"
+            continue
+        if succeeded:
+            continue
+        status_counts: dict[int, int] = {}
+        messages: list[str] = []
+        for detail in observations.get(run_id, []):
+            status = detail.get("status_code")
+            if isinstance(status, int):
+                status_counts[status] = status_counts.get(status, 0) + 1
+            message = str(detail.get("error_summary") or "").strip()
+            if message and message not in messages:
+                messages.append(message)
+        if status_counts:
+            statuses = "、".join(
+                f"HTTP {status}×{count}" for status, count in sorted(status_counts.items())
+            )
+            reason = f"已执行 {planned} 个模型探针，全部未成功（{statuses}）"
+            if messages:
+                reason += f"；上游原因：{messages[0]}"
+            elif len(status_counts) == 1:
+                reason += f"；{hints.get(next(iter(status_counts)), '上游拒绝或未能完成模型调用')}"
+            run["failure_reason"] = reason
+        else:
+            run["failure_reason"] = f"已计划 {planned} 个模型探针，但没有获得可用的 HTTP 响应"
+    return runs
+
+
 def model_declaration_warnings(model_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     warnings: list[dict[str, Any]] = []
     for result in model_results:
@@ -1169,6 +1242,7 @@ def state() -> dict[str, Any]:
         "SELECT r.*,u.name AS upstream_name FROM runs r JOIN upstreams u ON u.id=r.upstream_id "
         "ORDER BY r.started_at DESC LIMIT 100"
     )
+    attach_run_failure_reasons(runs)
     return {
         "upstreams": upstreams,
         "runs": runs,
@@ -1368,6 +1442,7 @@ def run_detail(run_id: int) -> dict[str, Any]:
     )
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
+    attach_run_failure_reasons([run])
     run["compliance"] = json.loads(run.pop("compliance_detail_json") or "{}")
     evidence = db.rows("SELECT * FROM evidence WHERE run_id=? ORDER BY model IS NOT NULL,model,id", (run_id,))
     for item in evidence:

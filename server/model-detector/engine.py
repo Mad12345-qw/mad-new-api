@@ -77,6 +77,71 @@ def safe_json(text: str) -> Any:
         return None
 
 
+def sanitize_error_message(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    message = " ".join(value.split()).strip()
+    if not message:
+        return None
+    message = re.sub(
+        r"(?i)\b(authorization|api[-_ ]?key|token|secret|password)\b\s*[:=]\s*[^\s,;]+",
+        r"\1=<已脱敏>",
+        message,
+    )
+    message = re.sub(r"\b(?:sk-ant-|sk-|AIza)[A-Za-z0-9_-]{12,}\b", "<凭据已脱敏>", message)
+    return message[:300]
+
+
+def response_error_summary(response: ProbeResponse) -> str | None:
+    value = response.body_json
+    if not isinstance(value, dict):
+        return None
+    error = value.get("error")
+    if isinstance(error, dict):
+        return sanitize_error_message(error.get("message") or error.get("detail"))
+    return sanitize_error_message(value.get("message") or value.get("detail"))
+
+
+def zero_success_summary(
+    responses: list[ProbeResponse],
+    planned_probes: int,
+    evidence: list[Evidence],
+) -> str:
+    status_counts: dict[int, int] = {}
+    messages: list[str] = []
+    for response in responses:
+        status_counts[response.status_code] = status_counts.get(response.status_code, 0) + 1
+        message = response_error_summary(response)
+        if message and message not in messages:
+            messages.append(message)
+    transport_errors = [
+        str(item.detail.get("error_type") or "连接错误")
+        for item in evidence
+        if item.category == "transport_error"
+    ]
+    if not responses:
+        suffix = f"（{', '.join(dict.fromkeys(transport_errors))}）" if transport_errors else ""
+        return f"计划执行 {planned_probes} 个探针，但均未获得 HTTP 响应{suffix}"
+    statuses = "、".join(f"HTTP {status}×{count}" for status, count in sorted(status_counts.items()))
+    summary = f"已执行 {planned_probes} 个探针，模型调用均未成功（{statuses}）"
+    if messages:
+        summary += f"；上游原因：{messages[0]}"
+    elif len(status_counts) == 1:
+        status = next(iter(status_counts))
+        hints = {
+            400: "上游拒绝了模型请求，通常是模型映射、协议或请求参数不兼容",
+            401: "上游鉴权失败，请检查该渠道 Key",
+            403: "上游拒绝访问，可能是权限或区域限制",
+            404: "上游找不到模型或调用端点",
+            402: "上游余额或计费状态异常",
+            429: "上游限流或额度已耗尽",
+            503: "上游没有可用模型路由或服务暂不可用",
+        }
+        if status in hints:
+            summary += f"；{hints[status]}"
+    return summary
+
+
 def normalize_base_url(value: str) -> str:
     return value.rstrip("/") + "/"
 
@@ -194,6 +259,7 @@ def header_evidence(probe: str, response: ProbeResponse) -> list[Evidence]:
                 "elapsed_ms": response.elapsed_ms,
                 "headers": response.headers,
                 "body_shape": body_shape(response.body_json),
+                "error_summary": response_error_summary(response),
             },
             raw_sha256=response.raw_sha256,
         )
@@ -282,6 +348,7 @@ def payload_evidence(probe: str, response: ProbeResponse, configured_models: lis
             "error_keys": sorted(error.keys()),
             "type": error.get("type"),
             "code": error.get("code") or error.get("status"),
+            "message": response_error_summary(response),
         }
         result.append(Evidence(probe, "errors", "info", None, "错误对象契约", detail, response.raw_sha256))
     usage = value.get("usage") or value.get("usageMetadata")
@@ -2977,7 +3044,7 @@ class DetectorEngine:
                         "verdict": "inconclusive",
                         "likely_channel": terminal.get("likely_channel", "unknown"),
                         "confidence": 0.0,
-                        "summary": "有效模型请求未成功穿透，无法判断终端上游",
+                        "summary": zero_success_summary(responses, planned_probes, model_evidence),
                     }
                 elif terminal["verdict"] == "inconclusive" and protocol_translation(route):
                     terminal = {

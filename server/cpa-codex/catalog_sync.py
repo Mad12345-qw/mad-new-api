@@ -29,6 +29,9 @@ COCKPIT_TARGETS = (
     ("deepseek-v4-flash", "gpt-5.2"),
 )
 
+NATIVE_CLAUDE_PREFIXES = ("claude-",)
+NATIVE_XAI_PREFIXES = ("grok-",)
+
 
 def allowed_model_ids(payload: dict[str, Any]) -> list[str]:
     data = payload.get("data")
@@ -71,8 +74,62 @@ def configured_models(model_ids: list[str], mode: str) -> list[tuple[str, str, b
     return models
 
 
+def provider_for_model(model_id: str) -> str:
+    normalized = model_id.strip().lower()
+    if normalized.startswith(NATIVE_CLAUDE_PREFIXES):
+        return "claude"
+    if normalized.startswith(NATIVE_XAI_PREFIXES):
+        return "xai"
+    return "openai-compatibility"
+
+
+def append_models(
+    lines: list[str],
+    models: list[tuple[str, str, bool]],
+    indent: str,
+    input_modalities: bool = False,
+) -> None:
+    for upstream, client, force_mapping in models:
+        lines.append(f"{indent}- name: {json.dumps(upstream, ensure_ascii=True)}")
+        lines.append(f"{indent}  alias: {json.dumps(client, ensure_ascii=True)}")
+        lines.append(f"{indent}  display-name: {json.dumps(upstream, ensure_ascii=True)}")
+        if force_mapping:
+            lines.append(f"{indent}  force-mapping: true")
+        if input_modalities:
+            lines.append(f"{indent}  input-modalities: [text]")
+
+
+def append_native_provider(
+    lines: list[str],
+    key: str,
+    placeholder: str,
+    base_url: str,
+    models: list[tuple[str, str, bool]],
+) -> None:
+    if not models:
+        return
+    lines.extend(
+        [
+            f"{key}:",
+            f'  - api-key: "{placeholder}"',
+            f"    base-url: {json.dumps(base_url)}",
+            "    madapi-passthrough: true",
+            "    disable-cooling: false",
+            "    models:",
+        ]
+    )
+    append_models(lines, models, "      ")
+
+
 def render_config(model_ids: list[str], mode: str) -> str:
     models = configured_models(model_ids, mode)
+    grouped = {
+        "claude": [],
+        "xai": [],
+        "openai-compatibility": [],
+    }
+    for model in models:
+        grouped[provider_for_model(model[0])].append(model)
     lines = [
         'host: "0.0.0.0"',
         "port: 8317",
@@ -83,22 +140,38 @@ def render_config(model_ids: list[str], mode: str) -> str:
         "disable-cooling: false",
         "api-keys:",
         '  - "madapi-codex-gateway"',
-        "openai-compatibility:",
-        f'  - name: "madapi-{mode}"',
-        f"    base-url: {json.dumps(MADAPI_INTERNAL_URL + '/v1')}",
-        "    madapi-passthrough: true",
-        "    disable-cooling: false",
-        "    api-key-entries:",
-        f'      - api-key: "madapi-{mode}-provider"',
-        "    models:",
     ]
-    for upstream, client, force_mapping in models:
-        lines.append(f"      - name: {json.dumps(upstream, ensure_ascii=True)}")
-        lines.append(f"        alias: {json.dumps(client, ensure_ascii=True)}")
-        lines.append(f"        display-name: {json.dumps(upstream, ensure_ascii=True)}")
-        if force_mapping:
-            lines.append("        force-mapping: true")
-        lines.append("        input-modalities: [text]")
+
+    append_native_provider(
+        lines,
+        "claude-api-key",
+        f"madapi-{mode}-claude-provider",
+        MADAPI_INTERNAL_URL,
+        grouped["claude"],
+    )
+    append_native_provider(
+        lines,
+        "xai-api-key",
+        f"madapi-{mode}-xai-provider",
+        MADAPI_INTERNAL_URL + "/v1",
+        grouped["xai"],
+    )
+
+    compatibility_models = grouped["openai-compatibility"]
+    if compatibility_models:
+        lines.extend(
+            [
+                "openai-compatibility:",
+                f'  - name: "madapi-{mode}"',
+                f"    base-url: {json.dumps(MADAPI_INTERNAL_URL + '/v1')}",
+                "    madapi-passthrough: true",
+                "    disable-cooling: false",
+                "    api-key-entries:",
+                f'      - api-key: "madapi-{mode}-openai-provider"',
+                "    models:",
+            ]
+        )
+        append_models(lines, compatibility_models, "      ", input_modalities=True)
     return "\n".join(lines) + "\n"
 
 

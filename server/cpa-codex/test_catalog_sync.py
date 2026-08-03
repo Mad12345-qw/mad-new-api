@@ -28,9 +28,26 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertIn("request-retry: 3", rendered)
         self.assertIn("max-retry-credentials: 0", rendered)
         self.assertIn("disable-cooling: false", rendered)
-        self.assertEqual(rendered.count("      - api-key:"), 1)
-        self.assertIn("madapi-passthrough: true", rendered)
+        self.assertIn("xai-api-key:", rendered)
+        self.assertIn("openai-compatibility:", rendered)
+        self.assertEqual(rendered.count("madapi-passthrough: true"), 2)
         self.assertNotIn("force-mapping: true", rendered)
+
+    def test_native_protocol_assignment_uses_proven_provider_interfaces(self):
+        rendered = catalog_sync.render_config(
+            ["claude-fable-5", "grok-4.5", "gpt-5.6-sol", "gemini-3.6-flash", "kimi-k3"],
+            "native",
+        )
+        self.assertIn("claude-api-key:", rendered)
+        self.assertIn('base-url: "http://new-api:3000"', rendered)
+        self.assertIn("xai-api-key:", rendered)
+        self.assertIn('base-url: "http://new-api:3000/v1"', rendered)
+        self.assertIn("openai-compatibility:", rendered)
+        self.assertEqual(rendered.count("madapi-passthrough: true"), 3)
+        self.assertEqual(catalog_sync.provider_for_model("claude-opus-5"), "claude")
+        self.assertEqual(catalog_sync.provider_for_model("grok-4.5"), "xai")
+        self.assertEqual(catalog_sync.provider_for_model("gemini-3.6-flash"), "openai-compatibility")
+        self.assertEqual(catalog_sync.provider_for_model("deepseek-v4-flash"), "openai-compatibility")
 
     def test_cockpit_config_maps_all_eight_shells(self):
         model_ids = [upstream for upstream, _ in catalog_sync.COCKPIT_TARGETS]
@@ -39,6 +56,9 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertIn('name: "deepseek-v4-flash"', rendered)
         self.assertIn('alias: "gpt-5.2"', rendered)
         self.assertEqual(rendered.count("force-mapping: true"), 8)
+        self.assertIn("claude-api-key:", rendered)
+        self.assertIn("xai-api-key:", rendered)
+        self.assertIn("openai-compatibility:", rendered)
 
     def test_cockpit_config_rejects_missing_target(self):
         with self.assertRaisesRegex(ValueError, "deepseek-v4-flash"):

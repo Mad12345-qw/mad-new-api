@@ -17,7 +17,8 @@
     .discovery{grid-column:1/-1;border:1px solid var(--line);border-radius:11px;padding:12px;background:#0c1017}.family{margin-top:12px}.family:first-child{margin-top:0}.family-title{display:flex;justify-content:space-between;font-weight:700;margin-bottom:7px}.model-list{display:grid;gap:7px}.model-option{display:grid;grid-template-columns:auto 1fr;gap:9px;padding:9px;border:1px solid var(--line);border-radius:9px;cursor:pointer}.model-option:hover{border-color:#506078}.model-option input{width:auto;margin-top:4px}.route{font-size:12px;color:var(--blue)}.attempts{font-size:12px;color:var(--muted);margin-top:8px}
     .evidence{display:grid;gap:10px}.evidence-card{border:1px solid var(--line);border-radius:10px;padding:12px;background:#0d1118}.evidence-top{display:flex;justify-content:space-between;gap:10px}.evidence-card p{margin:6px 0 0;color:var(--muted)}pre{white-space:pre-wrap;word-break:break-word;background:#090c12;border-radius:8px;padding:10px;max-height:280px;overflow:auto;color:#c5d1e2}.model-result{border-left:3px solid var(--blue)}.chain{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px}.chain-node{border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:#111722}.chain-arrow{color:var(--muted)}
     .login{min-height:100vh;display:grid;place-items:center;padding:20px}.login-card{width:min(430px,100%);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:25px}.login-card h1{margin:0 0 6px}.login-card p{color:var(--muted)}
-    @media(max-width:1000px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.header{align-items:flex-start;flex-direction:column}}@media(max-width:620px){.shell{padding:16px}.form-grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr}.title{font-size:25px}.table-wrap{overflow-x:auto}}
+    .command-layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:22px;margin-top:20px}.command-nav{display:grid;align-content:start;gap:5px;padding-top:3px}.command-nav a{color:var(--muted);text-decoration:none;padding:10px 11px;border-radius:9px;border:1px solid transparent}.command-nav a:hover,.command-nav a.active{color:var(--text);background:#141d29;border-color:#24344a}.command-nav .nav-label{color:var(--muted);font-size:10px;letter-spacing:.11em;text-transform:uppercase;padding:11px}.command-content{min-width:0}.risk-hero{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:center;padding:19px 20px;margin-bottom:18px;background:linear-gradient(105deg,rgba(247,201,107,.13),rgba(17,25,37,.96) 46%,rgba(125,184,255,.08));border-color:#655332}.risk-hero .risk-count{font-size:34px;line-height:1;color:var(--warn);font-weight:780}.risk-hero .risk-copy{display:grid;gap:5px}.risk-hero .risk-copy p{color:var(--muted);max-width:760px}.risk-hero .risk-action{display:flex;gap:9px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.metric{position:relative;overflow:hidden}.metric:first-child{border-color:#735a36}.metric:first-child:before{content:'';position:absolute;inset:0 auto 0 0;width:3px;background:var(--warn)}.metric b{font-variant-numeric:tabular-nums}.panel{box-shadow:0 12px 34px rgba(0,0,0,.12)}.panel-head{background:rgba(15,22,32,.5)}.policy{min-width:185px}.policy select{width:100%}.run-reason{border-left:2px solid var(--warn);padding-left:7px;max-width:420px}.run-progress{position:sticky;top:12px;z-index:2;box-shadow:0 15px 38px rgba(0,0,0,.3)}#detailPanel{border-color:#436184}.settings-note{font-size:12px;color:var(--muted);padding:0 18px 16px}.section-kicker{font-size:11px;letter-spacing:.1em;color:var(--blue);text-transform:uppercase}.top-summary{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.top-summary .pill{background:#0e1723}
+    @media(max-width:1100px){.command-layout{grid-template-columns:1fr}.command-nav{grid-auto-flow:column;grid-template-columns:repeat(4,max-content);overflow:auto;padding-bottom:5px}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.header{align-items:flex-start;flex-direction:column}}@media(max-width:620px){.shell{padding:16px}.form-grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr}.title{font-size:25px}.table-wrap{overflow-x:auto}.risk-hero{grid-template-columns:1fr}.risk-hero .risk-action{justify-content:flex-start}}
   </style>
 </head>
 <body>
@@ -35,6 +36,12 @@
       <div class="actions"><a class="btn" href="/console/channel">管理 New API 渠道</a><button id="syncNewApi" class="btn">同步 New API 渠道</button><button id="runSafe" class="btn">刷新全部入口指纹</button><button id="runActive" class="btn primary">检测全部已监控渠道</button></div>
     </header>
 
+    <div class="command-layout"><aside class="command-nav"><span class="nav-label">风险工作台</span><a class="active" href="#riskHero">风险总览</a><a href="#channelPolicyPanel">渠道健康</a><a href="#historyPanel">检测历史</a><span class="nav-label">控制中心</span><a href="#upstreamPanel">接入渠道</a><a href="#settingsPanel">处置与通知</a></aside><div class="command-content">
+    <section id="riskHero" class="panel risk-hero">
+      <div class="risk-copy"><div class="section-kicker">需要管理员判断</div><div class="split"><div class="risk-count" id="priorityCount">0</div><h2 id="priorityTitle">正在汇总渠道风险</h2></div><p id="priorityText">系统会把高置信度来源不一致、上游不可用和证据不足分开处理，避免把故障误判为掺假。</p><div class="top-summary"><span class="pill red" id="priorityMismatch">0 个来源不一致</span><span class="pill amber" id="priorityUnavailable">0 个调用未穿透</span><span class="pill mint" id="priorityVerified">0 个官方直连已确认</span></div></div>
+      <div class="risk-action"><button id="reviewPriority" class="btn primary">查看待处理渠道</button><button id="runActiveHero" class="btn">执行完整检测</button></div>
+    </section>
+
     <section id="runProgress" class="panel run-progress hidden">
       <div class="panel-body"><div class="progress-top"><b id="runProgressTitle">检测任务正在执行</b><span id="runProgressElapsed" class="muted">已耗时 0 秒</span></div><div class="progress-track"><div id="runProgressFill" class="progress-fill"></div></div><div id="runProgressDetail" class="progress-detail">正在准备探针……</div></div>
     </section>
@@ -45,12 +52,12 @@
 
     <section class="grid">
       <div class="stack">
-        <div class="panel"><div class="panel-head"><span class="panel-title">New API 渠道与检测策略</span><span id="ruleVersion" class="muted"></span></div><div class="panel-body table-wrap"><table><thead><tr><th>渠道</th><th>自动协议</th><th>已选模型</th><th>期望来源与处置</th><th>最新结果</th><th>操作</th></tr></thead><tbody id="upstreamRows"></tbody></table></div></div>
-        <div class="panel"><div class="panel-head"><span class="panel-title">检测历史</span><span class="muted">点击一行查看逐模型链路</span></div><div class="panel-body table-wrap"><table><thead><tr><th>时间</th><th>站点</th><th>模式</th><th>判定与原因</th><th>终端线索</th><th>置信度</th></tr></thead><tbody id="runRows"></tbody></table></div></div>
+        <div id="channelPolicyPanel" class="panel"><div class="panel-head"><div><div class="section-kicker">先处理渠道风险，再调整策略</div><span class="panel-title">渠道健康与来源判定</span></div><span id="ruleVersion" class="muted"></span></div><div class="panel-body table-wrap"><table><thead><tr><th>渠道</th><th>自动协议</th><th>已选模型</th><th>期望来源与处置</th><th>最新结果与原因</th><th>操作</th></tr></thead><tbody id="upstreamRows"></tbody></table></div></div>
+        <div id="historyPanel" class="panel"><div class="panel-head"><div><div class="section-kicker">可追溯调查</div><span class="panel-title">检测历史</span></div><span class="muted">点击一行查看逐模型链路</span></div><div class="panel-body table-wrap"><table><thead><tr><th>时间</th><th>站点</th><th>模式</th><th>判定与原因</th><th>终端线索</th><th>置信度</th></tr></thead><tbody id="runRows"></tbody></table></div></div>
       </div>
 
       <aside class="stack">
-        <div class="panel">
+        <div id="upstreamPanel" class="panel">
           <div class="panel-head"><span id="upstreamPanelTitle" class="panel-title">添加第三方 API</span><span id="upstreamPanelHint" class="muted">只填地址和 Key</span></div>
           <form id="upstreamForm" class="panel-body form-grid">
             <div class="field full"><label>显示名称</label><input name="name" required placeholder="供应商 A"></div>
@@ -65,7 +72,7 @@
             <div id="upstreamError" class="error full"></div><button id="saveUpstream" class="btn full" type="submit" disabled>保存站点与所选模型</button>
           </form>
         </div>
-        <div class="panel"><div class="panel-head"><span class="panel-title">定时、自动处置与通知</span></div><form id="settingsForm" class="panel-body form-grid">
+        <div id="settingsPanel" class="panel"><div class="panel-head"><div><div class="section-kicker">仅在确认规则后启用</div><span class="panel-title">定时、自动处置与通知</span></div></div><div class="settings-note">自动禁用需要总开关、渠道开关和高置信度来源不一致同时满足；上游故障只会被标记，不会误关渠道。</div><form id="settingsForm" class="panel-body form-grid">
           <label class="check full"><input name="scheduler_enabled" type="checkbox">启用定时检测</label>
           <div class="field"><label>检测间隔（分钟）</label><input name="interval_minutes" type="number" min="10" max="1440"></div>
           <div class="field"><label>定时模式</label><select name="scheduled_mode"><option value="safe">仅刷新入口指纹（不能判断模型来源）</option><option value="active">检测渠道模型（可能产生 Token）</option></select></div>
@@ -83,6 +90,7 @@
       </aside>
     </section>
 
+    </div></div>
     <section id="detailPanel" class="panel hidden" style="margin-top:18px"><div class="panel-head"><span id="detailTitle" class="panel-title">检测报告</span><button id="closeDetail" class="btn">关闭</button></div><div id="detailBody" class="panel-body evidence"></div></section>
   </main>
 
@@ -113,12 +121,24 @@
       $('#mHealthy').textContent=latest.filter(r=>r.compliance_status==='match'||r.verdict==='confirmed_direct').length;
       $('#mAlerts').textContent=latest.filter(r=>r.compliance_status==='mismatch_confirmed').length;
       $('#mUnknown').textContent=latest.filter(r=>['inconclusive','not_configured'].includes(r.compliance_status)||r.verdict==='inconclusive').length;
+      const mismatches=latest.filter(r=>r.compliance_status==='mismatch_confirmed'||r.verdict==='suspected_substitution').length;
+      const unavailable=latest.filter(r=>r.failure_reason&&/HTTP|未启用|未成功|无法响应|禁用/.test(r.failure_reason)).length;
+      const verified=latest.filter(r=>r.compliance_status==='match'||r.verdict==='confirmed_direct').length;
+      const priorities=mismatches+unavailable;
+      $('#priorityCount').textContent=priorities;
+      $('#priorityTitle').textContent=priorities?`当前有 ${priorities} 个渠道需要判断`:'当前没有待处理的渠道风险';
+      $('#priorityText').textContent=priorities?'优先查看来源不一致或模型调用未穿透的渠道。系统将故障原因与来源结论分开呈现，避免误关渠道。':'所有已完成检测暂未形成需要人工处置的高优先级事件。';
+      $('#priorityMismatch').textContent=`${mismatches} 个来源不一致`;
+      $('#priorityUnavailable').textContent=`${unavailable} 个调用未穿透`;
+      $('#priorityVerified').textContent=`${verified} 个官方直连已确认`;
       const running=!!runningRun()||runRequestActive,monitored=monitoredUpstreams(),totalModels=monitored.reduce((sum,u)=>sum+modelCount(u),0);
       $('#syncNewApi').disabled=!state.new_api?.configured||running;
       $('#runSafe').textContent=`刷新全部入口指纹（${monitored.length} 个渠道）`;
       $('#runSafe').disabled=running||!monitored.length;
       $('#runActive').textContent=`检测全部已监控渠道（${monitored.length} 个渠道 / ${totalModels} 个模型）`;
       $('#runActive').disabled=running||!monitored.length||!totalModels;
+      $('#runActiveHero').textContent=`执行完整检测（${totalModels} 个模型）`;
+      $('#runActiveHero').disabled=running||!monitored.length||!totalModels;
       $('#upstreamRows').innerHTML=state.upstreams.length?state.upstreams.map(u=>{
         const r=latestFor(u.id),routes=(u.model_routes&&u.model_routes.length?u.model_routes:u.models.map(model=>({model,protocol:'自动迁移'})));
         const protocols=[...new Set(routes.map(x=>protocolText[x.protocol]||x.protocol))];
@@ -152,7 +172,7 @@
     async function run(upstream_id,mode){runRequestActive=true;render();startProgressMonitoring();try{await api('/run',{method:'POST',body:JSON.stringify({upstream_id,mode})})}catch(e){if(e.status!==409)alert(e.message)}finally{runRequestActive=false;await load();if(!runningRun())stopProgressMonitoring()}}
     window.runOne=id=>{const u=state.upstreams.find(x=>x.id===id),count=modelCount(u);if(!u||!count)return;if(confirm(`仅检测本渠道“${u.name}”：${count} 个模型。\n\n不会减少模型、探针或检测强度。文本模型输出量很低，但订阅代理可能注入数千 Token 隐藏指令；gpt-image-2 不会实际生成图片。\n\n继续吗？`))run(id,'active')};
     window.deleteOne=async id=>{if(confirm('删除该站点及其检测历史？')){await api(`/upstreams/${id}`,{method:'DELETE'});await load()}};
-    $('#runSafe').onclick=()=>run(null,'safe');$('#runActive').onclick=()=>{const upstreams=monitoredUpstreams(),total=upstreams.reduce((sum,u)=>sum+modelCount(u),0),lines=upstreams.map(u=>`• ${u.name}：${modelCount(u)} 个模型`).join('\n');if(confirm(`将检测全部 ${upstreams.length} 个已监控渠道，共 ${total} 个模型：\n\n${lines}\n\n这是“全部渠道”检测；如只想检测 gpt 的 5 个模型，请点击 gpt 行内的“检测本渠道”。所有模型和完整探针都会保留。\n\n继续吗？`))run(null,'active')};
+    $('#runSafe').onclick=()=>run(null,'safe');const runAll=()=>{const upstreams=monitoredUpstreams(),total=upstreams.reduce((sum,u)=>sum+modelCount(u),0),lines=upstreams.map(u=>`• ${u.name}：${modelCount(u)} 个模型`).join('\n');if(confirm(`将检测全部 ${upstreams.length} 个已监控渠道，共 ${total} 个模型：\n\n${lines}\n\n这是“全部渠道”检测；如只想检测 gpt 的 5 个模型，请点击 gpt 行内的“检测本渠道”。所有模型和完整探针都会保留。\n\n继续吗？`))run(null,'active')};$('#runActive').onclick=runAll;$('#runActiveHero').onclick=runAll;$('#reviewPriority').onclick=()=>$('#channelPolicyPanel').scrollIntoView({behavior:'smooth',block:'start'});
     window.showRun=async id=>{try{const data=await api(`/runs/${id}`);$('#detailTitle').textContent=`检测报告 #${id} · ${data.run.upstream_name}`;const models=(data.model_results||[]).map(m=>{const layers=(m.chain?.layers||[]).map((x,i)=>`${i?'<span class="chain-arrow">→</span>':''}<span class="chain-node">${escapeHtml(x.label)}<br><span class="muted">${escapeHtml(x.status)} · ${Math.round((x.confidence||0)*100)}%</span></span>`).join('');return `<div class="evidence-card model-result"><div class="evidence-top"><b>${escapeHtml(m.model)}</b>${pill(m.verdict)}</div><p>${escapeHtml(protocolText[m.protocol]||m.protocol)} · ${m.success_probes}/${m.planned_probes} 个探针收到响应 · 终端线索 ${escapeHtml(channelName(m.likely_channel))}</p><p>${escapeHtml(m.summary)}</p><div class="chain">${layers}</div><p>观察到 ${escapeHtml(m.chain?.observed_logical_layers??(m.chain?.layers||[]).length)} 个逻辑层；可证明最少物理中转跳数：${escapeHtml(m.chain?.minimum_confirmed_hops??0)}。${escapeHtml(m.chain?.note||'')}</p></div>`}).join('');const evidence=(data.evidence||[]).map(x=>{const sources=Array.isArray(x.detail?.source_urls)?`<p>规则来源：${x.detail.source_urls.map((url,i)=>`<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer" style="color:var(--blue)">来源 ${i+1}</a>`).join(' · ')}</p>`:'';return `<div class="evidence-card"><div class="evidence-top"><b>${x.model?escapeHtml(x.model)+' · ':''}${escapeHtml(x.title)}</b><span class="pill">${escapeHtml(x.strength)} / ${escapeHtml(x.category)}</span></div><p>探针：${escapeHtml(x.probe)}${x.supports?' · 指向 '+escapeHtml(channelName(x.supports)):''}</p>${sources}<pre>${escapeHtml(JSON.stringify(x.detail,null,2))}</pre>${x.raw_sha256?`<p>原始证据 SHA-256：${escapeHtml(x.raw_sha256)}</p>`:''}</div>`}).join('');const safeNotice=data.run.mode==='active'?'':`<div class="evidence-card" style="border-color:#765f2d"><b>这只是入口巡检，不是模型来源结论</b><p>本轮没有调用任何有效模型，因此“无法判断”不代表模型为假，也不会覆盖站点列表中的最新主动检测结论。</p></div>`;const compliance=`<div class="evidence-card"><div class="evidence-top"><b>策略判定：${escapeHtml(complianceText[data.run.compliance_status]||data.run.compliance_status)}</b><span class="pill ${escapeHtml(data.run.compliance_status)}">期望 ${escapeHtml(channelName(data.run.expected_channel))}</span></div><p>检测来源：${escapeHtml(channelName(data.run.likely_channel))} · 置信度 ${Math.round((data.run.confidence||0)*100)}%</p><p>自动处置：${escapeHtml(data.run.auto_action||'none')} ${escapeHtml(data.run.auto_action_detail||'')}</p></div>`;const actions=(data.actions||[]).map(x=>`<div class="evidence-card"><b>渠道处置 · ${escapeHtml(x.action)} · ${escapeHtml(x.status)}</b><p>New API 渠道 #${escapeHtml(x.new_api_channel_id)} · ${escapeHtml(x.reason)}</p></div>`).join('');const notifications=(data.notifications||[]).map(x=>`<div class="evidence-card"><b>通知 · ${escapeHtml(x.destination)} · ${escapeHtml(x.status)}</b><p>${escapeHtml(x.detail||'')}</p></div>`).join('');const failure=data.run.failure_reason?`<div class="evidence-card" style="border-color:#765f2d"><b>为什么是 0% / 无法判断</b><p>${escapeHtml(data.run.failure_reason)}</p></div>`:'';$('#detailBody').innerHTML=`${safeNotice}${failure}${compliance}<div class="evidence-card"><div class="evidence-top"><b>${escapeHtml(verdictText[data.run.verdict]||data.run.status)}</b><span>${Math.round((data.run.confidence||0)*100)}%</span></div><p>${escapeHtml(data.run.summary||'')}</p></div>${actions}${notifications}${models}${evidence}`;$('#detailPanel').classList.remove('hidden');$('#detailPanel').scrollIntoView({behavior:'smooth'})}catch(e){alert(e.message)}};
     $('#closeDetail').onclick=()=>$('#detailPanel').classList.add('hidden');load();
   </script>

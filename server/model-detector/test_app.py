@@ -52,6 +52,16 @@ class AppTests(unittest.TestCase):
         self.assertIn("判定与原因", html)
         self.assertIn("为什么是 0% / 无法判断", html)
 
+    def test_ui_exposes_risk_command_center_without_removing_existing_controls(self) -> None:
+        html = self.client.get("/detector/").text
+        self.assertIn('id="riskHero"', html)
+        self.assertIn('id="priorityCount"', html)
+        self.assertIn('id="reviewPriority"', html)
+        self.assertIn('id="runActiveHero"', html)
+        self.assertIn('id="channelPolicyPanel"', html)
+        self.assertIn('id="settingsPanel"', html)
+        self.assertIn("检测本渠道（", html)
+
     def test_zero_confidence_run_gets_a_visible_http_failure_reason(self) -> None:
         runs = [{"id": 7001, "mode": "active", "status": "completed", "confidence": 0.0}]
         with patch.object(

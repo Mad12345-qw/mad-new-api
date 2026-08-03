@@ -49,10 +49,15 @@ index 3293504..6592d7d 100644
  		if baseURL != "" {
  			attrs["base_url"] = baseURL
 diff --git a/sdk/cliproxy/auth/conductor_execution.go b/sdk/cliproxy/auth/conductor_execution.go
-index a9ca516..0cc58be 100644
+index a9ca516..a51ad57 100644
 --- a/sdk/cliproxy/auth/conductor_execution.go
 +++ b/sdk/cliproxy/auth/conductor_execution.go
-@@ -6,6 +6,7 @@ import (
+@@ -3,9 +3,12 @@ package auth
+ import (
+ 	"bytes"
+ 	"context"
++	"crypto/sha256"
++	"encoding/hex"
  	"errors"
  	"io"
  	"net/http"
@@ -60,7 +65,7 @@ index a9ca516..0cc58be 100644
  	"path/filepath"
  	"strconv"
  	"strings"
-@@ -165,6 +166,37 @@ func isRequestTerminatedError(err error) bool {
+@@ -165,6 +168,39 @@ func isRequestTerminatedError(err error) bool {
  	return errors.As(err, &terminated) && terminated != nil
  }
  
@@ -92,13 +97,15 @@ index a9ca516..0cc58be 100644
 +	}
 +	requestAuth.Attributes[AttributeAPIKey] = callerKey
 +	requestAuth.Attributes["header:X-MadAPI-CPA-Front-Token"] = frontToken
++	callerHash := sha256.Sum256([]byte(callerKey))
++	requestAuth.ID = auth.ID + ":madapi:" + hex.EncodeToString(callerHash[:8])
 +	return requestAuth, nil
 +}
 +
  func applyRequestAfterAuthInterceptor(ctx context.Context, executor ProviderExecutor, provider string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, requestedModel string) (cliproxyexecutor.Request, cliproxyexecutor.Options, error) {
  	if opts.RequestAfterAuthInterceptor == nil {
  		return req, opts, nil
-@@ -309,6 +341,9 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req
+@@ -309,6 +345,9 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req
  		attempted[auth.ID] = struct{}{}
  		var errPrepare error
  		auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
@@ -108,7 +115,7 @@ index a9ca516..0cc58be 100644
  		if errPrepare != nil {
  			result := Result{AuthID: auth.ID, Provider: provider, Model: routeModel, Success: false, Error: resultErrorFromError(errPrepare)}
  			m.MarkResult(execCtx, result)
-@@ -430,6 +465,9 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
+@@ -430,6 +469,9 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
  		attempted[auth.ID] = struct{}{}
  		var errPrepare error
  		auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
@@ -118,7 +125,7 @@ index a9ca516..0cc58be 100644
  		if errPrepare != nil {
  			result := Result{AuthID: auth.ID, Provider: provider, Model: routeModel, Success: false, Error: resultErrorFromError(errPrepare)}
  			m.MarkResult(execCtx, result)
-@@ -607,6 +645,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
+@@ -607,6 +649,9 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
  		} else {
  			auth, errPrepare = m.prepareRequestAuth(execCtx, executor, auth)
  		}
@@ -130,14 +137,16 @@ index a9ca516..0cc58be 100644
  			if selection != nil {
 diff --git a/sdk/cliproxy/auth/madapi_passthrough_test.go b/sdk/cliproxy/auth/madapi_passthrough_test.go
 new file mode 100644
-index 0000000..33dd8d2
+index 0000000..3eb331b
 --- /dev/null
 +++ b/sdk/cliproxy/auth/madapi_passthrough_test.go
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,105 @@
 +package auth
 +
 +import (
++	"context"
 +	"net/http"
++	"strings"
 +	"testing"
 +)
 +
@@ -161,6 +170,9 @@ index 0000000..33dd8d2
 +	if prepared == original {
 +		t.Fatal("expected request-scoped auth clone")
 +	}
++	if prepared.ID == original.ID || strings.Contains(prepared.ID, "caller-key") {
++		t.Fatalf("prepared ID %q is not an isolated credential hash", prepared.ID)
++	}
 +	if got := prepared.Attributes[AttributeAPIKey]; got != "caller-key" {
 +		t.Fatalf("prepared api_key = %q, want caller key", got)
 +	}
@@ -172,6 +184,40 @@ index 0000000..33dd8d2
 +	}
 +	if got := prepared.Attributes["header:X-Provider-Test"]; got != "kept" {
 +		t.Fatalf("provider header = %q, want preserved", got)
++	}
++}
++
++func TestPrepareMadAPIPassthroughAuthDoesNotCoolSharedProvider(t *testing.T) {
++	t.Setenv("MADAPI_INTERNAL_CATALOG_TOKEN", "front-token")
++	manager := NewManager(nil, nil, nil)
++	original := &Auth{
++		ID:         "shared-native-provider",
++		Provider:   "claude",
++		Status:     StatusActive,
++		Attributes: map[string]string{"madapi_passthrough": "true"},
++	}
++	if _, err := manager.Register(context.Background(), original); err != nil {
++		t.Fatalf("register shared provider: %v", err)
++	}
++	prepared, err := prepareMadAPIPassthroughAuth(
++		original,
++		http.Header{"X-Madapi-Authorization": {"Bearer invalid-caller-key"}},
++	)
++	if err != nil {
++		t.Fatalf("prepareMadAPIPassthroughAuth() error = %v", err)
++	}
++	manager.MarkResult(context.Background(), Result{
++		AuthID:  prepared.ID,
++		Model:   "claude-fable-5",
++		Success: false,
++		Error:   &Error{HTTPStatus: http.StatusUnauthorized, Message: "invalid caller token"},
++	})
++	shared, ok := manager.GetByID(original.ID)
++	if !ok {
++		t.Fatal("shared provider disappeared")
++	}
++	if shared.Status != StatusActive || shared.Unavailable || len(shared.ModelStates) != 0 {
++		t.Fatalf("shared provider was cooled by caller failure: %#v", shared)
 +	}
 +}
 +

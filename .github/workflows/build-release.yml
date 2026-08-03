@@ -241,6 +241,8 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-madapi-web-search-bridge.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-madapi-web-search-bridge.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \

@@ -14,6 +14,8 @@ RUN git apply --check /patches/0002-madapi-passthrough-authorization.patch \
     && git apply /patches/0002-madapi-passthrough-authorization.patch \
     && git apply --check /patches/0003-madapi-responses-session-replay.patch \
     && git apply /patches/0003-madapi-responses-session-replay.patch \
+    && git apply --check /patches/0004-madapi-web-search-bridge.patch \
+    && git apply /patches/0004-madapi-web-search-bridge.patch \
     && gofmt -w sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go internal/config/config_types.go internal/runtime/executor/openai_compat_executor.go internal/watcher/synthesizer/config.go \
     && go mod download \
     && go test ./sdk/api/handlers/openai \

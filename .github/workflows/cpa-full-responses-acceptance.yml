@@ -47,6 +47,8 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-madapi-web-search-bridge.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-madapi-web-search-bridge.patch"
           gofmt -w sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go
 
       - name: Verify session replay and CPA handler build

@@ -44,7 +44,7 @@ new file mode 100644
 index 00000000..6370d7c5
 --- /dev/null
 +++ b/relay/cpa_native_codex.go
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,180 @@
 +package relay
 +
 +import (
@@ -97,7 +97,6 @@ index 00000000..6370d7c5
 +	Stream      bool              `json:"stream"`
 +	Compact     bool              `json:"compact"`
 +	RequestPath string            `json:"request_path,omitempty"`
-+	SessionScope string            `json:"session_scope,omitempty"`
 +}
 +
 +func isMadAPICodexNativeRequest(c *gin.Context) bool {
@@ -224,7 +223,6 @@ index 00000000..6370d7c5
 +		Stream:      info.IsStream,
 +		Compact:     info.RelayMode == relayconstant.RelayModeResponsesCompact,
 +		RequestPath: info.RequestURLPath,
-+		SessionScope: fmt.Sprintf("user:%d:token:%d", info.UserId, info.TokenId),
 +	}, nil
 +}
 diff --git a/relay/cpa_native_codex_test.go b/relay/cpa_native_codex_test.go

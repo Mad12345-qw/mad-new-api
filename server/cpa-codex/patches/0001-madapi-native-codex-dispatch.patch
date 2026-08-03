@@ -1,9 +1,9 @@
 diff --git a/internal/api/madapi_native_codex.go b/internal/api/madapi_native_codex.go
 new file mode 100644
-index 0000000..a0e2ef7
+index 00000000..372d3355
 --- /dev/null
 +++ b/internal/api/madapi_native_codex.go
-@@ -0,0 +1,404 @@
+@@ -0,0 +1,253 @@
 +package api
 +
 +import (
@@ -19,8 +19,6 @@ index 0000000..a0e2ef7
 +	"os"
 +	"strconv"
 +	"strings"
-+	"sync"
-+	"time"
 +
 +	"github.com/gin-gonic/gin"
 +	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -28,17 +26,12 @@ index 0000000..a0e2ef7
 +	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 +	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 +	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
-+	"github.com/tidwall/gjson"
-+	"github.com/tidwall/sjson"
 +)
 +
 +const (
 +	madAPICodexDispatchTokenEnv = "MADAPI_CODEX_DISPATCH_TOKEN"
 +	madAPICodexDispatchHeader   = "X-MadAPI-Codex-Dispatch-Token"
-+	madAPICodexSessionReplayEnv = "MADAPI_CODEX_SESSION_REPLAY"
 +	madAPICodexDispatchMaxBody  = 64 << 20
-+	madAPICodexSessionTTL       = 30 * time.Minute
-+	madAPICodexSessionMaxBytes  = 8 << 20
 +)
 +
 +const (
@@ -60,21 +53,7 @@ index 0000000..a0e2ef7
 +	Stream      bool              `json:"stream"`
 +	Compact     bool              `json:"compact"`
 +	RequestPath string            `json:"request_path,omitempty"`
-+	SessionScope string            `json:"session_scope,omitempty"`
 +}
-+
-+// madAPICodexResponseState is CPA-owned Responses state. The provider is
-+// never trusted to retain a previous_response_id between requests.
-+type madAPICodexResponseState struct {
-+	Input   []byte
-+	Output  []byte
-+	Updated time.Time
-+}
-+
-+var madAPICodexResponseStates = struct {
-+	sync.Mutex
-+	entries map[string]madAPICodexResponseState
-+}{entries: make(map[string]madAPICodexResponseState)}
 +
 +type madAPINativeExecutor interface {
 +	Execute(context.Context, *cliproxyauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error)
@@ -103,12 +82,6 @@ index 0000000..a0e2ef7
 +		writeMadAPINativeError(c, http.StatusBadRequest, errors.New("dispatch model and JSON body are required"))
 +		return
 +	}
-+	preparedBody, err := prepareMadAPICodexSessionRequest(dispatch)
-+	if err != nil {
-+		writeMadAPINativeError(c, http.StatusConflict, err)
-+		return
-+	}
-+	dispatch.Body = preparedBody
 +
 +	nativeExecutor, provider := factory(s.cfg, dispatch.ChannelType)
 +	if nativeExecutor == nil {
@@ -151,7 +124,7 @@ index 0000000..a0e2ef7
 +			writeMadAPINativeError(c, madAPIExecutorStatus(err), err)
 +			return
 +		}
-+		writeMadAPINativeStream(c, result, dispatch)
++		writeMadAPINativeStream(c, result)
 +		return
 +	}
 +
@@ -160,7 +133,6 @@ index 0000000..a0e2ef7
 +		writeMadAPINativeError(c, madAPIExecutorStatus(err), err)
 +		return
 +	}
-+	rememberMadAPICodexSessionResponse(dispatch, result.Payload)
 +	copyMadAPIUpstreamHeaders(c.Writer.Header(), result.Headers)
 +	c.Data(http.StatusOK, "application/json", result.Payload)
 +}
@@ -245,7 +217,7 @@ index 0000000..a0e2ef7
 +	c.JSON(status, gin.H{"error": gin.H{"type": "cpa_native_dispatch_error", "message": err.Error()}})
 +}
 +
-+func writeMadAPINativeStream(c *gin.Context, result *cliproxyexecutor.StreamResult, dispatch madAPINativeCodexRequest) {
++func writeMadAPINativeStream(c *gin.Context, result *cliproxyexecutor.StreamResult) {
 +	if result == nil || result.Chunks == nil {
 +		writeMadAPINativeError(c, http.StatusBadGateway, errors.New("CPA executor returned an empty stream"))
 +		return
@@ -265,7 +237,6 @@ index 0000000..a0e2ef7
 +		if len(chunk.Payload) == 0 {
 +			continue
 +		}
-+		rememberMadAPICodexSessionStreamChunk(dispatch, chunk.Payload)
 +		_, _ = c.Writer.Write(chunk.Payload)
 +		if !bytes.HasSuffix(chunk.Payload, []byte("\n")) {
 +			_, _ = c.Writer.Write([]byte("\n"))
@@ -273,128 +244,6 @@ index 0000000..a0e2ef7
 +		_, _ = c.Writer.Write([]byte("\n"))
 +		c.Writer.Flush()
 +	}
-+}
-+
-+func madAPICodexSessionReplayEnabled() bool {
-+	return strings.EqualFold(strings.TrimSpace(os.Getenv(madAPICodexSessionReplayEnv)), "1") ||
-+		strings.EqualFold(strings.TrimSpace(os.Getenv(madAPICodexSessionReplayEnv)), "true")
-+}
-+
-+func prepareMadAPICodexSessionRequest(dispatch madAPINativeCodexRequest) ([]byte, error) {
-+	body := bytes.Clone(dispatch.Body)
-+	if !madAPICodexSessionReplayEnabled() || dispatch.Compact {
-+		return body, nil
-+	}
-+	previousID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
-+	if previousID == "" {
-+		return body, nil
-+	}
-+	state, ok := getMadAPICodexResponseState(dispatch.SessionScope, previousID)
-+	if !ok {
-+		return nil, fmt.Errorf("Codex session state expired; resend the compacted conversation without previous_response_id")
-+	}
-+	nextInput := gjson.GetBytes(body, "input")
-+	if !nextInput.IsArray() {
-+		return nil, errors.New("Codex continuation requires an array input")
-+	}
-+	mergedInput := append([]byte(nil), state.Input...)
-+	mergedInput = append(mergedInput, state.Output...)
-+	mergedInput = append(mergedInput, nextInput.Raw...)
-+	if len(mergedInput) > madAPICodexSessionMaxBytes {
-+		return nil, errors.New("Codex session state exceeds the safe replay limit; compact the conversation")
-+	}
-+	merged := []byte("[")
-+	merged = append(merged, bytes.TrimSpace(state.Input)...)
-+	if len(bytes.TrimSpace(state.Input)) > 0 && len(bytes.TrimSpace(state.Output)) > 0 {
-+		merged = append(merged, ',')
-+	}
-+	merged = append(merged, bytes.TrimSpace(state.Output)...)
-+	if (len(bytes.TrimSpace(state.Input)) > 0 || len(bytes.TrimSpace(state.Output)) > 0) && len(nextInput.Array()) > 0 {
-+		merged = append(merged, ',')
-+	}
-+	merged = append(merged, bytes.TrimSpace(nextInput.Raw)...)
-+	merged = append(merged, ']')
-+	updated, err := sjson.SetRawBytes(body, "input", merged)
-+	if err != nil {
-+		return nil, fmt.Errorf("prepare Codex session replay: %w", err)
-+	}
-+	updated, _ = sjson.DeleteBytes(updated, "previous_response_id")
-+	return updated, nil
-+}
-+
-+func rememberMadAPICodexSessionResponse(dispatch madAPINativeCodexRequest, payload []byte) {
-+	if !madAPICodexSessionReplayEnabled() || dispatch.Compact {
-+		return
-+	}
-+	responseID := strings.TrimSpace(gjson.GetBytes(payload, "id").String())
-+	output := gjson.GetBytes(payload, "output")
-+	input := gjson.GetBytes(dispatch.Body, "input")
-+	if responseID == "" || !input.IsArray() || !output.IsArray() {
-+		return
-+	}
-+	storeMadAPICodexResponseState(dispatch.SessionScope, responseID, []byte(input.Raw), []byte(output.Raw))
-+}
-+
-+func rememberMadAPICodexSessionStreamChunk(dispatch madAPINativeCodexRequest, payload []byte) {
-+	if !madAPICodexSessionReplayEnabled() || dispatch.Compact {
-+		return
-+	}
-+	for _, line := range bytes.Split(payload, []byte("\n")) {
-+		line = bytes.TrimSpace(line)
-+		if !bytes.HasPrefix(line, []byte("data:")) {
-+			continue
-+		}
-+		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-+		if gjson.GetBytes(data, "type").String() != "response.completed" {
-+			continue
-+		}
-+		rememberMadAPICodexSessionResponse(dispatch, []byte(gjson.GetBytes(data, "response").Raw))
-+	}
-+}
-+
-+func madAPICodexResponseStateKey(scope, responseID string) string {
-+	scope = strings.TrimSpace(scope)
-+	responseID = strings.TrimSpace(responseID)
-+	if scope == "" || responseID == "" {
-+		return ""
-+	}
-+	return scope + "\x00" + responseID
-+}
-+
-+func storeMadAPICodexResponseState(scope, responseID string, input, output []byte) {
-+	key := madAPICodexResponseStateKey(scope, responseID)
-+	if key == "" || len(input)+len(output) > madAPICodexSessionMaxBytes {
-+		return
-+	}
-+	now := time.Now()
-+	madAPICodexResponseStates.Lock()
-+	defer madAPICodexResponseStates.Unlock()
-+	for candidate, state := range madAPICodexResponseStates.entries {
-+		if now.Sub(state.Updated) > madAPICodexSessionTTL {
-+			delete(madAPICodexResponseStates.entries, candidate)
-+		}
-+	}
-+	madAPICodexResponseStates.entries[key] = madAPICodexResponseState{Input: bytes.Clone(input), Output: bytes.Clone(output), Updated: now}
-+}
-+
-+func getMadAPICodexResponseState(scope, responseID string) (madAPICodexResponseState, bool) {
-+	key := madAPICodexResponseStateKey(scope, responseID)
-+	if key == "" {
-+		return madAPICodexResponseState{}, false
-+	}
-+	now := time.Now()
-+	madAPICodexResponseStates.Lock()
-+	defer madAPICodexResponseStates.Unlock()
-+	state, ok := madAPICodexResponseStates.entries[key]
-+	if !ok || now.Sub(state.Updated) > madAPICodexSessionTTL {
-+		delete(madAPICodexResponseStates.entries, key)
-+		return madAPICodexResponseState{}, false
-+	}
-+	state.Updated = now
-+	madAPICodexResponseStates.entries[key] = state
-+	state.Input = bytes.Clone(state.Input)
-+	state.Output = bytes.Clone(state.Output)
-+	return state, true
 +}
 +
 +func copyMadAPIUpstreamHeaders(dst, src http.Header) {
@@ -410,10 +259,10 @@ index 0000000..a0e2ef7
 +}
 diff --git a/internal/api/madapi_native_codex_test.go b/internal/api/madapi_native_codex_test.go
 new file mode 100644
-index 0000000..ff77f96
+index 00000000..0ab80e6e
 --- /dev/null
 +++ b/internal/api/madapi_native_codex_test.go
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,119 @@
 +package api
 +
 +import (
@@ -428,7 +277,6 @@ index 0000000..ff77f96
 +	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 +	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 +	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
-+	"github.com/tidwall/gjson"
 +)
 +
 +type madAPICaptureExecutor struct {
@@ -534,52 +382,8 @@ index 0000000..ff77f96
 +		}
 +	}
 +}
-+
-+func TestMadAPICodexSessionReplayRestoresToolCallHistory(t *testing.T) {
-+	t.Setenv(madAPICodexSessionReplayEnv, "true")
-+	madAPICodexResponseStates.Lock()
-+	madAPICodexResponseStates.entries = make(map[string]madAPICodexResponseState)
-+	madAPICodexResponseStates.Unlock()
-+
-+	storeMadAPICodexResponseState(
-+		"user:1:token:2",
-+		"resp-parent",
-+		[]byte(`[{"type":"message","role":"user","content":"use the tool"}]`),
-+		[]byte(`[{"type":"reasoning","summary":[{"type":"summary_text","text":"reason"}]},{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"}]`),
-+	)
-+	body, err := prepareMadAPICodexSessionRequest(madAPINativeCodexRequest{
-+		SessionScope: "user:1:token:2",
-+		Body: []byte(`{"model":"deepseek-v4-flash","previous_response_id":"resp-parent","input":[{"type":"function_call_output","call_id":"call-1","output":"ok"}]}`),
-+	})
-+	if err != nil {
-+		t.Fatalf("prepare session replay: %v", err)
-+	}
-+	if gjson.GetBytes(body, "previous_response_id").Exists() {
-+		t.Fatalf("previous_response_id must be removed for a stateless provider: %s", body)
-+	}
-+	input := gjson.GetBytes(body, "input").Array()
-+	if len(input) != 4 {
-+		t.Fatalf("input count = %d, want 4: %s", len(input), body)
-+	}
-+	for index, want := range []string{"message", "reasoning", "function_call", "function_call_output"} {
-+		if got := input[index].Get("type").String(); got != want {
-+			t.Fatalf("input[%d].type = %q, want %q: %s", index, got, want, body)
-+		}
-+	}
-+}
-+
-+func TestMadAPICodexSessionReplayIsScoped(t *testing.T) {
-+	t.Setenv(madAPICodexSessionReplayEnv, "true")
-+	_, err := prepareMadAPICodexSessionRequest(madAPINativeCodexRequest{
-+		SessionScope: "user:other:token:other",
-+		Body:         []byte(`{"previous_response_id":"resp-parent","input":[]}`),
-+	})
-+	if err == nil || !strings.Contains(err.Error(), "session state expired") {
-+		t.Fatalf("expected scoped missing-state error, got %v", err)
-+	}
-+}
 diff --git a/internal/api/server_routes.go b/internal/api/server_routes.go
-index bb35e37..cdd131a 100644
+index 98127711..d0278afa 100644
 --- a/internal/api/server_routes.go
 +++ b/internal/api/server_routes.go
 @@ -48,6 +48,7 @@ func (s *Server) setupRoutes() {
@@ -591,7 +395,7 @@ index bb35e37..cdd131a 100644
  	s.engine.GET("/management.html", s.serveManagementControlPanel)
  	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 diff --git a/internal/translator/gemini/openai/responses/gemini_openai-responses_response.go b/internal/translator/gemini/openai/responses/gemini_openai-responses_response.go
-index 4fb0bf0..e3a5af2 100644
+index 4fb0bf00..e3a5af2b 100644
 --- a/internal/translator/gemini/openai/responses/gemini_openai-responses_response.go
 +++ b/internal/translator/gemini/openai/responses/gemini_openai-responses_response.go
 @@ -68,6 +68,7 @@ type geminiToResponsesState struct {
@@ -786,7 +590,7 @@ index 4fb0bf0..e3a5af2 100644
  			emitTrailingDetachedReasoning(st.PendingReasoningSignature)
  			st.PendingReasoningSignature = ""
 diff --git a/internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go b/internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go
-index 4e86ef1..cba1660 100644
+index 4e86ef16..cba1660c 100644
 --- a/internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go
 +++ b/internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go
 @@ -1255,6 +1255,57 @@ func TestConvertGeminiResponseToOpenAIResponses_FunctionCallEventOrder(t *testin

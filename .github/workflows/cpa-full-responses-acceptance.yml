@@ -7,9 +7,7 @@ on:
       - main
     paths:
       - 'server/cpa-codex-full/**'
-      - 'server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch'
       - 'server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch'
-      - 'server/cpa-codex/catalog_sync.py'
       - '.github/workflows/cpa-full-responses-acceptance.yml'
 
 permissions:
@@ -45,18 +43,14 @@ jobs:
       - name: Apply the full Responses service patches
         working-directory: cpa-source
         run: |
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-madapi-native-responses-gateway.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-madapi-native-responses-gateway.patch"
-          gofmt -w internal/api/madapi_native_codex.go internal/api/madapi_native_codex_test.go internal/api/server_routes.go internal/config/config_types.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/translator/gemini/openai/responses/gemini_openai-responses_response.go internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go internal/watcher/synthesizer/config.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go
+          gofmt -w sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go
 
       - name: Verify session replay and CPA handler build
         working-directory: cpa-source
         run: |
-          go test ./internal/api ./internal/runtime/executor ./sdk/api/handlers/openai
+          go test ./sdk/api/handlers/openai
           go build ./cmd/server

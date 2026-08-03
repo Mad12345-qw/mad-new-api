@@ -65,16 +65,12 @@ jobs:
         if: steps.upstream.outputs.changed == 'true'
         working-directory: cpa-source
         run: |
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-madapi-native-responses-gateway.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-madapi-native-responses-gateway.patch"
-          gofmt -w internal/api/madapi_native_codex.go internal/api/madapi_native_codex_test.go internal/api/server_routes.go internal/config/config_types.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/translator/gemini/openai/responses/gemini_openai-responses_response.go internal/translator/gemini/openai/responses/gemini_openai-responses_response_test.go internal/watcher/synthesizer/config.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go
-          go test ./internal/api ./internal/runtime/executor ./internal/watcher/synthesizer ./sdk/api/handlers/openai
+          gofmt -w internal/config/config_types.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/watcher/synthesizer/config.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go
+          go test ./internal/runtime/executor ./internal/watcher/synthesizer ./sdk/api/handlers/openai
 
       - name: Build CPA Codex image
         if: steps.upstream.outputs.changed == 'true'

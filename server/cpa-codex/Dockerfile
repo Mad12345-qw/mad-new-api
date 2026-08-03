@@ -37,7 +37,8 @@ COPY --from=builder /out/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
 COPY server/cpa-codex/catalog_sync.py /usr/local/bin/catalog-sync.py
 COPY server/cpa-codex/entrypoint.sh /usr/local/bin/cpa-codex-entrypoint.sh
 
-RUN chmod 0755 /usr/local/bin/catalog-sync.py /usr/local/bin/cpa-codex-entrypoint.sh \
+RUN sed -i 's/\r$//' /usr/local/bin/catalog-sync.py /usr/local/bin/cpa-codex-entrypoint.sh \
+	&& chmod 0755 /usr/local/bin/catalog-sync.py /usr/local/bin/cpa-codex-entrypoint.sh \
 	&& mkdir -p /data
 
 WORKDIR /CLIProxyAPI

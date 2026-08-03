@@ -84,6 +84,10 @@ jobs:
         if: steps.upstream.outputs.changed == 'true'
         run: docker run --rm --entrypoint python3 mad-cpa-codex:latest --version
 
+      - name: Verify CPA catalog synchronizer entrypoint
+        if: steps.upstream.outputs.changed == 'true'
+        run: docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest -c 'test "$(head -n 1 /usr/local/bin/catalog-sync.py)" = "#!/usr/bin/env python3"'
+
       - name: Export CPA-only release assets
         if: steps.upstream.outputs.changed == 'true'
         run: |

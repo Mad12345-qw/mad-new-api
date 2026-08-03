@@ -39,6 +39,7 @@ class CatalogSyncTests(unittest.TestCase):
             "native",
         )
         self.assertIn("claude-api-key:", rendered)
+        self.assertIn('      mode: "never"', rendered)
         self.assertIn('base-url: "http://new-api:3000"', rendered)
         self.assertIn("xai-api-key:", rendered)
         self.assertIn('base-url: "http://new-api:3000/v1"', rendered)

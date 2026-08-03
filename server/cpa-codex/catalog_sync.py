@@ -105,6 +105,7 @@ def append_native_provider(
     placeholder: str,
     base_url: str,
     models: list[tuple[str, str, bool]],
+    extra_lines: tuple[str, ...] = (),
 ) -> None:
     if not models:
         return
@@ -115,9 +116,10 @@ def append_native_provider(
             f"    base-url: {json.dumps(base_url)}",
             "    madapi-passthrough: true",
             "    disable-cooling: false",
-            "    models:",
         ]
     )
+    lines.extend(extra_lines)
+    lines.append("    models:")
     append_models(lines, models, "      ")
 
 
@@ -148,6 +150,7 @@ def render_config(model_ids: list[str], mode: str) -> str:
         f"madapi-{mode}-claude-provider",
         MADAPI_INTERNAL_URL,
         grouped["claude"],
+        ('    cloak:', '      mode: "never"'),
     )
     append_native_provider(
         lines,

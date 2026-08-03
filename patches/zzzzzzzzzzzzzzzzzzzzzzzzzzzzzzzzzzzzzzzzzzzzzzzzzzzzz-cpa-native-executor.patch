@@ -87,16 +87,16 @@ index 00000000..6370d7c5
 +}
 +
 +type madAPICodexDispatchRequest struct {
-+	ChannelType  int               `json:"channel_type"`
-+	ChannelID    int               `json:"channel_id"`
-+	BaseURL      string            `json:"base_url"`
-+	APIKey       string            `json:"api_key"`
-+	Model        string            `json:"model"`
-+	Headers      map[string]string `json:"headers,omitempty"`
-+	Body         json.RawMessage   `json:"body"`
-+	Stream       bool              `json:"stream"`
-+	Compact      bool              `json:"compact"`
-+	RequestPath  string            `json:"request_path,omitempty"`
++	ChannelType int               `json:"channel_type"`
++	ChannelID   int               `json:"channel_id"`
++	BaseURL     string            `json:"base_url"`
++	APIKey      string            `json:"api_key"`
++	Model       string            `json:"model"`
++	Headers     map[string]string `json:"headers,omitempty"`
++	Body        json.RawMessage   `json:"body"`
++	Stream      bool              `json:"stream"`
++	Compact     bool              `json:"compact"`
++	RequestPath string            `json:"request_path,omitempty"`
 +	SessionScope string            `json:"session_scope,omitempty"`
 +}
 +
@@ -214,16 +214,16 @@ index 00000000..6370d7c5
 +		return nil, err
 +	}
 +	return &madAPICodexDispatchRequest{
-+		ChannelType:  info.ChannelType,
-+		ChannelID:    info.ChannelId,
-+		BaseURL:      info.ChannelBaseUrl,
-+		APIKey:       info.ApiKey,
-+		Model:        info.UpstreamModelName,
-+		Headers:      headers,
-+		Body:         body,
-+		Stream:       info.IsStream,
-+		Compact:      info.RelayMode == relayconstant.RelayModeResponsesCompact,
-+		RequestPath:  info.RequestURLPath,
++		ChannelType: info.ChannelType,
++		ChannelID:   info.ChannelId,
++		BaseURL:     info.ChannelBaseUrl,
++		APIKey:      info.ApiKey,
++		Model:       info.UpstreamModelName,
++		Headers:     headers,
++		Body:        body,
++		Stream:      info.IsStream,
++		Compact:     info.RelayMode == relayconstant.RelayModeResponsesCompact,
++		RequestPath: info.RequestURLPath,
 +		SessionScope: fmt.Sprintf("user:%d:token:%d", info.UserId, info.TokenId),
 +	}, nil
 +}

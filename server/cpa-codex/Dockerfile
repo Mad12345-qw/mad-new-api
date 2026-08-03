@@ -20,11 +20,13 @@ RUN if [ "$CPA_PATCHED" != "1" ]; then \
 		&& git apply --check /patches/0004-openai-chat-root-tool-schema.patch \
 		&& git apply /patches/0004-openai-chat-root-tool-schema.patch \
 		&& git apply --check /patches/0005-madapi-native-provider-authorization.patch \
-		&& git apply /patches/0005-madapi-native-provider-authorization.patch; \
+		&& git apply /patches/0005-madapi-native-provider-authorization.patch \
+		&& git apply --check /patches/0006-openai-responses-string-input.patch \
+		&& git apply /patches/0006-openai-responses-string-input.patch; \
 	fi \
-	&& gofmt -w internal/config/config_types.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/translator/openai/openai/responses/openai_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_tools.go internal/watcher/synthesizer/config.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go sdk/cliproxy/auth/conductor_execution.go sdk/cliproxy/auth/madapi_passthrough_test.go \
+	&& gofmt -w internal/config/config_types.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/translator/claude/openai/responses/claude_openai-responses_request.go internal/translator/claude/openai/responses/claude_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_tools.go internal/watcher/synthesizer/config.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go sdk/cliproxy/auth/conductor_execution.go sdk/cliproxy/auth/madapi_passthrough_test.go \
 	&& go mod download \
-	&& go test ./internal/translator/openai/openai/responses ./sdk/api/handlers/openai ./sdk/cliproxy/auth \
+	&& go test ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./sdk/api/handlers/openai ./sdk/cliproxy/auth \
 	&& CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o /out/CLIProxyAPI ./cmd/server/
 
 FROM debian:bookworm-slim

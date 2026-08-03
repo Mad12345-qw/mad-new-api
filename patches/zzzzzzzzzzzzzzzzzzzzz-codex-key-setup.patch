@@ -43,7 +43,7 @@ index 5a75d5f..734d798 100644
 +          setOpen('codex-setup')
 +        }}
 +        aria-label={t('Codex Setup')}
-+        className='h-8 whitespace-nowrap px-2.5 text-xs'
++        className='h-7 min-w-0 shrink-0 whitespace-nowrap px-1.5 text-[10px] sm:h-8 sm:px-2.5 sm:text-xs'
 +      >
 +        {t('Codex Setup')}
 +      </Button>

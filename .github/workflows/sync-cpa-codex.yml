@@ -74,6 +74,10 @@ jobs:
         if: steps.upstream.outputs.changed == 'true'
         run: docker build --pull --build-arg CPA_PATCHED=1 --file server/cpa-codex/Dockerfile --tag mad-cpa-codex:latest .
 
+      - name: Verify CPA runtime dependencies
+        if: steps.upstream.outputs.changed == 'true'
+        run: docker run --rm --entrypoint python3 mad-cpa-codex:latest --version
+
       - name: Export CPA-only release assets
         if: steps.upstream.outputs.changed == 'true'
         run: |

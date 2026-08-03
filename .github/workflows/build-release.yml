@@ -252,6 +252,9 @@ jobs:
       - name: Build CPA full Codex front-proxy image
         run: docker build --pull --build-arg CPA_PATCHED=1 --file server/cpa-codex/Dockerfile --tag mad-cpa-codex:latest .
 
+      - name: Verify CPA runtime dependencies
+        run: docker run --rm --entrypoint python3 mad-cpa-codex:latest --version
+
       - name: Export image
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |

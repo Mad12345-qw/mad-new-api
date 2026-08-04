@@ -31,6 +31,8 @@ class ComposeReconcileTests(unittest.TestCase):
         self.assertIn("MADAPI_INTERNAL_CATALOG_TOKEN: ${MADAPI_INTERNAL_CATALOG_TOKEN}", result)
         self.assertIn("127.0.0.1:8318:8317", result)
         self.assertIn("127.0.0.1:8319:8317", result)
+        self.assertIn("    mem_limit: 512m\n", result)
+        self.assertIn("    mem_limit: 384m\n", result)
         self.assertIn("CPA_CATALOG_MODE: native", result)
         self.assertIn("CPA_CATALOG_MODE: cockpit", result)
 

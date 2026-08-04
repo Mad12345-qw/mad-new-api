@@ -1,0 +1,417 @@
+diff --git a/internal/translator/claude/openai/responses/claude_openai-responses_request.go b/internal/translator/claude/openai/responses/claude_openai-responses_request.go
+index 14fe11f..9de975e 100644
+--- a/internal/translator/claude/openai/responses/claude_openai-responses_request.go
++++ b/internal/translator/claude/openai/responses/claude_openai-responses_request.go
+@@ -628,6 +628,10 @@ func convertResponsesToolToClaudeTools(tool gjson.Result, toolNameMap map[string
+ 		}
+ 	case "namespace":
+ 		return convertResponsesNamespaceToolToClaude(tool, toolNameMap)
++	case "custom":
++		if tJSON, ok := convertResponsesCustomToolToClaude(tool, ""); ok {
++			return [][]byte{tJSON}
++		}
+ 	case "web_search":
+ 		if tJSON, ok := convertResponsesWebSearchToolToClaude(tool); ok {
+ 			if name := gjson.GetBytes(tJSON, "name").String(); name != "" {
+@@ -636,9 +640,6 @@ func convertResponsesToolToClaudeTools(tool gjson.Result, toolNameMap map[string
+ 			return [][]byte{tJSON}
+ 		}
+ 	default:
+-		if isOpenAIResponsesApplyPatchCustomTool(toolType, tool) {
+-			return nil
+-		}
+ 		if isUnsupportedOpenAIBuiltinToolType(toolType) {
+ 			return nil
+ 		}
+@@ -649,10 +650,6 @@ func convertResponsesToolToClaudeTools(tool gjson.Result, toolNameMap map[string
+ 	return nil
+ }
+ 
+-func isOpenAIResponsesApplyPatchCustomTool(toolType string, tool gjson.Result) bool {
+-	return toolType == "custom" && strings.TrimSpace(tool.Get("name").String()) == "apply_patch"
+-}
+-
+ func convertResponsesNamespaceToolToClaude(tool gjson.Result, toolNameMap map[string]string) [][]byte {
+ 	namespaceName := strings.TrimSpace(tool.Get("name").String())
+ 	children := tool.Get("tools")
+@@ -664,7 +661,15 @@ func convertResponsesNamespaceToolToClaude(tool gjson.Result, toolNameMap map[st
+ 	children.ForEach(func(_, child gjson.Result) bool {
+ 		childName := responsesToolName(child)
+ 		qualifiedName := qualifyResponsesNamespaceToolName(namespaceName, childName)
+-		if tJSON, ok := convertResponsesFunctionToolToClaude(child, qualifiedName); ok {
++		var tJSON []byte
++		var ok bool
++		switch strings.TrimSpace(child.Get("type").String()) {
++		case "custom":
++			tJSON, ok = convertResponsesCustomToolToClaude(child, qualifiedName)
++		default:
++			tJSON, ok = convertResponsesFunctionToolToClaude(child, qualifiedName)
++		}
++		if ok {
+ 			out = append(out, tJSON)
+ 			toolNameMap[qualifiedName] = qualifiedName
+ 			if childName != "" {
+@@ -676,6 +681,23 @@ func convertResponsesNamespaceToolToClaude(tool gjson.Result, toolNameMap map[st
+ 	return out
+ }
+ 
++func convertResponsesCustomToolToClaude(tool gjson.Result, overrideName string) ([]byte, bool) {
++	name := strings.TrimSpace(overrideName)
++	if name == "" {
++		name = responsesToolName(tool)
++	}
++	if name == "" {
++		return nil, false
++	}
++
++	tJSON := []byte(`{"name":"","description":"","input_schema":{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}}`)
++	tJSON, _ = sjson.SetBytes(tJSON, "name", name)
++	if description := responsesToolDescription(tool); description != "" {
++		tJSON, _ = sjson.SetBytes(tJSON, "description", description)
++	}
++	return tJSON, true
++}
++
+ func convertResponsesFunctionToolToClaude(tool gjson.Result, overrideName string) ([]byte, bool) {
+ 	name := strings.TrimSpace(overrideName)
+ 	if name == "" {
+diff --git a/internal/translator/claude/openai/responses/claude_openai-responses_request_test.go b/internal/translator/claude/openai/responses/claude_openai-responses_request_test.go
+index 04a959a..a6f6d09 100644
+--- a/internal/translator/claude/openai/responses/claude_openai-responses_request_test.go
++++ b/internal/translator/claude/openai/responses/claude_openai-responses_request_test.go
+@@ -289,7 +289,7 @@ func TestConvertOpenAIResponsesRequestToClaude_KeepsToolUseAdjacentToToolResult(
+ 	}
+ }
+ 
+-func TestConvertOpenAIResponsesRequestToClaude_DropsApplyPatchCustomTool(t *testing.T) {
++func TestConvertOpenAIResponsesRequestToClaude_ConvertsApplyPatchCustomTool(t *testing.T) {
+ 	raw := []byte(`{
+ 		"model":"claude-test",
+ 		"input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],
+@@ -312,14 +312,17 @@ func TestConvertOpenAIResponsesRequestToClaude_DropsApplyPatchCustomTool(t *test
+ 	out := ConvertOpenAIResponsesRequestToClaude("claude-test", raw, false)
+ 	root := gjson.ParseBytes(out)
+ 
+-	if got := root.Get("tools.#").Int(); got != 1 {
+-		t.Fatalf("tools count = %d, want 1. Output: %s", got, string(out))
++	if got := root.Get("tools.#").Int(); got != 2 {
++		t.Fatalf("tools count = %d, want 2. Output: %s", got, string(out))
+ 	}
+-	if got := root.Get("tools.0.name").String(); got != "exec_command" {
+-		t.Fatalf("tools.0.name = %q, want exec_command. Output: %s", got, string(out))
++	if got := root.Get("tools.0.name").String(); got != "apply_patch" {
++		t.Fatalf("tools.0.name = %q, want apply_patch. Output: %s", got, string(out))
+ 	}
+-	if got := root.Get("tools.#(name==\"apply_patch\")").Raw; got != "" {
+-		t.Fatalf("apply_patch custom tool should be dropped. Output: %s", string(out))
++	if got := root.Get("tools.0.input_schema.properties.input.type").String(); got != "string" {
++		t.Fatalf("apply_patch input schema type = %q, want string. Output: %s", got, string(out))
++	}
++	if got := root.Get("tools.1.name").String(); got != "exec_command" {
++		t.Fatalf("tools.1.name = %q, want exec_command. Output: %s", got, string(out))
+ 	}
+ }
+ 
+diff --git a/internal/translator/claude/openai/responses/claude_openai-responses_response.go b/internal/translator/claude/openai/responses/claude_openai-responses_response.go
+index 671f98d..e6de8c7 100644
+--- a/internal/translator/claude/openai/responses/claude_openai-responses_response.go
++++ b/internal/translator/claude/openai/responses/claude_openai-responses_response.go
+@@ -30,6 +30,7 @@ type claudeToResponsesState struct {
+ 	FuncNames         map[int]string // Claude block index -> function name
+ 	FuncCallIDs       map[int]string // Claude block index -> call id
+ 	FuncOutputIndices map[int]int    // Claude block index -> Responses output index
++	FuncCustom        map[int]bool   // Claude block index -> original Responses custom tool
+ 	// message text aggregation
+ 	TextBuf            strings.Builder
+ 	CurrentTextBuf     strings.Builder
+@@ -107,6 +108,53 @@ func pickRequestJSON(originalRequestRawJSON, requestRawJSON []byte) []byte {
+ 	return nil
+ }
+ 
++func claudeResponsesCustomToolNames(requestRawJSON []byte) map[string]struct{} {
++	names := make(map[string]struct{})
++	var collect func(gjson.Result, string)
++	collect = func(tools gjson.Result, namespaceName string) {
++		if !tools.Exists() || !tools.IsArray() {
++			return
++		}
++		tools.ForEach(func(_, tool gjson.Result) bool {
++			switch strings.TrimSpace(tool.Get("type").String()) {
++			case "custom":
++				name := responsesToolName(tool)
++				if namespaceName != "" {
++					name = qualifyResponsesNamespaceToolName(namespaceName, name)
++				}
++				if name != "" {
++					names[name] = struct{}{}
++				}
++			case "namespace":
++				collect(tool.Get("tools"), strings.TrimSpace(tool.Get("name").String()))
++			}
++			return true
++		})
++	}
++
++	root := gjson.ParseBytes(requestRawJSON)
++	collect(root.Get("tools"), "")
++	if input := root.Get("input"); input.Exists() && input.IsArray() {
++		input.ForEach(func(_, item gjson.Result) bool {
++			if item.Get("type").String() == "additional_tools" {
++				collect(item.Get("tools"), "")
++			}
++			return true
++		})
++	}
++	return names
++}
++
++func unwrapClaudeResponsesCustomToolInput(arguments string) string {
++	if value := gjson.Get(arguments, "input"); value.Exists() {
++		if value.Type == gjson.String {
++			return value.String()
++		}
++		return value.Raw
++	}
++	return arguments
++}
++
+ func applyResponsesFunctionCallNamespaceFields(item []byte, requestRawJSON []byte, qualifiedName string, itemPath string) []byte {
+ 	name, namespace := splitResponsesQualifiedFunctionCallFromRequest(requestRawJSON, qualifiedName)
+ 	namePath := "name"
+@@ -225,6 +273,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
+ 			FuncNames:          make(map[int]string),
+ 			FuncCallIDs:        make(map[int]string),
+ 			FuncOutputIndices:  make(map[int]int),
++			FuncCustom:         make(map[int]bool),
+ 		}
+ 	}
+ 	st := (*param).(*claudeToResponsesState)
+@@ -318,13 +367,25 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
+ 			st.CurrentFCID = cb.Get("id").String()
+ 			name := cb.Get("name").String()
+ 			outputIndex := st.functionOutputIndex(idx)
+-			item := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}`)
+-			item, _ = sjson.SetBytes(item, "sequence_number", nextSeq())
+-			item, _ = sjson.SetBytes(item, "output_index", outputIndex)
+-			item, _ = sjson.SetBytes(item, "item.id", fmt.Sprintf("fc_%s", st.CurrentFCID))
+-			item, _ = sjson.SetBytes(item, "item.call_id", st.CurrentFCID)
+-			item = applyResponsesFunctionCallNamespaceFields(item, pickRequestJSON(originalRequestRawJSON, requestRawJSON), name, "item")
+-			out = append(out, emitEvent("response.output_item.added", item))
++			_, isCustomTool := claudeResponsesCustomToolNames(pickRequestJSON(originalRequestRawJSON, requestRawJSON))[name]
++			st.FuncCustom[idx] = isCustomTool
++			if isCustomTool {
++				item := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"in_progress","input":"","call_id":"","name":""}}`)
++				item, _ = sjson.SetBytes(item, "sequence_number", nextSeq())
++				item, _ = sjson.SetBytes(item, "output_index", outputIndex)
++				item, _ = sjson.SetBytes(item, "item.id", fmt.Sprintf("ctc_%s", st.CurrentFCID))
++				item, _ = sjson.SetBytes(item, "item.call_id", st.CurrentFCID)
++				item, _ = sjson.SetBytes(item, "item.name", name)
++				out = append(out, emitEvent("response.output_item.added", item))
++			} else {
++				item := []byte(`{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}`)
++				item, _ = sjson.SetBytes(item, "sequence_number", nextSeq())
++				item, _ = sjson.SetBytes(item, "output_index", outputIndex)
++				item, _ = sjson.SetBytes(item, "item.id", fmt.Sprintf("fc_%s", st.CurrentFCID))
++				item, _ = sjson.SetBytes(item, "item.call_id", st.CurrentFCID)
++				item = applyResponsesFunctionCallNamespaceFields(item, pickRequestJSON(originalRequestRawJSON, requestRawJSON), name, "item")
++				out = append(out, emitEvent("response.output_item.added", item))
++			}
+ 			if st.FuncArgsBuf[idx] == nil {
+ 				st.FuncArgsBuf[idx] = &strings.Builder{}
+ 			}
+@@ -383,13 +444,15 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
+ 					st.FuncArgsBuf[idx] = &strings.Builder{}
+ 				}
+ 				st.FuncArgsBuf[idx].WriteString(pj.String())
+-				outputIndex := st.functionOutputIndex(idx)
+-				msg := []byte(`{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`)
+-				msg, _ = sjson.SetBytes(msg, "sequence_number", nextSeq())
+-				msg, _ = sjson.SetBytes(msg, "item_id", fmt.Sprintf("fc_%s", st.CurrentFCID))
+-				msg, _ = sjson.SetBytes(msg, "output_index", outputIndex)
+-				msg, _ = sjson.SetBytes(msg, "delta", pj.String())
+-				out = append(out, emitEvent("response.function_call_arguments.delta", msg))
++				if !st.FuncCustom[idx] {
++					outputIndex := st.functionOutputIndex(idx)
++					msg := []byte(`{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`)
++					msg, _ = sjson.SetBytes(msg, "sequence_number", nextSeq())
++					msg, _ = sjson.SetBytes(msg, "item_id", fmt.Sprintf("fc_%s", st.CurrentFCID))
++					msg, _ = sjson.SetBytes(msg, "output_index", outputIndex)
++					msg, _ = sjson.SetBytes(msg, "delta", pj.String())
++					out = append(out, emitEvent("response.function_call_arguments.delta", msg))
++				}
+ 			}
+ 		} else if dt == "thinking_delta" {
+ 			if st.ReasoningActive {
+@@ -428,20 +491,39 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
+ 					args = buf.String()
+ 				}
+ 			}
+-			fcDone := []byte(`{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}`)
+-			fcDone, _ = sjson.SetBytes(fcDone, "sequence_number", nextSeq())
+-			fcDone, _ = sjson.SetBytes(fcDone, "item_id", fmt.Sprintf("fc_%s", st.CurrentFCID))
+-			fcDone, _ = sjson.SetBytes(fcDone, "output_index", outputIndex)
+-			fcDone, _ = sjson.SetBytes(fcDone, "arguments", args)
+-			out = append(out, emitEvent("response.function_call_arguments.done", fcDone))
+-			itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}`)
+-			itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
+-			itemDone, _ = sjson.SetBytes(itemDone, "output_index", outputIndex)
+-			itemDone, _ = sjson.SetBytes(itemDone, "item.id", fmt.Sprintf("fc_%s", st.CurrentFCID))
+-			itemDone, _ = sjson.SetBytes(itemDone, "item.arguments", args)
+-			itemDone, _ = sjson.SetBytes(itemDone, "item.call_id", st.CurrentFCID)
+-			itemDone = applyResponsesFunctionCallNamespaceFields(itemDone, pickRequestJSON(originalRequestRawJSON, requestRawJSON), st.FuncNames[idx], "item")
+-			out = append(out, emitEvent("response.output_item.done", itemDone))
++			if st.FuncCustom[idx] {
++				input := unwrapClaudeResponsesCustomToolInput(args)
++				inputDone := []byte(`{"type":"response.custom_tool_call_input.done","sequence_number":0,"item_id":"","output_index":0,"input":""}`)
++				inputDone, _ = sjson.SetBytes(inputDone, "sequence_number", nextSeq())
++				inputDone, _ = sjson.SetBytes(inputDone, "item_id", fmt.Sprintf("ctc_%s", st.CurrentFCID))
++				inputDone, _ = sjson.SetBytes(inputDone, "output_index", outputIndex)
++				inputDone, _ = sjson.SetBytes(inputDone, "input", input)
++				out = append(out, emitEvent("response.custom_tool_call_input.done", inputDone))
++
++				itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}}`)
++				itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
++				itemDone, _ = sjson.SetBytes(itemDone, "output_index", outputIndex)
++				itemDone, _ = sjson.SetBytes(itemDone, "item.id", fmt.Sprintf("ctc_%s", st.CurrentFCID))
++				itemDone, _ = sjson.SetBytes(itemDone, "item.input", input)
++				itemDone, _ = sjson.SetBytes(itemDone, "item.call_id", st.CurrentFCID)
++				itemDone, _ = sjson.SetBytes(itemDone, "item.name", st.FuncNames[idx])
++				out = append(out, emitEvent("response.output_item.done", itemDone))
++			} else {
++				fcDone := []byte(`{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}`)
++				fcDone, _ = sjson.SetBytes(fcDone, "sequence_number", nextSeq())
++				fcDone, _ = sjson.SetBytes(fcDone, "item_id", fmt.Sprintf("fc_%s", st.CurrentFCID))
++				fcDone, _ = sjson.SetBytes(fcDone, "output_index", outputIndex)
++				fcDone, _ = sjson.SetBytes(fcDone, "arguments", args)
++				out = append(out, emitEvent("response.function_call_arguments.done", fcDone))
++				itemDone := []byte(`{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}`)
++				itemDone, _ = sjson.SetBytes(itemDone, "sequence_number", nextSeq())
++				itemDone, _ = sjson.SetBytes(itemDone, "output_index", outputIndex)
++				itemDone, _ = sjson.SetBytes(itemDone, "item.id", fmt.Sprintf("fc_%s", st.CurrentFCID))
++				itemDone, _ = sjson.SetBytes(itemDone, "item.arguments", args)
++				itemDone, _ = sjson.SetBytes(itemDone, "item.call_id", st.CurrentFCID)
++				itemDone = applyResponsesFunctionCallNamespaceFields(itemDone, pickRequestJSON(originalRequestRawJSON, requestRawJSON), st.FuncNames[idx], "item")
++				out = append(out, emitEvent("response.output_item.done", itemDone))
++			}
+ 			st.InFuncBlock = false
+ 		} else if st.ReasoningActive {
+ 			full := st.ReasoningBuf.String()
+@@ -603,6 +685,15 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
+ 				if callID == "" && st.CurrentFCID != "" {
+ 					callID = st.CurrentFCID
+ 				}
++				if st.FuncCustom[idx] {
++					item := []byte(`{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}`)
++					item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("ctc_%s", callID))
++					item, _ = sjson.SetBytes(item, "input", unwrapClaudeResponsesCustomToolInput(args))
++					item, _ = sjson.SetBytes(item, "call_id", callID)
++					item, _ = sjson.SetBytes(item, "name", name)
++					outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, fmt.Sprintf("arr.%d", st.FuncOutputIndices[idx]), item)
++					continue
++				}
+ 				item := []byte(`{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`)
+ 				item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("fc_%s", callID))
+ 				item, _ = sjson.SetBytes(item, "arguments", args)
+@@ -781,6 +872,7 @@ func ConvertClaudeResponseToOpenAIResponsesNonStream(_ context.Context, _ string
+ 
+ 	// Inject request echo fields as top-level (similar to streaming variant)
+ 	reqBytes := pickRequestJSON(originalRequestRawJSON, requestRawJSON)
++	customToolNames := claudeResponsesCustomToolNames(reqBytes)
+ 	if len(reqBytes) > 0 {
+ 		req := gjson.ParseBytes(reqBytes)
+ 		if v := req.Get("instructions"); v.Exists() {
+@@ -886,6 +978,15 @@ func ConvertClaudeResponseToOpenAIResponsesNonStream(_ context.Context, _ string
+ 			if args == "" {
+ 				args = "{}"
+ 			}
++			if _, isCustomTool := customToolNames[st.name]; isCustomTool {
++				item := []byte(`{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}`)
++				item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("ctc_%s", st.id))
++				item, _ = sjson.SetBytes(item, "input", unwrapClaudeResponsesCustomToolInput(args))
++				item, _ = sjson.SetBytes(item, "call_id", st.id)
++				item, _ = sjson.SetBytes(item, "name", st.name)
++				outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, "arr.-1", item)
++				continue
++			}
+ 			item := []byte(`{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`)
+ 			item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("fc_%s", st.id))
+ 			item, _ = sjson.SetBytes(item, "arguments", args)
+diff --git a/internal/translator/claude/openai/responses/claude_openai-responses_response_test.go b/internal/translator/claude/openai/responses/claude_openai-responses_response_test.go
+index 16e5a33..104a23c 100644
+--- a/internal/translator/claude/openai/responses/claude_openai-responses_response_test.go
++++ b/internal/translator/claude/openai/responses/claude_openai-responses_response_test.go
+@@ -827,3 +827,74 @@ func TestConvertClaudeResponseToOpenAIResponsesNonStream_RestoresNamespaceFuncti
+ 		t.Fatalf("non-stream output namespace = %q, want mcp__node_repl", got)
+ 	}
+ }
++
++func TestConvertClaudeResponseToOpenAIResponses_PreservesCustomToolCall(t *testing.T) {
++	originalRequest := []byte(`{"model":"gpt-test","tools":[{"type":"custom","name":"run_shell","format":{"type":"text"}}]}`)
++	chunks := [][]byte{
++		[]byte(`data: {"type":"message_start","message":{"id":"msg_custom","usage":{"input_tokens":1,"output_tokens":0}}}`),
++		[]byte(`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_custom","name":"run_shell","input":{}}}`),
++		[]byte(`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"input\":\"printf CPA_CUSTOM_OK\"}"}}`),
++		[]byte(`data: {"type":"content_block_stop","index":0}`),
++		[]byte(`data: {"type":"message_stop"}`),
++	}
++
++	var param any
++	var added, inputDone, itemDone, completed gjson.Result
++	functionArgumentEvents := 0
++	for _, chunk := range chunks {
++		for _, output := range ConvertClaudeResponseToOpenAIResponses(context.Background(), "claude-test", originalRequest, nil, chunk, &param) {
++			event, data := parseClaudeResponsesSSEEvent(t, output)
++			switch event {
++			case "response.output_item.added":
++				added = data
++			case "response.custom_tool_call_input.done":
++				inputDone = data
++			case "response.output_item.done":
++				itemDone = data
++			case "response.completed":
++				completed = data
++			case "response.function_call_arguments.delta", "response.function_call_arguments.done":
++				functionArgumentEvents++
++			}
++		}
++	}
++
++	if got := added.Get("item.type").String(); got != "custom_tool_call" {
++		t.Fatalf("added item type = %q, want custom_tool_call", got)
++	}
++	if got := inputDone.Get("input").String(); got != "printf CPA_CUSTOM_OK" {
++		t.Fatalf("custom tool input = %q", got)
++	}
++	if got := itemDone.Get("item.type").String(); got != "custom_tool_call" {
++		t.Fatalf("done item type = %q, want custom_tool_call", got)
++	}
++	if got := completed.Get("response.output.0.type").String(); got != "custom_tool_call" {
++		t.Fatalf("completed output type = %q, want custom_tool_call", got)
++	}
++	if got := completed.Get("response.output.0.input").String(); got != "printf CPA_CUSTOM_OK" {
++		t.Fatalf("completed custom tool input = %q", got)
++	}
++	if functionArgumentEvents != 0 {
++		t.Fatalf("function argument events = %d, want 0", functionArgumentEvents)
++	}
++}
++
++func TestConvertClaudeResponseToOpenAIResponsesNonStream_PreservesCustomToolCall(t *testing.T) {
++	originalRequest := []byte(`{"model":"gpt-test","tools":[{"type":"custom","name":"run_shell","format":{"type":"text"}}]}`)
++	raw := []byte(strings.Join([]string{
++		`data: {"type":"message_start","message":{"id":"msg_custom","usage":{"input_tokens":1,"output_tokens":0}}}`,
++		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_custom","name":"run_shell","input":{}}}`,
++		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"input\":\"printf CPA_CUSTOM_OK\"}"}}`,
++		`data: {"type":"content_block_stop","index":0}`,
++		`data: {"type":"message_stop"}`,
++	}, "\n"))
++
++	out := ConvertClaudeResponseToOpenAIResponsesNonStream(context.Background(), "claude-test", originalRequest, nil, raw, nil)
++	root := gjson.ParseBytes(out)
++	if got := root.Get("output.0.type").String(); got != "custom_tool_call" {
++		t.Fatalf("non-stream output type = %q, want custom_tool_call; response=%s", got, out)
++	}
++	if got := root.Get("output.0.input").String(); got != "printf CPA_CUSTOM_OK" {
++		t.Fatalf("non-stream custom tool input = %q", got)
++	}
++}

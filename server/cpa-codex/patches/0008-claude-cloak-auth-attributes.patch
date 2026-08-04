@@ -1,0 +1,69 @@
+diff --git a/internal/watcher/synthesizer/config.go b/internal/watcher/synthesizer/config.go
+index e942244..d85114a 100644
+--- a/internal/watcher/synthesizer/config.go
++++ b/internal/watcher/synthesizer/config.go
+@@ -158,6 +158,20 @@ func (s *ConfigSynthesizer) synthesizeClaudeKeys(ctx *SynthesisContext) []*corea
+ 		if ck.MadAPIPassthrough {
+ 			attrs["madapi_passthrough"] = "true"
+ 		}
++		if ck.Cloak != nil {
++			if mode := strings.TrimSpace(ck.Cloak.Mode); mode != "" {
++				attrs["cloak_mode"] = mode
++			}
++			if ck.Cloak.StrictMode {
++				attrs["cloak_strict_mode"] = "true"
++			}
++			if len(ck.Cloak.SensitiveWords) > 0 {
++				attrs["cloak_sensitive_words"] = strings.Join(ck.Cloak.SensitiveWords, ",")
++			}
++			if ck.Cloak.CacheUserID != nil {
++				attrs["cloak_cache_user_id"] = strconv.FormatBool(*ck.Cloak.CacheUserID)
++			}
++		}
+ 		addWeightToAttrs(ck.Weight, attrs)
+ 		if base != "" {
+ 			attrs["base_url"] = base
+diff --git a/internal/watcher/synthesizer/config_test.go b/internal/watcher/synthesizer/config_test.go
+index 6ab6481..5357863 100644
+--- a/internal/watcher/synthesizer/config_test.go
++++ b/internal/watcher/synthesizer/config_test.go
+@@ -219,6 +219,7 @@ func TestConfigSynthesizer_InteractionsKeys(t *testing.T) {
+ }
+ 
+ func TestConfigSynthesizer_ClaudeKeys(t *testing.T) {
++	cacheUserID := true
+ 	synth := NewConfigSynthesizer()
+ 	ctx := &SynthesisContext{
+ 		Config: &config.Config{
+@@ -229,6 +230,12 @@ func TestConfigSynthesizer_ClaudeKeys(t *testing.T) {
+ 					BaseURL:                 "https://api.anthropic.com",
+ 					DisableCooling:          true,
+ 					RebuildMidSystemMessage: true,
++					Cloak: &config.CloakConfig{
++						Mode:           "never",
++						StrictMode:     true,
++						SensitiveWords: []string{"API", "proxy"},
++						CacheUserID:    &cacheUserID,
++					},
+ 					Models: []config.ClaudeModel{
+ 						{Name: "claude-3-opus"},
+ 						{Name: "claude-3-sonnet"},
+@@ -269,6 +276,18 @@ func TestConfigSynthesizer_ClaudeKeys(t *testing.T) {
+ 	if got := auths[0].Attributes["rebuild_mid_system_message"]; got != "true" {
+ 		t.Errorf("expected rebuild_mid_system_message=true, got %s", got)
+ 	}
++	if got := auths[0].Attributes["cloak_mode"]; got != "never" {
++		t.Errorf("expected cloak_mode=never, got %s", got)
++	}
++	if got := auths[0].Attributes["cloak_strict_mode"]; got != "true" {
++		t.Errorf("expected cloak_strict_mode=true, got %s", got)
++	}
++	if got := auths[0].Attributes["cloak_sensitive_words"]; got != "API,proxy" {
++		t.Errorf("expected cloak_sensitive_words=API,proxy, got %s", got)
++	}
++	if got := auths[0].Attributes["cloak_cache_user_id"]; got != "true" {
++		t.Errorf("expected cloak_cache_user_id=true, got %s", got)
++	}
+ 	if v, ok := auths[0].Metadata["disable_cooling"].(bool); !ok || !v {
+ 		t.Errorf("expected disable_cooling=true, got %v", auths[0].Metadata["disable_cooling"])
+ 	}

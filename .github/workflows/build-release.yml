@@ -249,6 +249,16 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0006-openai-responses-string-input.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0007-claude-web-search-beta.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0007-claude-web-search-beta.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0008-claude-cloak-auth-attributes.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0008-claude-cloak-auth-attributes.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0009-claude-custom-tool-roundtrip.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0009-claude-custom-tool-roundtrip.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0010-claude-native-api-wire-mode.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0010-claude-native-api-wire-mode.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0011-claude-web-search-events.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0011-claude-web-search-events.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0012-claude-compaction-replay.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0012-claude-compaction-replay.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \
@@ -260,9 +270,12 @@ jobs:
             internal/runtime/executor/claude_executor_tokens.go \
             internal/translator/claude/openai/responses/claude_openai-responses_request.go \
             internal/translator/claude/openai/responses/claude_openai-responses_request_test.go \
+            internal/translator/claude/openai/responses/claude_openai-responses_response.go \
+            internal/translator/claude/openai/responses/claude_openai-responses_response_test.go \
             internal/translator/openai/openai/responses/openai_openai-responses_request_test.go \
             internal/translator/openai/openai/responses/openai_openai-responses_tools.go \
             internal/watcher/synthesizer/config.go \
+            internal/watcher/synthesizer/config_test.go \
             sdk/api/handlers/openai/madapi_responses_session.go \
             sdk/api/handlers/openai/madapi_responses_session_test.go \
             sdk/api/handlers/openai/openai_responses_handlers.go \

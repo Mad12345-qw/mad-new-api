@@ -10,16 +10,17 @@ function Write-OAuth([string]$Path) {
     Write-Utf8 $Path '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"},"last_refresh":"2026-08-02T00:00:00Z"}'
 }
 function Install([string]$CodexHome, [string]$Key, [string]$LoginMode = 'auto') {
-    $oldHome, $oldKey, $oldLoginMode, $oldTestMode, $oldRefreshSource = $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_CODEX_LOGIN_MODE, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE
+    $oldHome, $oldKey, $oldLoginMode, $oldTestMode, $oldRefreshSource, $oldHistorySource = $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_CODEX_LOGIN_MODE, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE, $env:MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE
     try {
         $env:CODEX_HOME = $CodexHome
         $env:MADAPI_KEY = $Key
         $env:MADAPI_CODEX_LOGIN_MODE = $LoginMode
         $env:MADAPI_INSTALL_TEST_MODE = '1'
         $env:MADAPI_REFRESH_SCRIPT_SOURCE = Join-Path (Split-Path -Parent $InstallerPath) 'refresh-model-catalog.ps1'
+        $env:MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE = Join-Path (Split-Path -Parent $InstallerPath) 'restore-history.ps1'
         & $InstallerPath
     } finally {
-        $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_CODEX_LOGIN_MODE, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE = $oldHome, $oldKey, $oldLoginMode, $oldTestMode, $oldRefreshSource
+        $env:CODEX_HOME, $env:MADAPI_KEY, $env:MADAPI_CODEX_LOGIN_MODE, $env:MADAPI_INSTALL_TEST_MODE, $env:MADAPI_REFRESH_SCRIPT_SOURCE, $env:MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE = $oldHome, $oldKey, $oldLoginMode, $oldTestMode, $oldRefreshSource, $oldHistorySource
     }
 }
 
@@ -33,6 +34,7 @@ Assert-True (-not $installer.Contains('<CalendarTrigger>')) 'A periodic catalog 
 Assert-True (-not $installer.Contains('PT5M')) 'The five-minute catalog refresh remains.'
 Assert-True ($installer.Contains('<Command>wscript.exe</Command>')) 'The silent Windows launcher is missing.'
 Assert-True (-not $installer.Contains('<Command>powershell.exe</Command>')) 'The scheduled task still opens PowerShell directly.'
+Assert-True ($installer.Contains('restore-history.ps1')) 'The local history recovery is not part of the installer.'
 
 $temporaryRoot = if ([string]::IsNullOrWhiteSpace([string]$env:RUNNER_TEMP)) { [IO.Path]::GetTempPath() } else { [string]$env:RUNNER_TEMP }
 $codexHome = Join-Path $temporaryRoot ('mad-codex-desktop-' + [guid]::NewGuid().ToString('N'))
@@ -85,6 +87,7 @@ try {
     Assert-True ((Hash $auth) -eq $authHash) 'OAuth state changed.'
     Assert-True ((Hash $session) -eq $sessionHash) 'Session changed.'
     Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-refresh-model-catalog.ps1')) 'OAuth refresh script is missing.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-restore-history.ps1')) 'Local history recovery script is missing.'
     $refreshLauncher = Join-Path $codexHome 'madapi-refresh-model-catalog.vbs'
     Assert-True (Test-Path -LiteralPath $refreshLauncher) 'OAuth silent refresh launcher is missing.'
     $refreshLauncherText = [IO.File]::ReadAllText($refreshLauncher)
@@ -100,6 +103,17 @@ try {
     } finally {
         $env:CODEX_HOME, $env:MADAPI_REFRESH_RESPONSE_FILE = $oldHome, $oldFixture
     }
+    $historyHome = Join-Path $codexHome 'history-recovery'
+    $historyProject = Join-Path $historyHome 'project'
+    $historySession = Join-Path $historyHome 'sessions\2026\08\04\rollout-2026-08-04T00-00-00-00000000-0000-7000-8000-000000000001.jsonl'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $historySession), $historyProject -Force | Out-Null
+    Write-Utf8 $historySession ('{"timestamp":"2026-08-04T00:00:00Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000001","timestamp":"2026-08-04T00:00:00Z","cwd":"' + $historyProject.Replace('\', '\\') + '"}}')
+    Write-Utf8 (Join-Path $historyHome '.codex-global-state.json') ('{"local-projects":{"local-test":{"rootPaths":["' + $historyProject.Replace('\', '\\') + '"]}},"projectless-thread-ids":["00000000-0000-7000-8000-000000000001"]}')
+    & (Join-Path (Split-Path -Parent $InstallerPath) 'restore-history.ps1') -CodexHome $historyHome
+    $historyIndex = Get-Content -LiteralPath (Join-Path $historyHome 'session_index.jsonl') -Raw | ConvertFrom-Json
+    Assert-True ($historyIndex.id -eq '00000000-0000-7000-8000-000000000001') 'History recovery did not rebuild the session index.'
+    $historyState = Get-Content -LiteralPath (Join-Path $historyHome '.codex-global-state.json') -Raw | ConvertFrom-Json
+    Assert-True ($historyState.'thread-project-assignments'.'00000000-0000-7000-8000-000000000001'.projectId -eq 'local-test') 'History recovery did not restore project ownership.'
     Assert-True (([IO.File]::ReadAllText((Join-Path $codexHome 'madapi-cockpit-model-catalog.json'))).Contains('silent-launcher-test')) 'OAuth silent refresh launcher did not update the catalog.'
     Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json')) 'OAuth catalog file is missing.'
     $backup = @(Get-ChildItem -LiteralPath $codexHome -Filter 'config.toml.madapi-backup-*' -File)[0]

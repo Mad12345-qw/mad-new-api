@@ -28,6 +28,10 @@ recoverable baseline.
 - The About page now adds a small copy action to every safe HTML code block,
   allowing Windows and macOS recovery commands to be copied without selecting
   the full script manually.
+- The standard Windows and macOS Codex installers now include local history
+  recovery: they close Codex first, back up local index and project metadata,
+  rebuild the conversation index from existing rollout files, and restore
+  project ownership only for local folders that still exist.
 
 ## Release Baseline
 

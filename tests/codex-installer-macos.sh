@@ -9,7 +9,7 @@ home="$temporary_root/mad-codex-desktop-$$"
 fail() { printf 'Assertion failed: %s\n' "$1" >&2; exit 1; }
 hash_file() { shasum -a 256 "$1" | awk '{print $1}'; }
 write_oauth() { printf '%s' '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"},"last_refresh":"2026-08-02T00:00:00Z"}' > "$1"; }
-run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 MADAPI_CODEX_LOGIN_MODE=${3:-auto} MADAPI_INSTALL_TEST_MODE=1 MADAPI_REFRESH_SCRIPT_SOURCE="$refresh_script_path" /bin/sh "$installer_path"; }
+run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 MADAPI_CODEX_LOGIN_MODE=${3:-auto} MADAPI_INSTALL_TEST_MODE=1 MADAPI_REFRESH_SCRIPT_SOURCE="$refresh_script_path" MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE="$(dirname -- "$installer_path")/restore-history.sh" /bin/sh "$installer_path"; }
 
 ! grep -Fq 'CODEX_CLI_PATH' "$installer_path" || fail 'CLI probing remains.'
 ! grep -Fq 'madapi.key' "$installer_path" || fail 'Command authentication remains.'
@@ -17,6 +17,7 @@ run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 MADAPI_CODEX_LOGIN_MODE=${3:-auto} M
 grep -Fq '<key>RunAtLoad</key><true/>' "$installer_path" || fail 'macOS login refresh trigger is missing.'
 ! grep -Fq '<key>StartInterval</key>' "$installer_path" || fail 'A periodic macOS catalog refresh trigger remains.'
 ! grep -Fq '<integer>300</integer>' "$installer_path" || fail 'The five-minute macOS catalog refresh remains.'
+grep -Fq 'restore-history.sh' "$installer_path" || fail 'The local history recovery is not part of the installer.'
 trap 'rm -rf "$home"' EXIT
 mkdir -p "$home/sessions"
 config="$home/config.toml"; auth="$home/auth.json"; key_file="$home/madapi.key"; cache="$home/models_cache.json"; session="$home/sessions/sentinel.jsonl"
@@ -59,6 +60,7 @@ grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$config" ||
 [ "$(hash_file "$auth")" = "$auth_hash" ] || fail 'OAuth state changed.'
 [ "$(hash_file "$session")" = "$session_hash" ] || fail 'Session changed.'
 [ -f "$home/madapi-refresh-model-catalog.sh" ] || fail 'OAuth refresh script is missing.'
+[ -f "$home/madapi-restore-history.sh" ] || fail 'Local history recovery script is missing.'
 [ -f "$home/madapi-cockpit-model-catalog.json" ] || fail 'OAuth catalog file is missing.'
 backup=$(find "$home" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
 [ -n "$backup" ] && [ "$(hash_file "$backup")" = "$config_hash" ] || fail 'Backup is not exact.'
@@ -147,4 +149,12 @@ printf '%s' '{not-json}' > "$invalid_catalog"
 if CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$invalid_catalog" /bin/sh "$refresh_script_path" >/dev/null 2>&1; then
   fail 'Structured catalog refresh accepted invalid JSON.'
 fi
+
+history_home="$home/history-recovery"; history_project="$history_home/project"; history_session="$history_home/sessions/2026/08/04/rollout-2026-08-04T00-00-00-00000000-0000-7000-8000-000000000001.jsonl"
+mkdir -p "$(dirname -- "$history_session")" "$history_project"
+printf '%s' '{"timestamp":"2026-08-04T00:00:00Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000001","timestamp":"2026-08-04T00:00:00Z","cwd":"'"$history_project"'"}}' > "$history_session"
+printf '%s' '{"local-projects":{"local-test":{"rootPaths":["'"$history_project"'"]}},"projectless-thread-ids":["00000000-0000-7000-8000-000000000001"]}' > "$history_home/.codex-global-state.json"
+CODEX_HOME="$history_home" /bin/sh "$(dirname -- "$installer_path")/restore-history.sh"
+grep -Fq '00000000-0000-7000-8000-000000000001' "$history_home/session_index.jsonl" || fail 'History recovery did not rebuild the session index.'
+grep -Fq '"projectId":"local-test"' "$history_home/.codex-global-state.json" || fail 'History recovery did not restore project ownership.'
 printf '%s\n' 'macOS desktop Codex installer acceptance passed.'

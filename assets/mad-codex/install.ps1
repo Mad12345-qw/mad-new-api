@@ -70,6 +70,19 @@ function Get-ProviderDisplayName([string[]]$Lines, [string]$ProviderId) {
     return $null
 }
 
+function Close-CodexDesktop {
+    $processes = @(Get-Process -Name 'Codex' -ErrorAction SilentlyContinue)
+    if ($processes.Count -eq 0) { return }
+    foreach ($process in $processes) { [void]$process.CloseMainWindow() }
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline -and @(Get-Process -Name 'Codex' -ErrorAction SilentlyContinue).Count -gt 0) { Start-Sleep -Milliseconds 250 }
+    $remaining = @(Get-Process -Name 'Codex' -ErrorAction SilentlyContinue)
+    if ($remaining.Count -gt 0) {
+        $remaining | Stop-Process -Force
+        Start-Sleep -Milliseconds 500
+    }
+}
+
 $apiKey = [string]$env:MADAPI_KEY
 if ([string]::IsNullOrWhiteSpace($apiKey) -or $apiKey -notmatch '^sk-[A-Za-z0-9._-]+$') {
     throw 'MADAPI_KEY is missing or invalid.'
@@ -88,10 +101,12 @@ $modelsCachePath = Join-Path $codexHome 'models_cache.json'
 $catalogPath = Join-Path $codexHome 'madapi-cockpit-model-catalog.json'
 $refreshScriptPath = Join-Path $codexHome 'madapi-refresh-model-catalog.ps1'
 $refreshLauncherPath = Join-Path $codexHome 'madapi-refresh-model-catalog.vbs'
+$historyScriptPath = Join-Path $codexHome 'madapi-restore-history.ps1'
 $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
 $tempRefreshPath = Join-Path $codexHome ("madapi-refresh-model-catalog.$transactionId.ps1")
 $tempRefreshLauncherPath = Join-Path $codexHome ("madapi-refresh-model-catalog.$transactionId.vbs")
+$tempHistoryPath = Join-Path $codexHome ("madapi-restore-history.$transactionId.ps1")
 $tempCatalogPath = Join-Path $codexHome ("madapi-cockpit-model-catalog.$transactionId.tmp")
 $tempAuthPath = Join-Path $codexHome ("auth.json.madapi.$transactionId.tmp")
 $backupPath = $null
@@ -101,6 +116,8 @@ $hadAuth = Test-Path -LiteralPath $authPath
 $configInstalled = $false
 $authChanged = $false
 $testMode = [string]$env:MADAPI_INSTALL_TEST_MODE -eq '1'
+
+if (-not $testMode) { Close-CodexDesktop }
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
@@ -226,6 +243,21 @@ try {
     if (-not (Test-Path -LiteralPath $tempRefreshPath) -or (Get-Item -LiteralPath $tempRefreshPath).Length -lt 100) {
         throw 'The MadAPI model catalog refresh script is invalid.'
     }
+    $historySource = [string]$env:MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE
+    if ([string]::IsNullOrWhiteSpace($historySource) -and -not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        $candidateHistorySource = Join-Path $PSScriptRoot 'restore-history.ps1'
+        if (Test-Path -LiteralPath $candidateHistorySource) { $historySource = $candidateHistorySource }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($historySource)) {
+        [IO.File]::WriteAllBytes($tempHistoryPath, [IO.File]::ReadAllBytes($historySource))
+    } elseif ($testMode) {
+        throw 'MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE is required in installer test mode.'
+    } else {
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://mad.myddns.me/mad-codex/restore-history.ps1' -OutFile $tempHistoryPath
+    }
+    if (-not (Test-Path -LiteralPath $tempHistoryPath) -or (Get-Item -LiteralPath $tempHistoryPath).Length -lt 100) {
+        throw 'The MadAPI history restore script is invalid.'
+    }
     Write-HiddenRefreshLauncher $tempRefreshLauncherPath $refreshScriptPath
     if ($testMode) {
         [IO.File]::WriteAllText($tempCatalogPath, '{"models":[{"slug":"gpt-5.6-sol","display_name":"gpt-5.6-sol"}]}', $utf8NoBom)
@@ -256,6 +288,7 @@ try {
     Move-Item -LiteralPath $tempRefreshPath -Destination $refreshScriptPath -Force
     Move-Item -LiteralPath $tempRefreshLauncherPath -Destination $refreshLauncherPath -Force
     Move-Item -LiteralPath $tempCatalogPath -Destination $catalogPath -Force
+    Move-Item -LiteralPath $tempHistoryPath -Destination $historyScriptPath -Force
     if ($authMutation -ne 'none') {
         if ($hadAuth) {
             $authBackupPath = '{0}.madapi-backup-{1}' -f $authPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
@@ -270,6 +303,12 @@ try {
     }
     if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
     if (-not $testMode) { Register-CatalogRefreshTask $refreshLauncherPath }
+    try {
+        & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $historyScriptPath -CodexHome $codexHome
+        if ($LASTEXITCODE -ne 0) { Write-Warning 'MadAPI local history recovery did not complete.' }
+    } catch {
+        Write-Warning ('MadAPI local history recovery skipped: ' + $_.Exception.Message)
+    }
 } catch {
     if ($authChanged) {
         if ($hadAuth -and $null -ne $authBackupPath -and (Test-Path -LiteralPath $authBackupPath)) { [IO.File]::Copy($authBackupPath, $authPath, $true) }
@@ -284,6 +323,7 @@ try {
     if (Test-Path -LiteralPath $tempConfigPath) { Remove-Item -LiteralPath $tempConfigPath -Force }
     if (Test-Path -LiteralPath $tempRefreshPath) { Remove-Item -LiteralPath $tempRefreshPath -Force }
     if (Test-Path -LiteralPath $tempRefreshLauncherPath) { Remove-Item -LiteralPath $tempRefreshLauncherPath -Force }
+    if (Test-Path -LiteralPath $tempHistoryPath) { Remove-Item -LiteralPath $tempHistoryPath -Force }
     if (Test-Path -LiteralPath $tempCatalogPath) { Remove-Item -LiteralPath $tempCatalogPath -Force }
     if (Test-Path -LiteralPath $tempAuthPath) { Remove-Item -LiteralPath $tempAuthPath -Force }
 }

@@ -16,9 +16,11 @@ auth_path="$codex_home/auth.json"
 models_cache_path="$codex_home/models_cache.json"
 catalog_path="$codex_home/madapi-cockpit-model-catalog.json"
 refresh_script_path="$codex_home/madapi-refresh-model-catalog.sh"
+history_script_path="$codex_home/madapi-restore-history.sh"
 transaction_id="$$-$(date '+%s')"
 temp_path="$codex_home/config.toml.madapi.$transaction_id.tmp"
 temp_refresh_path="$codex_home/madapi-refresh-model-catalog.$transaction_id.tmp"
+temp_history_path="$codex_home/madapi-restore-history.$transaction_id.tmp"
 temp_catalog_path="$codex_home/madapi-cockpit-model-catalog.$transaction_id.tmp"
 temp_auth_path="$codex_home/auth.json.madapi.$transaction_id.tmp"
 temp_plist_path="$codex_home/madapi-model-catalog.$transaction_id.plist"
@@ -32,6 +34,18 @@ auth_changed=0
 success=0
 test_mode=${MADAPI_INSTALL_TEST_MODE:-0}
 staging_home=
+
+if [ "$test_mode" != 1 ]; then
+  /usr/bin/osascript -e 'tell application "Codex" to quit' >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -x Codex >/dev/null 2>&1 || break
+    sleep 1
+  done
+  if pgrep -x Codex >/dev/null 2>&1; then
+    printf '%s\n' 'Codex Desktop did not exit. Close Codex completely, then run the command again.' >&2
+    exit 1
+  fi
+fi
 
 umask 077
 auth_kind=unconfigured
@@ -162,7 +176,7 @@ cleanup() {
   if [ "$success" -ne 1 ] && [ "$config_installed" -eq 1 ]; then
     if [ "$had_config" -eq 1 ] && [ -n "$backup_path" ] && [ -f "$backup_path" ]; then cp "$backup_path" "$config_path"; else rm -f "$config_path"; fi
   fi
-  rm -f "$temp_path" "$temp_refresh_path" "$temp_catalog_path" "$temp_auth_path" "$temp_plist_path" "$body_path"
+  rm -f "$temp_path" "$temp_refresh_path" "$temp_history_path" "$temp_catalog_path" "$temp_auth_path" "$temp_plist_path" "$body_path"
   [ -z "$staging_home" ] || rm -rf "$staging_home"
 }
 trap cleanup EXIT
@@ -213,6 +227,23 @@ else
 fi
 [ -s "$temp_refresh_path" ] || { printf '%s\n' 'The MadAPI model catalog refresh script is invalid.' >&2; exit 1; }
 
+history_source=${MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE:-}
+if [ -z "$history_source" ]; then
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
+  if [ -n "$script_dir" ] && [ -f "$script_dir/restore-history.sh" ]; then
+    history_source="$script_dir/restore-history.sh"
+  fi
+fi
+if [ -n "$history_source" ]; then
+  cp "$history_source" "$temp_history_path"
+elif [ "$test_mode" = 1 ]; then
+  printf '%s\n' 'MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE is required in installer test mode.' >&2
+  exit 1
+else
+  curl -fsSL 'https://mad.myddns.me/mad-codex/restore-history.sh' -o "$temp_history_path"
+fi
+[ -s "$temp_history_path" ] || { printf '%s\n' 'The MadAPI history restore script is invalid.' >&2; exit 1; }
+
 if [ "$test_mode" = 1 ]; then
   printf '%s' '{"models":[{"slug":"gpt-5.6-sol","display_name":"gpt-5.6-sol"}]}' > "$temp_catalog_path"
 else
@@ -238,6 +269,8 @@ config_installed=1
 chmod 600 "$config_path"
 mv "$temp_refresh_path" "$refresh_script_path"
 chmod 700 "$refresh_script_path"
+mv "$temp_history_path" "$history_script_path"
+chmod 700 "$history_script_path"
 mv "$temp_catalog_path" "$catalog_path"
 chmod 600 "$catalog_path"
 if [ "$auth_mutation" != none ]; then
@@ -278,6 +311,7 @@ EOF
     /bin/launchctl bootstrap "gui/$uid" "$plist_path"
 fi
 rm -f "$models_cache_path"
+/bin/sh "$history_script_path" || printf '%s\n' 'MadAPI local history recovery skipped.' >&2
 success=1
 
 printf 'MadAPI Codex desktop configuration installed: %s\n' "$config_path"

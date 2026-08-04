@@ -1,9 +1,9 @@
 diff --git a/sdk/api/handlers/openai/madapi_responses_session.go b/sdk/api/handlers/openai/madapi_responses_session.go
 new file mode 100644
-index 0000000..8d1908c
+index 0000000..7fce2ae
 --- /dev/null
 +++ b/sdk/api/handlers/openai/madapi_responses_session.go
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,284 @@
 +package openai
 +
 +import (
@@ -22,9 +22,12 @@ index 0000000..8d1908c
 +)
 +
 +const (
-+	madAPIResponseSessionTTL      = 30 * time.Minute
-+	madAPIResponseSessionMaxBytes = 8 << 20
-+	madAPIResponseSessionMaxItems = 4096
++	// Keep MadAPI's plain Responses transcript separately from CPA's native
++	// Codex encrypted-signature replay cache. Third-party reasoning has no
++	// Codex signature, so it must never be put into that stricter cache.
++	madAPIResponseSessionTTL      = 1 * time.Hour
++	madAPIResponseSessionMaxBytes = 16 << 20
++	madAPIResponseSessionMaxItems = 10240
 +)
 +
 +type madAPIResponseSessionState struct {
@@ -53,11 +56,15 @@ index 0000000..8d1908c
 +	if scope == "" {
 +		return rawJSON, nil
 +	}
++	modelName := madAPIResponseSessionModel(rawJSON)
++	if modelName == "" {
++		return rawJSON, nil
++	}
 +	previousID := strings.TrimSpace(gjson.GetBytes(rawJSON, "previous_response_id").String())
 +	if previousID == "" {
-+		return restoreMadAPIResponseHistoryReasoning(scope, rawJSON)
++		return restoreMadAPIResponseHistoryReasoning(scope, modelName, rawJSON)
 +	}
-+	state, ok := getMadAPIResponseSession(scope, previousID)
++	state, ok := getMadAPIResponseSession(scope, modelName, previousID)
 +	if !ok {
 +		return nil, errors.New("Codex response context expired; compact or restart the conversation")
 +	}
@@ -83,7 +90,7 @@ index 0000000..8d1908c
 +// conversation by resending the entire Responses transcript instead of using
 +// previous_response_id. CPA's normal converter already preserves reasoning
 +// items; this restores only the missing items emitted by an earlier CPA reply.
-+func restoreMadAPIResponseHistoryReasoning(scope string, rawJSON []byte) ([]byte, error) {
++func restoreMadAPIResponseHistoryReasoning(scope, modelName string, rawJSON []byte) ([]byte, error) {
 +	input := gjson.GetBytes(rawJSON, "input")
 +	if !input.IsArray() {
 +		return rawJSON, nil
@@ -105,7 +112,7 @@ index 0000000..8d1908c
 +	}
 +
 +	missingBefore := make(map[string][]json.RawMessage)
-+	for _, state := range madAPIResponseSessionsForScope(scope) {
++	for _, state := range madAPIResponseSessionsForScope(scope, modelName) {
 +		collectMadAPIResponseMissingReasoning(state.output, knownReasoning, missingBefore)
 +	}
 +	if len(missingBefore) == 0 {
@@ -194,6 +201,13 @@ index 0000000..8d1908c
 +	if responseID == "" || !input.IsArray() || !output.IsArray() || len(input.Raw)+len(output.Raw) > madAPIResponseSessionMaxBytes {
 +		return
 +	}
++	modelName := madAPIResponseSessionModel(rawJSON)
++	if modelName == "" {
++		return
++	}
++	if gjson.GetBytes(response, "output.0.type").String() == "compaction" {
++		input = gjson.Parse(`[]`)
++	}
 +	now := time.Now()
 +	madAPIResponseSessions.Lock()
 +	defer madAPIResponseSessions.Unlock()
@@ -212,11 +226,11 @@ index 0000000..8d1908c
 +		}
 +		delete(madAPIResponseSessions.entries, oldestKey)
 +	}
-+	madAPIResponseSessions.entries[madAPIResponseSessionKey(scope, responseID)] = madAPIResponseSessionState{input: bytes.Clone([]byte(input.Raw)), output: bytes.Clone([]byte(output.Raw)), updated: now}
++	madAPIResponseSessions.entries[madAPIResponseSessionKey(scope, modelName, responseID)] = madAPIResponseSessionState{input: bytes.Clone([]byte(input.Raw)), output: bytes.Clone([]byte(output.Raw)), updated: now}
 +}
 +
-+func getMadAPIResponseSession(scope, responseID string) (madAPIResponseSessionState, bool) {
-+	key := madAPIResponseSessionKey(scope, responseID)
++func getMadAPIResponseSession(scope, modelName, responseID string) (madAPIResponseSessionState, bool) {
++	key := madAPIResponseSessionKey(scope, modelName, responseID)
 +	if key == "" {
 +		return madAPIResponseSessionState{}, false
 +	}
@@ -234,8 +248,8 @@ index 0000000..8d1908c
 +	return state, true
 +}
 +
-+func madAPIResponseSessionsForScope(scope string) []madAPIResponseSessionState {
-+	prefix := scope + "\x00"
++func madAPIResponseSessionsForScope(scope, modelName string) []madAPIResponseSessionState {
++	prefix := madAPIResponseSessionScopePrefix(scope, modelName)
 +	now := time.Now()
 +	madAPIResponseSessions.Lock()
 +	defer madAPIResponseSessions.Unlock()
@@ -256,33 +270,50 @@ index 0000000..8d1908c
 +	return states
 +}
 +
-+func madAPIResponseSessionKey(scope, responseID string) string {
-+	if strings.TrimSpace(scope) == "" || strings.TrimSpace(responseID) == "" {
++func madAPIResponseSessionModel(rawJSON []byte) string {
++	return strings.TrimSpace(gjson.GetBytes(rawJSON, "model").String())
++}
++
++func madAPIResponseSessionScopePrefix(scope, modelName string) string {
++	if strings.TrimSpace(scope) == "" || strings.TrimSpace(modelName) == "" {
 +		return ""
 +	}
-+	return scope + "\x00" + responseID
++	return scope + "\x00" + modelName + "\x00"
++}
++
++func madAPIResponseSessionKey(scope, modelName, responseID string) string {
++	prefix := madAPIResponseSessionScopePrefix(scope, modelName)
++	if prefix == "" || strings.TrimSpace(responseID) == "" {
++		return ""
++	}
++	return prefix + responseID
 +}
 diff --git a/sdk/api/handlers/openai/madapi_responses_session_test.go b/sdk/api/handlers/openai/madapi_responses_session_test.go
 new file mode 100644
-index 0000000..bc73dbe
+index 0000000..33c8375
 --- /dev/null
 +++ b/sdk/api/handlers/openai/madapi_responses_session_test.go
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,140 @@
 +package openai
 +
 +import (
 +	"strings"
 +	"testing"
++	"time"
 +)
 +
-+func TestMadAPIResponseSessionReplaysReasoningAndToolCall(t *testing.T) {
++func resetMadAPIResponseSessions() {
 +	madAPIResponseSessions.Lock()
 +	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
 +	madAPIResponseSessions.Unlock()
-+	first := []byte(`{"input":[{"type":"message","role":"user","content":"run tool"}]}`)
++}
++
++func TestMadAPIResponseSessionReplaysReasoningAndToolCall(t *testing.T) {
++	resetMadAPIResponseSessions()
++	first := []byte(`{"model":"deepseek-v4","input":[{"type":"message","role":"user","content":"run tool"}]}`)
 +	response := []byte(`{"id":"resp-1","output":[{"type":"reasoning","id":"rs-1"},{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"}]}`)
 +	rememberMadAPIResponseSession("scope-a", first, response)
-+	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"previous_response_id":"resp-1","input":[{"type":"function_call_output","call_id":"call-1","output":"ok"}]}`))
++	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"model":"deepseek-v4","previous_response_id":"resp-1","input":[{"type":"function_call_output","call_id":"call-1","output":"ok"}]}`))
 +	if err != nil {
 +		t.Fatalf("prepare continuation: %v", err)
 +	}
@@ -297,35 +328,43 @@ index 0000000..bc73dbe
 +}
 +
 +func TestMadAPIResponseSessionIsTokenScoped(t *testing.T) {
-+	madAPIResponseSessions.Lock()
-+	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
-+	madAPIResponseSessions.Unlock()
-+	rememberMadAPIResponseSession("scope-a", []byte(`{"input":[]}`), []byte(`{"id":"resp-1","output":[]}`))
-+	if _, err := prepareMadAPIResponseSessionRequest("scope-b", []byte(`{"previous_response_id":"resp-1","input":[]}`)); err == nil {
++	resetMadAPIResponseSessions()
++	rememberMadAPIResponseSession("scope-a", []byte(`{"model":"deepseek-v4","input":[]}`), []byte(`{"id":"resp-1","output":[]}`))
++	if _, err := prepareMadAPIResponseSessionRequest("scope-b", []byte(`{"model":"deepseek-v4","previous_response_id":"resp-1","input":[]}`)); err == nil {
 +		t.Fatal("scope isolation failed")
 +	}
 +}
 +
 +func TestMadAPIResponseSessionStoresCompletedSSEEvent(t *testing.T) {
-+	madAPIResponseSessions.Lock()
-+	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
-+	madAPIResponseSessions.Unlock()
-+	request := []byte(`{"input":[{"type":"message","role":"user","content":"run tool"}]}`)
++	resetMadAPIResponseSessions()
++	request := []byte(`{"model":"deepseek-v4","input":[{"type":"message","role":"user","content":"run tool"}]}`)
 +	event := []byte(`{"type":"response.completed","response":{"id":"resp-stream","output":[{"type":"reasoning","id":"rs-1"},{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"}]}}`)
 +	rememberMadAPIResponseSession("scope-a", request, event)
-+	if _, ok := getMadAPIResponseSession("scope-a", "resp-stream"); !ok {
++	if _, ok := getMadAPIResponseSession("scope-a", "deepseek-v4", "resp-stream"); !ok {
 +		t.Fatal("completed SSE response was not stored")
 +	}
 +}
 +
++func TestMadAPIResponseSessionDropsPreCompactionTranscript(t *testing.T) {
++	resetMadAPIResponseSessions()
++	request := []byte(`{"model":"deepseek-v4","input":[{"type":"message","role":"user","content":"large history"}]}`)
++	response := []byte(`{"id":"resp-compact","output":[{"type":"compaction","encrypted_content":"summary"}]}`)
++	rememberMadAPIResponseSession("scope-a", request, response)
++	state, ok := getMadAPIResponseSession("scope-a", "deepseek-v4", "resp-compact")
++	if !ok {
++		t.Fatal("compaction response was not stored")
++	}
++	if string(state.input) != "[]" {
++		t.Fatalf("stored pre-compaction input = %s, want []", state.input)
++	}
++}
++
 +func TestMadAPIResponseSessionRestoresReasoningForFullHistory(t *testing.T) {
-+	madAPIResponseSessions.Lock()
-+	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
-+	madAPIResponseSessions.Unlock()
-+	first := []byte(`{"input":[{"type":"message","role":"user","content":"first"}]}`)
++	resetMadAPIResponseSessions()
++	first := []byte(`{"model":"deepseek-v4","input":[{"type":"message","role":"user","content":"first"}]}`)
 +	response := []byte(`{"id":"resp-1","output":[{"id":"rs-1","type":"reasoning","summary":[{"type":"summary_text","text":"private reasoning"}]},{"id":"msg-1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}]}`)
 +	rememberMadAPIResponseSession("scope-a", first, response)
-+	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"input":[{"type":"message","role":"user","content":"first"},{"id":"msg-1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]},{"type":"message","role":"user","content":"second"}]}`))
++	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"model":"deepseek-v4","input":[{"type":"message","role":"user","content":"first"},{"id":"msg-1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]},{"type":"message","role":"user","content":"second"}]}`))
 +	if err != nil {
 +		t.Fatalf("prepare full-history continuation: %v", err)
 +	}
@@ -337,11 +376,9 @@ index 0000000..bc73dbe
 +}
 +
 +func TestMadAPIResponseSessionDoesNotDuplicateHistoryReasoning(t *testing.T) {
-+	madAPIResponseSessions.Lock()
-+	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
-+	madAPIResponseSessions.Unlock()
-+	rememberMadAPIResponseSession("scope-a", []byte(`{"input":[]}`), []byte(`{"id":"resp-1","output":[{"id":"rs-1","type":"reasoning"},{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
-+	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"input":[{"id":"rs-1","type":"reasoning"},{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
++	resetMadAPIResponseSessions()
++	rememberMadAPIResponseSession("scope-a", []byte(`{"model":"deepseek-v4","input":[]}`), []byte(`{"id":"resp-1","output":[{"id":"rs-1","type":"reasoning"},{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
++	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"model":"deepseek-v4","input":[{"id":"rs-1","type":"reasoning"},{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
 +	if err != nil {
 +		t.Fatalf("prepare full-history continuation: %v", err)
 +	}
@@ -351,16 +388,50 @@ index 0000000..bc73dbe
 +}
 +
 +func TestMadAPIResponseSessionRestoresReasoningOnlyInsideTokenScope(t *testing.T) {
-+	madAPIResponseSessions.Lock()
-+	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
-+	madAPIResponseSessions.Unlock()
-+	rememberMadAPIResponseSession("scope-a", []byte(`{"input":[]}`), []byte(`{"id":"resp-1","output":[{"id":"rs-1","type":"reasoning"},{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
-+	continued, err := prepareMadAPIResponseSessionRequest("scope-b", []byte(`{"input":[{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
++	resetMadAPIResponseSessions()
++	rememberMadAPIResponseSession("scope-a", []byte(`{"model":"deepseek-v4","input":[]}`), []byte(`{"id":"resp-1","output":[{"id":"rs-1","type":"reasoning"},{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
++	continued, err := prepareMadAPIResponseSessionRequest("scope-b", []byte(`{"model":"deepseek-v4","input":[{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
 +	if err != nil {
 +		t.Fatalf("prepare full-history continuation: %v", err)
 +	}
 +	if strings.Contains(string(continued), `"id":"rs-1"`) {
 +		t.Fatalf("foreign token reasoning was restored: %s", continued)
++	}
++}
++
++func TestMadAPIResponseSessionIsModelScoped(t *testing.T) {
++	resetMadAPIResponseSessions()
++	rememberMadAPIResponseSession("scope-a", []byte(`{"model":"deepseek-v4","input":[]}`), []byte(`{"id":"resp-1","output":[{"id":"rs-1","type":"reasoning"},{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
++
++	if _, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"model":"grok-4.5","previous_response_id":"resp-1","input":[]}`)); err == nil {
++		t.Fatal("previous_response_id crossed model boundary")
++	}
++
++	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"model":"grok-4.5","input":[{"id":"msg-1","type":"message","role":"assistant","content":[]}]}`))
++	if err != nil {
++		t.Fatalf("prepare cross-model full history: %v", err)
++	}
++	if strings.Contains(string(continued), `"id":"rs-1"`) {
++		t.Fatalf("reasoning crossed model boundary: %s", continued)
++	}
++}
++
++func TestMadAPIResponseSessionKeepsOneHourReplayWindow(t *testing.T) {
++	if madAPIResponseSessionTTL != time.Hour {
++		t.Fatalf("replay TTL = %s, want %s", madAPIResponseSessionTTL, time.Hour)
++	}
++	resetMadAPIResponseSessions()
++	rememberMadAPIResponseSession("scope-a", []byte(`{"model":"deepseek-v4","input":[]}`), []byte(`{"id":"resp-1","output":[]}`))
++
++	key := madAPIResponseSessionKey("scope-a", "deepseek-v4", "resp-1")
++	madAPIResponseSessions.Lock()
++	state := madAPIResponseSessions.entries[key]
++	state.updated = time.Now().Add(-59 * time.Minute)
++	madAPIResponseSessions.entries[key] = state
++	madAPIResponseSessions.Unlock()
++
++	if _, ok := getMadAPIResponseSession("scope-a", "deepseek-v4", "resp-1"); !ok {
++		t.Fatal("replay entry expired before one hour")
 +	}
 +}
 diff --git a/sdk/api/handlers/openai/openai_responses_handlers.go b/sdk/api/handlers/openai/openai_responses_handlers.go

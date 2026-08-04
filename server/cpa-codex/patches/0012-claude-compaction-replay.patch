@@ -279,26 +279,27 @@ index a6f6d09..d367ee4 100644
  	raw := []byte(`{
  		"model":"claude-test",
 diff --git a/sdk/api/handlers/openai/madapi_responses_session.go b/sdk/api/handlers/openai/madapi_responses_session.go
-index 93468a5..46de7db 100644
+index 8d1908c..afbd938 100644
 --- a/sdk/api/handlers/openai/madapi_responses_session.go
 +++ b/sdk/api/handlers/openai/madapi_responses_session.go
-@@ -59,6 +59,7 @@ func rememberMadAPIResponseSession(scope string, rawJSON, response []byte) {
- 	if nested := gjson.GetBytes(response, "response"); gjson.GetBytes(response, "type").String() == "response.completed" && nested.IsObject() { response = []byte(nested.Raw) }
- 	responseID := strings.TrimSpace(gjson.GetBytes(response, "id").String()); input := gjson.GetBytes(rawJSON, "input"); output := gjson.GetBytes(response, "output")
- 	if responseID == "" || !input.IsArray() || !output.IsArray() || len(input.Raw)+len(output.Raw) > madAPIResponseSessionMaxBytes { return }
-+	if gjson.GetBytes(response, "output.0.type").String() == "compaction" { input = gjson.Parse(`[]`) }
- 	now := time.Now(); madAPIResponseSessions.Lock(); defer madAPIResponseSessions.Unlock()
- 	for key, state := range madAPIResponseSessions.entries { if now.Sub(state.updated) > madAPIResponseSessionTTL { delete(madAPIResponseSessions.entries, key) } }
- 	if len(madAPIResponseSessions.entries) >= madAPIResponseSessionMaxItems { oldestKey := ""; var oldest time.Time; for key, state := range madAPIResponseSessions.entries { if oldestKey == "" || state.updated.Before(oldest) { oldestKey, oldest = key, state.updated } }; delete(madAPIResponseSessions.entries, oldestKey) }
+@@ -188,6 +188,9 @@ func rememberMadAPIResponseSession(scope string, rawJSON, response []byte) {
+ 	if responseID == "" || !input.IsArray() || !output.IsArray() || len(input.Raw)+len(output.Raw) > madAPIResponseSessionMaxBytes {
+ 		return
+ 	}
++	if gjson.GetBytes(response, "output.0.type").String() == "compaction" {
++		input = gjson.Parse(`[]`)
++	}
+ 	now := time.Now()
+ 	madAPIResponseSessions.Lock()
+ 	defer madAPIResponseSessions.Unlock()
 diff --git a/sdk/api/handlers/openai/madapi_responses_session_test.go b/sdk/api/handlers/openai/madapi_responses_session_test.go
-index e9b6fe6..077cff2 100644
+index bc73dbe..c3fb5ad 100644
 --- a/sdk/api/handlers/openai/madapi_responses_session_test.go
 +++ b/sdk/api/handlers/openai/madapi_responses_session_test.go
-@@ -37,3 +37,19 @@ func TestMadAPIResponseSessionStoresCompletedSSEEvent(t *testing.T) {
- 	rememberMadAPIResponseSession("scope-a", request, event)
- 	if _, ok := getMadAPIResponseSession("scope-a", "resp-stream"); !ok { t.Fatal("completed SSE response was not stored") }
+@@ -48,6 +48,22 @@ func TestMadAPIResponseSessionStoresCompletedSSEEvent(t *testing.T) {
+ 	}
  }
-+
+ 
 +func TestMadAPIResponseSessionDropsPreCompactionTranscript(t *testing.T) {
 +	madAPIResponseSessions.Lock()
 +	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)
@@ -314,3 +315,7 @@ index e9b6fe6..077cff2 100644
 +		t.Fatalf("stored pre-compaction input = %s, want []", state.input)
 +	}
 +}
++
+ func TestMadAPIResponseSessionRestoresReasoningForFullHistory(t *testing.T) {
+ 	madAPIResponseSessions.Lock()
+ 	madAPIResponseSessions.entries = make(map[string]madAPIResponseSessionState)

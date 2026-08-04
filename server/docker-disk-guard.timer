@@ -1,0 +1,11 @@
+[Unit]
+Description=Run MadAPI Docker disk maintenance hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+Unit=docker-disk-guard.service
+
+[Install]
+WantedBy=timers.target

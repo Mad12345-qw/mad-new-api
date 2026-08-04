@@ -1,0 +1,10 @@
+[Unit]
+Description=Prune unused Docker data before it can exhaust the MadAPI system disk
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mad-docker-disk-guard.sh
+TimeoutStartSec=15min
+Nice=10

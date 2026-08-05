@@ -45,7 +45,7 @@ class AppTests(unittest.TestCase):
     def test_ui_distinguishes_all_channels_from_one_channel_and_localizes_progress(self) -> None:
         html = self.client.get("/detector/").text
         self.assertIn("检测全部已监控渠道", html)
-        self.assertIn("检测本渠道（", html)
+        self.assertIn("溯源检测本渠道（", html)
         self.assertIn("正在执行跨协议预检", html)
         self.assertIn("已有检测任务正在运行", html)
         self.assertNotIn("a detector batch is already running", html)
@@ -60,7 +60,9 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="runActiveHero"', html)
         self.assertIn('id="channelPolicyPanel"', html)
         self.assertIn('id="settingsPanel"', html)
-        self.assertIn("检测本渠道（", html)
+        self.assertIn("溯源检测本渠道（", html)
+        self.assertIn("const openSetup=()=>", html)
+        self.assertIn("openSetup();", html)
 
     def test_zero_confidence_run_gets_a_visible_http_failure_reason(self) -> None:
         runs = [{"id": 7001, "mode": "active", "status": "completed", "confidence": 0.0}]

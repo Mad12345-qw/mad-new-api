@@ -1,5 +1,5 @@
 diff --git a/relay/cpa_native_codex.go b/relay/cpa_native_codex.go
-index b1864be..27c5aa8 100644
+index 6370d7c..27c5aa8 100644
 --- a/relay/cpa_native_codex.go
 +++ b/relay/cpa_native_codex.go
 @@ -40,16 +40,17 @@ var madAPICPADispatchClient = &http.Client{
@@ -34,30 +34,20 @@ index b1864be..27c5aa8 100644
  	req.Header.Set("Content-Type", "application/json")
  	req.Header.Set(appconstant.MadAPICodexDispatchHeader, strings.TrimSpace(os.Getenv(appconstant.MadAPICodexDispatchTokenEnv)))
  
--	resp, err := madAPICPADispatchClientForModel(info.UpstreamModelName).Do(req)
+-	resp, err := madAPICPADispatchClient.Do(req)
 +	resp, err := madAPICPADispatchClientForFirstEvent(info.OriginModelName).Do(req)
  	if err != nil {
  		return types.NewErrorWithStatusCode(fmt.Errorf("CPA native dispatch failed: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway)
  	}
-@@ -134,21 +135,29 @@ func relayMadAPICodexNative(c *gin.Context, info *relaycommon.RelayInfo) *types.
+@@ -134,6 +135,31 @@ func relayMadAPICodexNative(c *gin.Context, info *relaycommon.RelayInfo) *types.
  	return nil
  }
  
--func madAPICPADispatchClientForModel(model string) *http.Client {
 +func madAPICodexFirstEventTimeoutForModel(model string) time.Duration {
- 	switch strings.ToLower(strings.TrimSpace(model)) {
- 	case "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna":
--		transport, ok := madAPICPADispatchClient.Transport.(*http.Transport)
--		if !ok || transport == nil {
--			return madAPICPADispatchClient
--		}
--		client := *madAPICPADispatchClient
--		attemptTransport := transport.Clone()
--		attemptTransport.ResponseHeaderTimeout = 30 * time.Second
--		client.Transport = attemptTransport
--		return &client
++	switch strings.ToLower(strings.TrimSpace(model)) {
++	case "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna":
 +		return 30 * time.Second
- 	default:
++	default:
 +		return 0
 +	}
 +}
@@ -69,17 +59,19 @@ index b1864be..27c5aa8 100644
 +	}
 +	transport, ok := madAPICPADispatchClient.Transport.(*http.Transport)
 +	if !ok || transport == nil {
- 		return madAPICPADispatchClient
- 	}
++		return madAPICPADispatchClient
++	}
 +	client := *madAPICPADispatchClient
 +	attemptTransport := transport.Clone()
 +	attemptTransport.ResponseHeaderTimeout = timeout
 +	client.Transport = attemptTransport
 +	return &client
- }
- 
++}
++
  func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*madAPICodexDispatchRequest, error) {
-@@ -193,5 +202,6 @@ func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*m
+ 	if info == nil || info.ChannelMeta == nil {
+ 		return nil, fmt.Errorf("selected channel metadata is unavailable")
+@@ -176,5 +202,6 @@ func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*m
  		Stream:      info.IsStream,
  		Compact:     info.RelayMode == relayconstant.RelayModeResponsesCompact,
  		RequestPath: info.RequestURLPath,
@@ -87,29 +79,30 @@ index b1864be..27c5aa8 100644
  	}, nil
  }
 diff --git a/relay/cpa_native_codex_test.go b/relay/cpa_native_codex_test.go
-index 6d5982a..e4c4b3f 100644
+index 0a1a590..e4c4b3f 100644
 --- a/relay/cpa_native_codex_test.go
 +++ b/relay/cpa_native_codex_test.go
-@@ -32,18 +32,23 @@ func TestMadAPICodexNativeRequestRequiresLoopbackAndToken(t *testing.T) {
+@@ -5,6 +5,7 @@ import (
+ 	"net/http/httptest"
+ 	"strings"
+ 	"testing"
++	"time"
+ 
+ 	appconstant "github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/dto"
+@@ -31,6 +32,25 @@ func TestMadAPICodexNativeRequestRequiresLoopbackAndToken(t *testing.T) {
  	}
  }
  
--func TestMadAPICPADispatchClientUsesFirstEventDeadlineOnlyForMeasuredGPTModels(t *testing.T) {
 +func TestMadAPICodexFirstEventDeadlineOnlyAppliesToMeasuredGPTModels(t *testing.T) {
- 	for _, model := range []string{"gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"} {
--		client := madAPICPADispatchClientForModel(model)
--		transport, ok := client.Transport.(*http.Transport)
--		if !ok || transport.ResponseHeaderTimeout != 30*time.Second {
--			t.Fatalf("model %s client timeout = %#v, want 30 seconds", model, client.Transport)
++	for _, model := range []string{"gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"} {
 +		if timeout := madAPICodexFirstEventTimeoutForModel(model); timeout != 30*time.Second {
 +			t.Fatalf("model %s timeout = %s, want 30 seconds", model, timeout)
- 		}
- 	}
--
--	if got := madAPICPADispatchClientForModel("deepseek-v4-pro"); got != madAPICPADispatchClient {
++		}
++	}
 +	if timeout := madAPICodexFirstEventTimeoutForModel("deepseek-v4-pro"); timeout != 0 {
- 		t.Fatal("slow-thinking DeepSeek model must keep the existing dispatch timeout")
- 	}
++		t.Fatal("slow-thinking DeepSeek model must keep the existing dispatch timeout")
++	}
 +	client := madAPICPADispatchClientForFirstEvent("gpt-5.6-sol")
 +	transport, ok := client.Transport.(*http.Transport)
 +	if !ok || transport.ResponseHeaderTimeout != 30*time.Second {
@@ -118,10 +111,12 @@ index 6d5982a..e4c4b3f 100644
 +	if madAPICPADispatchClientForFirstEvent("deepseek-v4-pro") != madAPICPADispatchClient {
 +		t.Fatal("unmeasured model must keep the existing dispatch client")
 +	}
- }
- 
++}
++
  func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
-@@ -84,4 +89,15 @@ func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public-model","input":"hello","stream":true}`))
+@@ -69,4 +89,15 @@ func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
  	if got := payload.Headers["x-provider-test"]; got != "yes" {
  		t.Fatalf("resolved header = %q", got)
  	}

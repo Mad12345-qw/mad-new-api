@@ -1,5 +1,5 @@
 diff --git a/relay/cpa_native_codex.go b/relay/cpa_native_codex.go
-index 6370d7c..27c5aa8 100644
+index 6370d7c..94f89b7 100644
 --- a/relay/cpa_native_codex.go
 +++ b/relay/cpa_native_codex.go
 @@ -40,16 +40,17 @@ var madAPICPADispatchClient = &http.Client{
@@ -71,10 +71,30 @@ index 6370d7c..27c5aa8 100644
  func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*madAPICodexDispatchRequest, error) {
  	if info == nil || info.ChannelMeta == nil {
  		return nil, fmt.Errorf("selected channel metadata is unavailable")
-@@ -176,5 +202,6 @@ func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*m
- 		Stream:      info.IsStream,
- 		Compact:     info.RelayMode == relayconstant.RelayModeResponsesCompact,
- 		RequestPath: info.RequestURLPath,
+@@ -166,15 +192,16 @@ func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*m
+ 		return nil, err
+ 	}
+ 	return &madAPICodexDispatchRequest{
+-		ChannelType: info.ChannelType,
+-		ChannelID:   info.ChannelId,
+-		BaseURL:     info.ChannelBaseUrl,
+-		APIKey:      info.ApiKey,
+-		Model:       info.UpstreamModelName,
+-		Headers:     headers,
+-		Body:        body,
+-		Stream:      info.IsStream,
+-		Compact:     info.RelayMode == relayconstant.RelayModeResponsesCompact,
+-		RequestPath: info.RequestURLPath,
++		ChannelType:              info.ChannelType,
++		ChannelID:                info.ChannelId,
++		BaseURL:                  info.ChannelBaseUrl,
++		APIKey:                   info.ApiKey,
++		Model:                    info.UpstreamModelName,
++		Headers:                  headers,
++		Body:                     body,
++		Stream:                   info.IsStream,
++		Compact:                  info.RelayMode == relayconstant.RelayModeResponsesCompact,
++		RequestPath:              info.RequestURLPath,
 +		FirstEventTimeoutSeconds: int(madAPICodexFirstEventTimeoutForModel(info.OriginModelName) / time.Second),
  	}, nil
  }

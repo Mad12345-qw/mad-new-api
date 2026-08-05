@@ -237,6 +237,8 @@ jobs:
       - name: Apply and test CPA full Codex front proxy
         working-directory: cpa-source
         run: |
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
@@ -259,6 +261,8 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0011-claude-web-search-events.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0012-claude-compaction-replay.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0012-claude-compaction-replay.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0013-madapi-first-event-failover.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0013-madapi-first-event-failover.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \
@@ -276,12 +280,14 @@ jobs:
             internal/translator/openai/openai/responses/openai_openai-responses_tools.go \
             internal/watcher/synthesizer/config.go \
             internal/watcher/synthesizer/config_test.go \
+            internal/api/madapi_native_codex.go \
+            internal/api/madapi_native_codex_test.go \
             sdk/api/handlers/openai/madapi_responses_session.go \
             sdk/api/handlers/openai/madapi_responses_session_test.go \
             sdk/api/handlers/openai/openai_responses_handlers.go \
             sdk/cliproxy/auth/conductor_execution.go \
             sdk/cliproxy/auth/madapi_passthrough_test.go
-          go test ./internal/runtime/executor ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth
+          go test ./internal/api ./internal/runtime/executor ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth
 
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
@@ -307,6 +313,9 @@ jobs:
           cp server/image-url-compat/image-url-compat.service image-url-compat.service
           cp server/image-url-compat/patch_nginx.py patch-image-compat-nginx.py
           cp server/new-api-autoupdate.sh new-api-autoupdate.sh
+          cp server/mad-api-error-alert/mad-api-error-alert.py mad-api-error-alert.py
+          cp server/mad-api-error-alert/mad-api-error-alert.service mad-api-error-alert.service
+          cp server/mad-api-error-alert/mad-api-error-alert.timer mad-api-error-alert.timer
           cp server/cpa-codex/sidecar-autodeploy.sh cpa-codex-autodeploy.sh
           cp server/cpa-codex/patch_nginx.py patch-cpa-codex-nginx.py
           cp server/cpa-codex/compose_reconcile.py compose-cpa-codex.py
@@ -316,6 +325,9 @@ jobs:
           sha256sum image-url-compat.service > image-url-compat.service.sha256
           sha256sum patch-image-compat-nginx.py > patch-image-compat-nginx.py.sha256
           sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
+          sha256sum mad-api-error-alert.py > mad-api-error-alert.py.sha256
+          sha256sum mad-api-error-alert.service > mad-api-error-alert.service.sha256
+          sha256sum mad-api-error-alert.timer > mad-api-error-alert.timer.sha256
           sha256sum cpa-codex-autodeploy.sh > cpa-codex-autodeploy.sh.sha256
           sha256sum patch-cpa-codex-nginx.py > patch-cpa-codex-nginx.py.sha256
           sha256sum compose-cpa-codex.py > compose-cpa-codex.py.sha256
@@ -343,6 +355,12 @@ jobs:
             patch-image-compat-nginx.py.sha256 \
             new-api-autoupdate.sh \
             new-api-autoupdate.sh.sha256 \
+            mad-api-error-alert.py \
+            mad-api-error-alert.py.sha256 \
+            mad-api-error-alert.service \
+            mad-api-error-alert.service.sha256 \
+            mad-api-error-alert.timer \
+            mad-api-error-alert.timer.sha256 \
             cpa-codex-autodeploy.sh \
             cpa-codex-autodeploy.sh.sha256 \
             patch-cpa-codex-nginx.py \

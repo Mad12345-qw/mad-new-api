@@ -13,7 +13,9 @@ COPY server/cpa-codex-full/patches/0004-openai-chat-root-tool-schema.patch /patc
 
 ARG CPA_PATCHED=0
 RUN if [ "$CPA_PATCHED" != "1" ]; then \
-		git apply --check /patches/0002-madapi-passthrough-authorization.patch \
+		git apply --check /patches/0001-madapi-native-codex-dispatch.patch \
+		&& git apply /patches/0001-madapi-native-codex-dispatch.patch \
+		&& git apply --check /patches/0002-madapi-passthrough-authorization.patch \
 		&& git apply /patches/0002-madapi-passthrough-authorization.patch \
 		&& git apply --check /patches/0003-madapi-responses-session-replay.patch \
 		&& git apply /patches/0003-madapi-responses-session-replay.patch \
@@ -34,11 +36,13 @@ RUN if [ "$CPA_PATCHED" != "1" ]; then \
 		&& git apply --check /patches/0011-claude-web-search-events.patch \
 		&& git apply /patches/0011-claude-web-search-events.patch \
 		&& git apply --check /patches/0012-claude-compaction-replay.patch \
-		&& git apply /patches/0012-claude-compaction-replay.patch; \
+		&& git apply /patches/0012-claude-compaction-replay.patch \
+		&& git apply --check /patches/0013-madapi-first-event-failover.patch \
+		&& git apply /patches/0013-madapi-first-event-failover.patch; \
 	fi \
-	&& gofmt -w internal/config/config_types.go internal/runtime/executor/claude_executor_execute.go internal/runtime/executor/claude_executor_request.go internal/runtime/executor/claude_executor_stream.go internal/runtime/executor/claude_executor_test.go internal/runtime/executor/claude_executor_tokens.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/translator/claude/openai/responses/claude_openai-responses_request.go internal/translator/claude/openai/responses/claude_openai-responses_request_test.go internal/translator/claude/openai/responses/claude_openai-responses_response.go internal/translator/claude/openai/responses/claude_openai-responses_response_test.go internal/translator/openai/openai/responses/openai_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_tools.go internal/watcher/synthesizer/config.go internal/watcher/synthesizer/config_test.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go sdk/cliproxy/auth/conductor_execution.go sdk/cliproxy/auth/madapi_passthrough_test.go \
+	&& gofmt -w internal/config/config_types.go internal/runtime/executor/claude_executor_execute.go internal/runtime/executor/claude_executor_request.go internal/runtime/executor/claude_executor_stream.go internal/runtime/executor/claude_executor_test.go internal/runtime/executor/claude_executor_tokens.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/translator/claude/openai/responses/claude_openai-responses_request.go internal/translator/claude/openai/responses/claude_openai-responses_request_test.go internal/translator/claude/openai/responses/claude_openai-responses_response.go internal/translator/claude/openai/responses/claude_openai-responses_response_test.go internal/translator/openai/openai/responses/openai_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_tools.go internal/watcher/synthesizer/config.go internal/watcher/synthesizer/config_test.go internal/api/madapi_native_codex.go internal/api/madapi_native_codex_test.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go sdk/cliproxy/auth/conductor_execution.go sdk/cliproxy/auth/madapi_passthrough_test.go \
 	&& go mod download \
-	&& go test ./internal/runtime/executor ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth \
+	&& go test ./internal/api ./internal/runtime/executor ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth \
 	&& CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o /out/CLIProxyAPI ./cmd/server/
 
 FROM debian:bookworm-slim

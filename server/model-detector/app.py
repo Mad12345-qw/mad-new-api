@@ -1424,7 +1424,12 @@ def delete_upstream(upstream_id: int) -> dict[str, bool]:
 
 @app.post("/detector/api/run", dependencies=[Depends(require_admin)])
 async def run_detector(value: RunInput) -> dict[str, Any]:
-    if new_api.configured:
+    # A manually configured upstream must remain testable when New API's own
+    # channel sync is temporarily unavailable. Only linked New API channels
+    # need a pre-run refresh.
+    selected = db.row("SELECT source_type FROM upstreams WHERE id=?", (value.upstream_id,)) if value.upstream_id else None
+    should_sync = new_api.configured and (value.upstream_id is None or selected is None or selected.get("source_type") == "new_api")
+    if should_sync:
         try:
             await sync_new_api_channels()
         except NewAPIIntegrationError as exc:

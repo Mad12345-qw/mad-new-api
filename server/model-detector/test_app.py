@@ -44,8 +44,8 @@ class AppTests(unittest.TestCase):
 
     def test_ui_distinguishes_all_channels_from_one_channel_and_localizes_progress(self) -> None:
         html = self.client.get("/detector/").text
-        self.assertIn("检测全部已监控渠道", html)
-        self.assertIn("溯源检测本渠道（", html)
+        self.assertIn("执行全部溯源检测", html)
+        self.assertIn("溯源检测</button>", html)
         self.assertIn("正在执行跨协议预检", html)
         self.assertIn("已有检测任务正在运行", html)
         self.assertNotIn("a detector batch is already running", html)
@@ -60,7 +60,8 @@ class AppTests(unittest.TestCase):
         self.assertIn('id="runActiveHero"', html)
         self.assertIn('id="channelPolicyPanel"', html)
         self.assertIn('id="settingsPanel"', html)
-        self.assertIn("溯源检测本渠道（", html)
+        self.assertIn("渠道与模型溯源状态", html)
+        self.assertIn("查看完整报告 →", html)
         self.assertIn("const openSetup=()=>", html)
         self.assertIn("openSetup();", html)
 

@@ -1,5 +1,5 @@
 diff --git a/relay/cpa_native_codex.go b/relay/cpa_native_codex.go
-index b1864beb..27c5aa8d 100644
+index b1864be..27c5aa8 100644
 --- a/relay/cpa_native_codex.go
 +++ b/relay/cpa_native_codex.go
 @@ -40,16 +40,17 @@ var madAPICPADispatchClient = &http.Client{
@@ -87,10 +87,10 @@ index b1864beb..27c5aa8d 100644
  	}, nil
  }
 diff --git a/relay/cpa_native_codex_test.go b/relay/cpa_native_codex_test.go
-index 6d5982af..eb864eb6 100644
+index 6d5982a..e4c4b3f 100644
 --- a/relay/cpa_native_codex_test.go
 +++ b/relay/cpa_native_codex_test.go
-@@ -32,18 +32,25 @@ func TestMadAPICodexNativeRequestRequiresLoopbackAndToken(t *testing.T) {
+@@ -32,18 +32,23 @@ func TestMadAPICodexNativeRequestRequiresLoopbackAndToken(t *testing.T) {
  	}
  }
  
@@ -105,12 +105,11 @@ index 6d5982af..eb864eb6 100644
 +			t.Fatalf("model %s timeout = %s, want 30 seconds", model, timeout)
  		}
  	}
- 
+-
 -	if got := madAPICPADispatchClientForModel("deepseek-v4-pro"); got != madAPICPADispatchClient {
 +	if timeout := madAPICodexFirstEventTimeoutForModel("deepseek-v4-pro"); timeout != 0 {
  		t.Fatal("slow-thinking DeepSeek model must keep the existing dispatch timeout")
  	}
-+
 +	client := madAPICPADispatchClientForFirstEvent("gpt-5.6-sol")
 +	transport, ok := client.Transport.(*http.Transport)
 +	if !ok || transport.ResponseHeaderTimeout != 30*time.Second {
@@ -122,14 +121,13 @@ index 6d5982af..eb864eb6 100644
  }
  
  func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
-@@ -84,4 +91,16 @@ func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
+@@ -84,4 +89,15 @@ func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
  	if got := payload.Headers["x-provider-test"]; got != "yes" {
  		t.Fatalf("resolved header = %q", got)
  	}
 +	if payload.FirstEventTimeoutSeconds != 0 {
 +		t.Fatalf("unmeasured model timeout = %d, want 0", payload.FirstEventTimeoutSeconds)
 +	}
-+
 +	info.OriginModelName = "gpt-5.6-sol"
 +	payload, err = madAPICodexDispatchPayload(c, info)
 +	if err != nil {

@@ -51,6 +51,10 @@ jobs:
               printf 'Skipping CPA-only patch: %s\n' "$name"
               continue
             fi
+            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-cpa-native-executor.patch" ]; then
+              printf 'Skipping CPA-only patch: %s\n' "$name"
+              continue
+            fi
             if [[ "$name" =~ $excluded ]]; then
               printf 'Skipping old personalized patch: %s\n' "$name"
               continue

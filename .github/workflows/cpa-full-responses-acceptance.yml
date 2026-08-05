@@ -84,5 +84,6 @@ jobs:
       - name: Verify session replay and CPA handler build
         working-directory: cpa-source
         run: |
-          go test ./internal/api ./internal/runtime/executor ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth
+          GOMAXPROCS=1 go test -p 1 ./internal/api ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth
+          GOMAXPROCS=1 go test -p 1 -run '^TestApplyMadAPIPassthroughAuthorization$' ./internal/runtime/executor
           go build ./cmd/server

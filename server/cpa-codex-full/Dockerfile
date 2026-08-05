@@ -7,6 +7,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY cpa-source/ ./
+COPY server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch /patches/
 COPY server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch /patches/
 COPY server/cpa-codex/patches/0005-madapi-native-provider-authorization.patch /patches/
 COPY server/cpa-codex/patches/0006-openai-responses-string-input.patch /patches/
@@ -16,9 +17,12 @@ COPY server/cpa-codex/patches/0009-claude-custom-tool-roundtrip.patch /patches/
 COPY server/cpa-codex/patches/0010-claude-native-api-wire-mode.patch /patches/
 COPY server/cpa-codex/patches/0011-claude-web-search-events.patch /patches/
 COPY server/cpa-codex/patches/0012-claude-compaction-replay.patch /patches/
+COPY server/cpa-codex/patches/0013-madapi-first-event-failover.patch /patches/
 COPY server/cpa-codex-full/patches/ /patches/
 
-RUN git apply --check /patches/0002-madapi-passthrough-authorization.patch \
+RUN git apply --check /patches/0001-madapi-native-codex-dispatch.patch \
+    && git apply /patches/0001-madapi-native-codex-dispatch.patch \
+    && git apply --check /patches/0002-madapi-passthrough-authorization.patch \
     && git apply /patches/0002-madapi-passthrough-authorization.patch \
     && git apply --check /patches/0003-madapi-responses-session-replay.patch \
     && git apply /patches/0003-madapi-responses-session-replay.patch \
@@ -40,9 +44,12 @@ RUN git apply --check /patches/0002-madapi-passthrough-authorization.patch \
     && git apply /patches/0011-claude-web-search-events.patch \
     && git apply --check /patches/0012-claude-compaction-replay.patch \
     && git apply /patches/0012-claude-compaction-replay.patch \
-    && gofmt -w sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go internal/config/config_types.go internal/runtime/executor/claude_executor_execute.go internal/runtime/executor/claude_executor_request.go internal/runtime/executor/claude_executor_stream.go internal/runtime/executor/claude_executor_test.go internal/runtime/executor/claude_executor_tokens.go internal/runtime/executor/openai_compat_executor.go internal/translator/claude/openai/responses/claude_openai-responses_request.go internal/translator/claude/openai/responses/claude_openai-responses_request_test.go internal/translator/claude/openai/responses/claude_openai-responses_response.go internal/translator/claude/openai/responses/claude_openai-responses_response_test.go internal/translator/openai/openai/responses/openai_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_tools.go internal/watcher/synthesizer/config.go internal/watcher/synthesizer/config_test.go sdk/cliproxy/auth/conductor_execution.go sdk/cliproxy/auth/madapi_passthrough_test.go \
+    && git apply --check /patches/0013-madapi-first-event-failover.patch \
+    && git apply /patches/0013-madapi-first-event-failover.patch \
+    && gofmt -w sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go internal/config/config_types.go internal/runtime/executor/claude_executor_execute.go internal/runtime/executor/claude_executor_request.go internal/runtime/executor/claude_executor_stream.go internal/runtime/executor/claude_executor_test.go internal/runtime/executor/claude_executor_tokens.go internal/runtime/executor/openai_compat_executor.go internal/translator/claude/openai/responses/claude_openai-responses_request.go internal/translator/claude/openai/responses/claude_openai-responses_request_test.go internal/translator/claude/openai/responses/claude_openai-responses_response.go internal/translator/claude/openai/responses/claude_openai-responses_response_test.go internal/translator/openai/openai/responses/openai_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_tools.go internal/watcher/synthesizer/config.go internal/watcher/synthesizer/config_test.go internal/api/madapi_native_codex.go internal/api/madapi_native_codex_test.go sdk/cliproxy/auth/conductor_execution.go sdk/cliproxy/auth/madapi_passthrough_test.go \
     && go mod download \
-    && go test ./internal/runtime/executor ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth \
+    && GOMAXPROCS=1 go test -p 1 ./internal/api ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth \
+    && GOMAXPROCS=1 go test -p 1 -run '^TestApplyMadAPIPassthroughAuthorization$' ./internal/runtime/executor \
     && CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o /out/CLIProxyAPI ./cmd/server/
 
 FROM debian:bookworm-slim

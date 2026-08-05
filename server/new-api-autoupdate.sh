@@ -18,6 +18,10 @@ HOME_DIR=/opt/mad-home
 HOME_STATE_FILE=/opt/new-api/mad-home-sha256.txt
 SELF_SCRIPT=/usr/local/sbin/new-api-autoupdate.sh
 CPA_DEPLOY_SCRIPT=/usr/local/sbin/cpa-codex-autodeploy.sh
+ALERT_SCRIPT=/usr/local/sbin/mad-api-error-alert.py
+ALERT_SERVICE=/etc/systemd/system/mad-api-error-alert.service
+ALERT_TIMER=/etc/systemd/system/mad-api-error-alert.timer
+ALERT_STATE_FILE=/opt/new-api/mad-api-error-alert-sha256.txt
 
 exec 9>"$LOCK_FILE"
 flock -n 9 || exit 0
@@ -26,7 +30,7 @@ work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 cache_bust=$(date +%s)
 
-for asset in mad-home.tar.gz new-api-autoupdate.sh cpa-codex-autodeploy.sh; do
+for asset in mad-home.tar.gz new-api-autoupdate.sh cpa-codex-autodeploy.sh mad-api-error-alert.py mad-api-error-alert.service mad-api-error-alert.timer; do
   curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
     -o "$work_dir/$asset" "$RELEASE_BASE/$asset?cb=$cache_bust"
   curl -fL --retry 3 --connect-timeout 15 --max-time 60 \
@@ -37,9 +41,13 @@ cd "$work_dir"
 sha256sum -c mad-home.tar.gz.sha256
 sha256sum -c new-api-autoupdate.sh.sha256
 sha256sum -c cpa-codex-autodeploy.sh.sha256
+sha256sum -c mad-api-error-alert.py.sha256
+sha256sum -c mad-api-error-alert.service.sha256
+sha256sum -c mad-api-error-alert.timer.sha256
 home_sha=$(awk '{print $1}' mad-home.tar.gz.sha256)
 self_sha=$(awk '{print $1}' new-api-autoupdate.sh.sha256)
 cpa_deploy_sha=$(awk '{print $1}' cpa-codex-autodeploy.sh.sha256)
+alert_sha=$(cat mad-api-error-alert.py.sha256 mad-api-error-alert.service.sha256 mad-api-error-alert.timer.sha256 | sha256sum | awk '{print $1}')
 
 install_updater() {
   current_sha=''
@@ -63,6 +71,44 @@ install_cpa_deployer() {
     install -m 0755 "$work_dir/cpa-codex-autodeploy.sh" "$CPA_DEPLOY_SCRIPT"
     logger -t new-api-autoupdate "CPA Codex deployer refreshed successfully: $cpa_deploy_sha"
   fi
+}
+
+install_error_alert() {
+  current_sha=''
+  if [ -f "$ALERT_STATE_FILE" ]; then
+    current_sha=$(cat "$ALERT_STATE_FILE")
+  fi
+  if [ "$current_sha" = "$alert_sha" ]; then
+    return
+  fi
+
+  ts=$(date +%Y%m%d-%H%M%S)
+  backup_dir="$COMPOSE_DIR/backups/mad-api-error-alert-$ts"
+  mkdir -p "$backup_dir"
+  for path in "$ALERT_SCRIPT" "$ALERT_SERVICE" "$ALERT_TIMER"; do
+    [ ! -f "$path" ] || cp -a "$path" "$backup_dir/"
+  done
+
+  install -m 0755 "$work_dir/mad-api-error-alert.py" "$ALERT_SCRIPT"
+  install -m 0644 "$work_dir/mad-api-error-alert.service" "$ALERT_SERVICE"
+  install -m 0644 "$work_dir/mad-api-error-alert.timer" "$ALERT_TIMER"
+  systemctl daemon-reload
+  if ! systemctl enable mad-api-error-alert.timer >/dev/null || ! systemctl restart mad-api-error-alert.timer; then
+    logger -t new-api-autoupdate "error alert installation failed; rolling back"
+    for path in "$ALERT_SCRIPT" "$ALERT_SERVICE" "$ALERT_TIMER"; do
+      name=$(basename "$path")
+      if [ -f "$backup_dir/$name" ]; then
+        cp -a "$backup_dir/$name" "$path"
+      else
+        rm -f "$path"
+      fi
+    done
+    systemctl daemon-reload
+    systemctl restart mad-api-error-alert.timer || true
+    exit 2
+  fi
+  printf '%s\n' "$alert_sha" > "$ALERT_STATE_FILE"
+  logger -t new-api-autoupdate "error alert monitor updated successfully: $alert_sha"
 }
 
 if [ ! -f "$HOME_STATE_FILE" ] || [ "$(cat "$HOME_STATE_FILE")" != "$home_sha" ]; then
@@ -99,6 +145,7 @@ fi
 if [ "${MAD_HOME_ONLY:-0}" = 1 ]; then
   install_updater
   install_cpa_deployer
+  install_error_alert
   logger -t new-api-autoupdate "homepage-only release completed: $home_sha"
   exit 0
 fi
@@ -164,6 +211,7 @@ if [ -f "$STATE_FILE" ] \
   && docker image inspect "$IMAGE" >/dev/null 2>&1; then
   install_updater
   install_cpa_deployer
+  install_error_alert
   "$CPA_DEPLOY_SCRIPT"
   logger -t new-api-autoupdate "already current: $release_sha"
   exit 0
@@ -202,6 +250,7 @@ if [ "$healthy" -eq 1 ]; then
   printf '%s\n' "$release_sha" > "$STATE_FILE"
   install_updater
   install_cpa_deployer
+  install_error_alert
   "$CPA_DEPLOY_SCRIPT"
   logger -t new-api-autoupdate "release deployed successfully: $release_sha"
   exit 0

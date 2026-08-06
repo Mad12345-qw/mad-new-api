@@ -35,9 +35,11 @@ IMAGE_DOWNLOAD_TIMEOUT = int(os.getenv("IMAGE_DOWNLOAD_TIMEOUT", "180"))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(64 * 1024 * 1024)))
 GEMINI_IMAGE_CONCURRENCY = int(os.getenv("GEMINI_IMAGE_CONCURRENCY", "2"))
 IMAGE2_4K_CONCURRENCY = int(os.getenv("IMAGE2_4K_CONCURRENCY", "2"))
+GROK_IMAGE_CONCURRENCY = int(os.getenv("GROK_IMAGE_CONCURRENCY", "8"))
 SIGNED_VIDEO_URL_TTL = int(os.getenv("SIGNED_VIDEO_URL_TTL", "600"))
 GEMINI_IMAGE_SLOTS = threading.BoundedSemaphore(max(1, GEMINI_IMAGE_CONCURRENCY))
 IMAGE2_4K_SLOTS = threading.BoundedSemaphore(max(1, IMAGE2_4K_CONCURRENCY))
+GROK_IMAGE_SLOTS = threading.BoundedSemaphore(max(1, GROK_IMAGE_CONCURRENCY))
 try:
     LIBC = ctypes.CDLL("libc.so.6")
 except OSError:
@@ -194,6 +196,9 @@ def image_request_slot(request_json):
     elif is_image2_4k_model(model):
         slots = IMAGE2_4K_SLOTS
         queue_name = "gpt-image-2-4k"
+    elif is_grok_image_model(model):
+        slots = GROK_IMAGE_SLOTS
+        queue_name = "Grok image"
     else:
         yield
         return

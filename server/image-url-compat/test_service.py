@@ -221,6 +221,22 @@ class ImageURLCompatTest(unittest.TestCase):
         self.assertTrue(item["url"].startswith("https://mad.example/image-cache/"))
         self.assertNotIn("b64_json", item)
 
+    def test_grok_image_queue_bounds_concurrency(self):
+        previous_slots = service.GROK_IMAGE_SLOTS
+        previous_timeout = service.TIMEOUT
+        slots = threading.BoundedSemaphore(1)
+        service.GROK_IMAGE_SLOTS = slots
+        service.TIMEOUT = 0
+        self.assertTrue(slots.acquire(blocking=False))
+        try:
+            with self.assertRaises(TimeoutError):
+                with service.image_request_slot({"model": "grok-imagine-image"}):
+                    self.fail("saturated Grok image queue should not enter")
+        finally:
+            slots.release()
+            service.GROK_IMAGE_SLOTS = previous_slots
+            service.TIMEOUT = previous_timeout
+
     def test_explicit_base64_returns_base64_only(self):
         body, mode = service.transform_image_response(
             {"model": "gpt-image-2-4k", "response_format": "b64_json"},

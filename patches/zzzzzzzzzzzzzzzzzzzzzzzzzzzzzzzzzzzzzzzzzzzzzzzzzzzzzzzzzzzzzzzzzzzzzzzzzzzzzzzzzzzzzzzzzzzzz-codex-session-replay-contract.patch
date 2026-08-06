@@ -1,0 +1,154 @@
+diff --git a/middleware/distributor.go b/middleware/distributor.go
+index 51d9a85..3d08380 100644
+--- a/middleware/distributor.go
++++ b/middleware/distributor.go
+@@ -5,6 +5,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"net"
+ 	"net/http"
+ 	"os"
+ 	"slices"
+@@ -406,7 +407,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
+ 	}
+ 
+ 	if strings.HasPrefix(c.Request.URL.Path, "/v1/responses/compact") && modelRequest.Model != "" {
+-		if isMadAPICPAFrontRequest(c) {
++		if isMadAPICPAFrontRequest(c) || isMadAPICodexInternalRequest(c) {
+ 			common.SetContextKey(c, constant.ContextKeyMadAPICPAFrontCompactModel, modelRequest.Model)
+ 		} else {
+ 			modelRequest.Model = ratio_setting.WithCompactModelSuffix(modelRequest.Model)
+@@ -424,6 +425,23 @@ func isMadAPICPAFrontRequest(c *gin.Context) bool {
+ 	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+ }
+ 
++func isMadAPICodexInternalRequest(c *gin.Context) bool {
++	if c == nil || c.Request == nil {
++		return false
++	}
++	host, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr))
++	if err != nil {
++		host = strings.Trim(strings.TrimSpace(c.Request.RemoteAddr), "[]")
++	}
++	ip := net.ParseIP(host)
++	if ip == nil || !ip.IsLoopback() {
++		return false
++	}
++	expected := strings.TrimSpace(os.Getenv(constant.MadAPICodexDispatchTokenEnv))
++	provided := strings.TrimSpace(c.GetHeader(constant.MadAPICodexDispatchHeader))
++	return expected != "" && len(expected) == len(provided) && subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) == 1
++}
++
+ // 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，
+ // 当 token 启用「可用模型限制」时，下游 modelLimitEnable 校验会因
+ // modelRequest.Model 为空而误报 "This token has no access to model"。
+diff --git a/middleware/distributor_madapi_test.go b/middleware/distributor_madapi_test.go
+index 823606b..2e3ae70 100644
+--- a/middleware/distributor_madapi_test.go
++++ b/middleware/distributor_madapi_test.go
+@@ -1,9 +1,11 @@
+ package middleware
+ 
+ import (
++	"net/http"
+ 	"net/http/httptest"
+ 	"testing"
+ 
++	"github.com/QuantumNous/new-api/constant"
+ 	"github.com/gin-gonic/gin"
+ )
+ 
+@@ -45,3 +47,20 @@ func TestIsMadAPICPAFrontRequestRejectsUnsetServerToken(t *testing.T) {
+ 		t.Fatal("expected an unset server token to reject CPA front routing")
+ 	}
+ }
++
++func TestIsMadAPICodexInternalRequestRequiresLoopbackAndDispatchToken(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	t.Setenv(constant.MadAPICodexDispatchTokenEnv, "dispatch-secret")
++	request := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
++	request.RemoteAddr = "127.0.0.1:42000"
++	request.Header.Set(constant.MadAPICodexDispatchHeader, "dispatch-secret")
++	context, _ := gin.CreateTestContext(httptest.NewRecorder())
++	context.Request = request
++	if !isMadAPICodexInternalRequest(context) {
++		t.Fatal("loopback request with dispatch token must keep the base compact model")
++	}
++	request.RemoteAddr = "198.51.100.20:42000"
++	if isMadAPICodexInternalRequest(context) {
++		t.Fatal("public request must not bypass compact model routing")
++	}
++}
+diff --git a/relay/cpa_native_codex.go b/relay/cpa_native_codex.go
+index 57292eb..2486efe 100644
+--- a/relay/cpa_native_codex.go
++++ b/relay/cpa_native_codex.go
+@@ -2,7 +2,9 @@ package relay
+ 
+ import (
+ 	"bytes"
++	"crypto/sha256"
+ 	"crypto/subtle"
++	"encoding/hex"
+ 	"encoding/json"
+ 	"fmt"
+ 	"net"
+@@ -61,6 +63,7 @@ type madAPICodexDispatchRequest struct {
+ 	Stream                   bool              `json:"stream"`
+ 	Compact                  bool              `json:"compact"`
+ 	RequestPath              string            `json:"request_path,omitempty"`
++	SessionScope             string            `json:"session_scope,omitempty"`
+ 	FirstEventTimeoutSeconds int               `json:"first_event_timeout_seconds,omitempty"`
+ }
+ 
+@@ -149,6 +152,7 @@ func relayMadAPICodexNative(c *gin.Context, info *relaycommon.RelayInfo) *types.
+ 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+ 		originModelName := info.OriginModelName
+ 		originPriceData := info.PriceData
++		info.OriginModelName = madAPICPACompactPricingModel(c, originModelName)
+ 		if _, err = helper.ModelPriceHelper(c, info, info.GetEstimatePromptTokens(), &types.TokenCountMeta{}); err != nil {
+ 			info.OriginModelName = originModelName
+ 			info.PriceData = originPriceData
+@@ -294,6 +298,19 @@ func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*m
+ 		Stream:                   info.IsStream,
+ 		Compact:                  info.RelayMode == relayconstant.RelayModeResponsesCompact,
+ 		RequestPath:              info.RequestURLPath,
++		SessionScope:             madAPICodexSessionScope(c),
+ 		FirstEventTimeoutSeconds: int(capability.FirstEventWindow / time.Second),
+ 	}, nil
+ }
++
++func madAPICodexSessionScope(c *gin.Context) string {
++	if c == nil {
++		return ""
++	}
++	credential := strings.TrimSpace(c.GetHeader("Authorization"))
++	if credential == "" {
++		return ""
++	}
++	digest := sha256.Sum256([]byte(credential))
++	return hex.EncodeToString(digest[:])
++}
+diff --git a/relay/cpa_native_codex_test.go b/relay/cpa_native_codex_test.go
+index 0973def..41777e9 100644
+--- a/relay/cpa_native_codex_test.go
++++ b/relay/cpa_native_codex_test.go
+@@ -54,6 +54,7 @@ func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"public-model","input":"hello","stream":true}`))
+ 	req.Header.Set("Content-Type", "application/json")
++	req.Header.Set("Authorization", "Bearer user-token-secret")
+ 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+ 	c.Request = req
+ 	info := &relaycommon.RelayInfo{
+@@ -97,6 +98,9 @@ func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
+ 	if payload.FirstEventTimeoutSeconds != 60 {
+ 		t.Fatalf("conversation model timeout = %d, want 60", payload.FirstEventTimeoutSeconds)
+ 	}
++	if len(payload.SessionScope) != 64 || strings.Contains(payload.SessionScope, "user-token-secret") {
++		t.Fatalf("session scope must be an opaque SHA-256 digest: %q", payload.SessionScope)
++	}
+ 	info.OriginModelName = "gpt-5.6-sol"
+ 	payload, err = madAPICodexDispatchPayload(c, info)
+ 	if err != nil {

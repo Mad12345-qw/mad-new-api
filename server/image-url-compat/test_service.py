@@ -161,6 +161,12 @@ class ImageURLCompatTest(unittest.TestCase):
     def response(self):
         return json.dumps({"data": [{"b64_json": PNG_B64}]}).encode("utf-8")
 
+    def test_loaded_source_hash_matches_imported_file(self):
+        self.assertEqual(
+            service.LOADED_SOURCE_SHA256,
+            hashlib.sha256(MODULE_PATH.read_bytes()).hexdigest(),
+        )
+
     def test_standard_image2_forces_base64_upstream(self):
         original = json.dumps(
             {"model": "gpt-image-2", "prompt": "test", "response_format": "url"}
@@ -524,6 +530,25 @@ class ImageURLCompatTest(unittest.TestCase):
                 "4K",
             )
             self.assertEqual(gemini_payload["data"][0]["b64_json"], PNG_B64)
+
+            grok_request = urllib.request.Request(
+                base64_endpoint,
+                data=json.dumps(
+                    {
+                        "model": "grok-imagine-image",
+                        "prompt": "test",
+                        "response_format": "url",
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(grok_request) as response:
+                json.load(response)
+            self.assertEqual(MockUpstreamHandler.last_path, "/v1/images/generations")
+            self.assertEqual(
+                MockUpstreamHandler.last_request["model"], "grok-imagine-image"
+            )
 
             edit_body, edit_content_type = multipart_body(
                 {

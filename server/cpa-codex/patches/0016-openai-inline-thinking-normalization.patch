@@ -1,0 +1,246 @@
+diff --git a/internal/translator/openai/openai/responses/openai_openai-responses_response.go b/internal/translator/openai/openai/responses/openai_openai-responses_response.go
+index bc390f30..f719fa79 100644
+--- a/internal/translator/openai/openai/responses/openai_openai-responses_response.go
++++ b/internal/translator/openai/openai/responses/openai_openai-responses_response.go
+@@ -59,6 +59,93 @@ type oaiToResponsesState struct {
+ 	TotalTokens      int64
+ 	ReasoningTokens  int64
+ 	UsageSeen        bool
++	InlineThinking   bool
++	InlinePending    string
++}
++
++type inlineThinkingSegment struct {
++	Text      string
++	Reasoning bool
++}
++
++func inlineThinkingMarkerPrefixSuffix(text string, marker string) int {
++	limit := len(marker) - 1
++	if len(text) < limit {
++		limit = len(text)
++	}
++	for size := limit; size > 0; size-- {
++		if strings.HasSuffix(text, marker[:size]) {
++			return size
++		}
++	}
++	return 0
++}
++
++func consumeInlineThinking(st *oaiToResponsesState, text string, final bool) ([]inlineThinkingSegment, bool) {
++	if st == nil {
++		return nil, false
++	}
++	wasActive := st.InlineThinking
++	hadPending := st.InlinePending != ""
++	input := st.InlinePending + text
++	st.InlinePending = ""
++	segments := make([]inlineThinkingSegment, 0, 3)
++	foundTag := false
++
++	appendSegment := func(value string, reasoning bool) {
++		if value == "" {
++			return
++		}
++		if len(segments) > 0 && segments[len(segments)-1].Reasoning == reasoning {
++			segments[len(segments)-1].Text += value
++			return
++		}
++		segments = append(segments, inlineThinkingSegment{Text: value, Reasoning: reasoning})
++	}
++
++	for input != "" {
++		marker := "<thinking>"
++		if st.InlineThinking {
++			marker = "</thinking>"
++		}
++		if index := strings.Index(input, marker); index >= 0 {
++			appendSegment(input[:index], st.InlineThinking)
++			input = input[index+len(marker):]
++			st.InlineThinking = !st.InlineThinking
++			foundTag = true
++			continue
++		}
++		if !final {
++			if size := inlineThinkingMarkerPrefixSuffix(input, marker); size > 0 {
++				appendSegment(input[:len(input)-size], st.InlineThinking)
++				st.InlinePending = input[len(input)-size:]
++				input = ""
++				break
++			}
++		}
++		appendSegment(input, st.InlineThinking)
++		input = ""
++	}
++
++	return segments, foundTag || wasActive || hadPending || st.InlineThinking || st.InlinePending != ""
++}
++
++func inlineThinkingText(text string) (reasoning string, visible string, found bool) {
++	state := &oaiToResponsesState{}
++	segments, handled := consumeInlineThinking(state, text, true)
++	if !handled {
++		return "", text, false
++	}
++	var reasoningText strings.Builder
++	var visibleText strings.Builder
++	for _, segment := range segments {
++		if segment.Reasoning {
++			reasoningText.WriteString(segment.Text)
++		} else {
++			visibleText.WriteString(segment.Text)
++		}
++	}
++	return reasoningText.String(), visibleText.String(), true
+ }
+ 
+ // responseIDCounter provides a process-wide unique counter for synthesized response identifiers.
+@@ -246,11 +333,23 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context,
+ 	}
+ 	requestForNamespace := pickRequestJSON(originalRequestRawJSON, requestRawJSON)
+ 	if bytes.Equal(rawJSON, []byte("[DONE]")) {
++		pending, _ := consumeInlineThinking(st, "", true)
++		out := make([][]byte, 0, len(pending)+1)
++		for _, segment := range pending {
++			synthetic := []byte(`{"id":"","object":"chat.completion.chunk","created":0,"choices":[{"index":0,"delta":{}}]}`)
++			synthetic, _ = sjson.SetBytes(synthetic, "id", st.ResponseID)
++			if segment.Reasoning {
++				synthetic, _ = sjson.SetBytes(synthetic, "choices.0.delta.reasoning_content", segment.Text)
++			} else {
++				synthetic, _ = sjson.SetBytes(synthetic, "choices.0.delta.content", segment.Text)
++			}
++			out = append(out, ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx, modelName, originalRequestRawJSON, requestRawJSON, synthetic, param)...)
++		}
+ 		if st.CompletionPending && !st.CompletedEmitted {
+ 			st.CompletedEmitted = true
+-			return [][]byte{buildResponsesCompletedEvent(st, requestForNamespace, func() int { st.Seq++; return st.Seq })}
++			out = append(out, buildResponsesCompletedEvent(st, requestForNamespace, func() int { st.Seq++; return st.Seq }))
+ 		}
+-		return [][]byte{}
++		return out
+ 	}
+ 
+ 	root := gjson.ParseBytes(rawJSON)
+@@ -261,6 +360,30 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context,
+ 	if !root.Get("choices").Exists() || !root.Get("choices").IsArray() {
+ 		return [][]byte{}
+ 	}
++	if content := root.Get("choices.0.delta.content"); content.Exists() && content.Type == gjson.String {
++		segments, handled := consumeInlineThinking(st, content.String(), false)
++		if handled {
++			out := make([][]byte, 0, len(segments)+1)
++			for _, segment := range segments {
++				chunk := bytes.Clone(rawJSON)
++				chunk, _ = sjson.DeleteBytes(chunk, "usage")
++				chunk, _ = sjson.DeleteBytes(chunk, "choices.0.finish_reason")
++				chunk, _ = sjson.DeleteBytes(chunk, "choices.0.delta.tool_calls")
++				chunk, _ = sjson.DeleteBytes(chunk, "choices.0.delta.content")
++				if segment.Reasoning {
++					chunk, _ = sjson.SetBytes(chunk, "choices.0.delta.reasoning_content", segment.Text)
++				} else {
++					chunk, _ = sjson.SetBytes(chunk, "choices.0.delta.content", segment.Text)
++				}
++				out = append(out, ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, param)...)
++			}
++			if root.Get("usage").Exists() || root.Get("choices.0.finish_reason").Exists() || root.Get("choices.0.delta.tool_calls").Exists() {
++				residual, _ := sjson.DeleteBytes(rawJSON, "choices.0.delta.content")
++				out = append(out, ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx, modelName, originalRequestRawJSON, requestRawJSON, residual, param)...)
++			}
++			return out
++		}
++	}
+ 
+ 	if usage := root.Get("usage"); usage.Exists() {
+ 		if v := usage.Get("prompt_tokens"); v.Exists() {
+@@ -801,6 +924,11 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(_ context.Co
+ 	outputsWrapper := []byte(`{"arr":[]}`)
+ 	// Detect and capture reasoning content if present
+ 	rcText := gjson.GetBytes(rawJSON, "choices.0.message.reasoning_content").String()
++	if rcText == "" {
++		if reasoningText, _, found := inlineThinkingText(gjson.GetBytes(rawJSON, "choices.0.message.content").String()); found {
++			rcText = reasoningText
++		}
++	}
+ 	includeReasoning := rcText != ""
+ 	if !includeReasoning && len(requestRawJSON) > 0 {
+ 		includeReasoning = gjson.GetBytes(requestRawJSON, "reasoning").Exists()
+@@ -826,10 +954,16 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(_ context.Co
+ 			if msg.Exists() {
+ 				// Text message part
+ 				if c := msg.Get("content"); c.Exists() && c.String() != "" {
+-					item := []byte(`{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}`)
+-					item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("msg_%s_%d", id, int(choice.Get("index").Int())))
+-					item, _ = sjson.SetBytes(item, "content.0.text", c.String())
+-					outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, "arr.-1", item)
++					contentText := c.String()
++					if _, visibleText, found := inlineThinkingText(contentText); found {
++						contentText = visibleText
++					}
++					if contentText != "" {
++						item := []byte(`{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}`)
++						item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("msg_%s_%d", id, int(choice.Get("index").Int())))
++						item, _ = sjson.SetBytes(item, "content.0.text", contentText)
++						outputsWrapper, _ = sjson.SetRawBytes(outputsWrapper, "arr.-1", item)
++					}
+ 				}
+ 
+ 				// Function/tool calls
+diff --git a/internal/translator/openai/openai/responses/openai_openai-responses_response_test.go b/internal/translator/openai/openai/responses/openai_openai-responses_response_test.go
+index 9898744a..bb2528b3 100644
+--- a/internal/translator/openai/openai/responses/openai_openai-responses_response_test.go
++++ b/internal/translator/openai/openai/responses/openai_openai-responses_response_test.go
+@@ -24,6 +24,53 @@ func parseOpenAIResponsesSSEEvent(t *testing.T, chunk []byte) (string, gjson.Res
+ 	return event, gjson.Parse(dataLine)
+ }
+ 
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesParsesSplitInlineThinking(t *testing.T) {
++	t.Parallel()
++	request := []byte(`{"model":"deepseek-v4-pro","stream":true}`)
++	chunks := [][]byte{
++		[]byte(`data: {"id":"resp_inline","object":"chat.completion.chunk","created":1773896263,"choices":[{"index":0,"delta":{"role":"assistant","content":"<thin"},"finish_reason":null}]}`),
++		[]byte(`data: {"id":"resp_inline","object":"chat.completion.chunk","created":1773896263,"choices":[{"index":0,"delta":{"content":"king>private chain</think"},"finish_reason":null}]}`),
++		[]byte(`data: {"id":"resp_inline","object":"chat.completion.chunk","created":1773896263,"choices":[{"index":0,"delta":{"content":"ing>public answer"},"finish_reason":"stop"}]}`),
++		[]byte(`data: [DONE]`),
++	}
++	var state any
++	var all strings.Builder
++	for _, chunk := range chunks {
++		for _, event := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "deepseek-v4-pro", request, request, chunk, &state) {
++			all.Write(event)
++		}
++	}
++	output := all.String()
++	if strings.Contains(output, "<thinking>") || strings.Contains(output, "</thinking>") || strings.Contains(output, "<thin") {
++		t.Fatalf("inline thinking tags leaked into Responses stream: %s", output)
++	}
++	if !strings.Contains(output, `"type":"response.reasoning_summary_text.delta"`) || !strings.Contains(output, "private chain") {
++		t.Fatalf("reasoning event missing: %s", output)
++	}
++	if !strings.Contains(output, `"type":"response.output_text.delta"`) || !strings.Contains(output, "public answer") {
++		t.Fatalf("visible text event missing: %s", output)
++	}
++	if count := strings.Count(output, "event: response.completed"); count != 1 {
++		t.Fatalf("response.completed count = %d, want 1; output=%s", count, output)
++	}
++}
++
++func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStreamParsesInlineThinking(t *testing.T) {
++	t.Parallel()
++	raw := []byte(`{"id":"chatcmpl_inline","object":"chat.completion","created":1773896263,"model":"deepseek-v4-pro","choices":[{"index":0,"message":{"role":"assistant","content":"<thinking>private chain</thinking>public answer"},"finish_reason":"stop"}]}`)
++	request := []byte(`{"model":"deepseek-v4-pro"}`)
++	result := ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(context.Background(), "deepseek-v4-pro", request, request, raw, nil)
++	if strings.Contains(string(result), "<thinking>") || strings.Contains(string(result), "</thinking>") {
++		t.Fatalf("inline thinking tags leaked into non-stream response: %s", result)
++	}
++	if got := gjson.GetBytes(result, "output.0.summary.0.text").String(); got != "private chain" {
++		t.Fatalf("reasoning summary = %q, want private chain; output=%s", got, result)
++	}
++	if got := gjson.GetBytes(result, "output.1.content.0.text").String(); got != "public answer" {
++		t.Fatalf("visible text = %q, want public answer; output=%s", got, result)
++	}
++}
++
+ func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ResponseCompletedWaitsForDone(t *testing.T) {
+ 	t.Parallel()
+ 

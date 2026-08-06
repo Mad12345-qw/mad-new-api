@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Route Codex execution through complete CPA front proxies."""
+"""Install stable or canary Codex routes with an atomic Nginx reload."""
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,27 @@ MODEL_PROXY = """        proxy_pass http://127.0.0.1:3001;
         proxy_read_timeout 60s;
         proxy_send_timeout 60s;"""
 
+DIRECT_PROXY = """        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-MadAPI-Codex-Canary 1;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;"""
+
+DIRECT_BODY = DIRECT_PROXY.removeprefix("        proxy_pass http://127.0.0.1:3001;\n")
+DIRECT_COCKPIT_PROXY = DIRECT_PROXY.replace(
+    "proxy_set_header X-MadAPI-Codex-Canary 1;",
+    "proxy_set_header X-MadAPI-Codex-Canary 1;\n        proxy_set_header X-MadAPI-Codex-Cockpit 1;",
+)
+DIRECT_COCKPIT_BODY = DIRECT_COCKPIT_PROXY.removeprefix("        proxy_pass http://127.0.0.1:3001;\n")
+
 CPA_PROXY = """        client_max_body_size 64m;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -45,7 +67,18 @@ CPA_PROXY = """        client_max_body_size 64m;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;"""
 
-MANAGED_BLOCK = f"""    {BEGIN_MARKER}
+
+def managed_block(mode: str) -> str:
+    if mode not in {"stable", "direct"}:
+        raise ValueError(f"unsupported Codex route mode: {mode}")
+    primary_proxy = CPA_PROXY if mode == "stable" else DIRECT_PROXY
+    primary_cockpit_proxy = CPA_PROXY if mode == "stable" else DIRECT_COCKPIT_PROXY
+    primary_native = "http://127.0.0.1:8318/v1/;" if mode == "stable" else None
+    primary_cockpit = "http://127.0.0.1:8319/v1/;" if mode == "stable" else None
+    native_body = f"        proxy_pass {primary_native}\n{primary_proxy}" if primary_native else primary_proxy
+    cockpit_body = f"        proxy_pass {primary_cockpit}\n{primary_cockpit_proxy}" if primary_cockpit else primary_cockpit_proxy
+    return f"""    {BEGIN_MARKER}
+    # mode: {mode}
     location = /codex/v1/models {{
 {MODEL_PROXY}
     }}
@@ -55,13 +88,31 @@ MANAGED_BLOCK = f"""    {BEGIN_MARKER}
     }}
 
     location ^~ /codex/v1/ {{
-        proxy_pass http://127.0.0.1:8318/v1/;
-{CPA_PROXY}
+{native_body}
     }}
 
     location ^~ /codex/cockpit/v1/ {{
-        proxy_pass http://127.0.0.1:8319/v1/;
-{CPA_PROXY}
+{cockpit_body}
+    }}
+
+    location = /codex-canary/v1/models {{
+        proxy_pass http://127.0.0.1:3001/codex/v1/models;
+{DIRECT_BODY}
+    }}
+
+    location = /codex-canary/cockpit/v1/models {{
+        proxy_pass http://127.0.0.1:3001/codex/cockpit/v1/models;
+{DIRECT_COCKPIT_BODY}
+    }}
+
+    location ^~ /codex-canary/v1/ {{
+        proxy_pass http://127.0.0.1:3001/codex/v1/;
+{DIRECT_BODY}
+    }}
+
+    location ^~ /codex-canary/cockpit/v1/ {{
+        proxy_pass http://127.0.0.1:3001/codex/cockpit/v1/;
+{DIRECT_COCKPIT_BODY}
     }}
     {END_MARKER}
 
@@ -113,24 +164,27 @@ def remove_legacy_route(source: str) -> str:
     return source
 
 
-def reconcile_routes(source: str) -> str:
+def reconcile_routes(source: str, mode: str = "stable") -> str:
     cleaned = remove_legacy_route(remove_marked_range(source))
-    if "location ^~ /codex/v1/" in cleaned or "location ^~ /codex/cockpit/v1/" in cleaned:
-        raise RuntimeError("an unmanaged Codex execution route already exists")
+    for location in ("location ^~ /codex/v1/", "location ^~ /codex/cockpit/v1/", "location ^~ /codex-canary/v1/"):
+        if location in cleaned:
+            raise RuntimeError("an unmanaged Codex execution route already exists")
     anchor = "    location / {"
     if cleaned.count(anchor) != 1:
         raise RuntimeError("unable to find a unique MadAPI default Nginx location")
-    return cleaned.replace(anchor, MANAGED_BLOCK + anchor, 1)
+    return cleaned.replace(anchor, managed_block(mode) + anchor, 1)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=("stable", "direct"), default="stable")
+    args = parser.parse_args(argv)
     if not CONFIG_PATH.is_file():
         raise RuntimeError(f"missing Nginx configuration: {CONFIG_PATH}")
     source = CONFIG_PATH.read_text(encoding="utf-8")
-    reconciled = reconcile_routes(source)
+    reconciled = reconcile_routes(source, args.mode)
     if reconciled == source:
         return 0
-
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     backup = BACKUP_DIR / f"mad.myddns.me.before-cpa-front-{datetime.utcnow():%Y%m%d-%H%M%S}"
     shutil.copy2(CONFIG_PATH, backup)
@@ -140,7 +194,6 @@ def main() -> int:
         reload_result = subprocess.run(["systemctl", "reload", "nginx"], text=True, capture_output=True, check=False)
         if reload_result.returncode == 0:
             return 0
-
     shutil.copy2(backup, CONFIG_PATH)
     subprocess.run(["nginx", "-t"], text=True, capture_output=True, check=False)
     subprocess.run(["systemctl", "reload", "nginx"], text=True, capture_output=True, check=False)

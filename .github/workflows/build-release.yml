@@ -95,6 +95,9 @@ jobs:
             if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch" ]; then
               continue
             fi
+            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch" ]; then
+              continue
+            fi
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done
@@ -102,6 +105,8 @@ jobs:
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover.patch"
           git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch"
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch"
+          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch"
+          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch"
 
       - name: Verify protected Mad API customizations
         working-directory: source
@@ -129,6 +134,17 @@ jobs:
       - name: Verify billing patch formatting
         working-directory: source
         run: |
+          gofmt -w \
+            constant/madapi_codex.go \
+            controller/codex_compat.go \
+            controller/relay.go \
+            model/ability.go \
+            model/channel_cache.go \
+            model/channel_retry_madapi_test.go \
+            relay/cpa_native_codex.go \
+            relay/cpa_native_codex_test.go \
+            service/channel_select.go \
+            service/channel_select_madapi_test.go
           files=(
             constant/madapi_codex.go
             controller/codex_catalog.go
@@ -160,6 +176,9 @@ jobs:
             relay/responses_handler.go
             relay/responses_handler_madapi_test.go
             model/main.go
+            model/ability.go
+            model/channel_cache.go
+            model/channel_retry_madapi_test.go
             model/log.go
             model/task.go
             model/task_cas_test.go
@@ -181,6 +200,8 @@ jobs:
             router/video-router.go
             router/relay-router.go
             service/quota.go
+            service/channel_select.go
+            service/channel_select_madapi_test.go
             service/quota_audio_test.go
             service/codexclientmodels/models.go
             service/relayconvert/cpa_channel_compat.go
@@ -212,7 +233,7 @@ jobs:
 
       - name: Test backend paths
         working-directory: source
-        run: go test ./common ./controller ./middleware ./relay/common ./relay/channel/claude ./relay/channel/deepseek ./relay/channel/moonshot ./relay/channel/openai ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/codexclientmodels ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
+        run: go test ./common ./controller ./middleware ./model ./relay/common ./relay/channel/claude ./relay/channel/deepseek ./relay/channel/moonshot ./relay/channel/openai ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/codexclientmodels ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
 
       - name: Verify playground frontend
         working-directory: source/web/default
@@ -240,8 +261,10 @@ jobs:
       - name: Verify CPA deployment scripts
         run: |
           sh -n server/new-api-autoupdate.sh
+          sh -n server/new-api-component-deploy.sh
           sh -n server/cpa-codex/entrypoint.sh
           sh -n server/cpa-codex/sidecar-autodeploy.sh
+          sh -n server/cpa-codex/canary-deploy.sh
           sh -n server/disaster-recovery/install.sh
 
       - name: Apply and test CPA full Codex front proxy
@@ -275,6 +298,8 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0013-madapi-first-event-failover.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0014-madapi-protocol-routing.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0014-madapi-protocol-routing.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0015-madapi-production-hardening.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0015-madapi-production-hardening.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \
@@ -326,10 +351,12 @@ jobs:
           cp server/image-url-compat/image-url-compat.service image-url-compat.service
           cp server/image-url-compat/patch_nginx.py patch-image-compat-nginx.py
           cp server/new-api-autoupdate.sh new-api-autoupdate.sh
+          cp server/new-api-component-deploy.sh new-api-component-deploy.sh
           cp server/mad-api-error-alert/mad-api-error-alert.py mad-api-error-alert.py
           cp server/mad-api-error-alert/mad-api-error-alert.service mad-api-error-alert.service
           cp server/mad-api-error-alert/mad-api-error-alert.timer mad-api-error-alert.timer
           cp server/cpa-codex/sidecar-autodeploy.sh cpa-codex-autodeploy.sh
+          cp server/cpa-codex/canary-deploy.sh cpa-codex-canary-deploy.sh
           cp server/cpa-codex/patch_nginx.py patch-cpa-codex-nginx.py
           cp server/cpa-codex/compose_reconcile.py compose-cpa-codex.py
           cp guards/cpa-upstream-commit.txt cpa-upstream-commit.txt
@@ -338,10 +365,12 @@ jobs:
           sha256sum image-url-compat.service > image-url-compat.service.sha256
           sha256sum patch-image-compat-nginx.py > patch-image-compat-nginx.py.sha256
           sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
+          sha256sum new-api-component-deploy.sh > new-api-component-deploy.sh.sha256
           sha256sum mad-api-error-alert.py > mad-api-error-alert.py.sha256
           sha256sum mad-api-error-alert.service > mad-api-error-alert.service.sha256
           sha256sum mad-api-error-alert.timer > mad-api-error-alert.timer.sha256
           sha256sum cpa-codex-autodeploy.sh > cpa-codex-autodeploy.sh.sha256
+          sha256sum cpa-codex-canary-deploy.sh > cpa-codex-canary-deploy.sh.sha256
           sha256sum patch-cpa-codex-nginx.py > patch-cpa-codex-nginx.py.sha256
           sha256sum compose-cpa-codex.py > compose-cpa-codex.py.sha256
           sha256sum cpa-upstream-commit.txt > cpa-upstream-commit.txt.sha256
@@ -368,6 +397,8 @@ jobs:
             patch-image-compat-nginx.py.sha256 \
             new-api-autoupdate.sh \
             new-api-autoupdate.sh.sha256 \
+            new-api-component-deploy.sh \
+            new-api-component-deploy.sh.sha256 \
             mad-api-error-alert.py \
             mad-api-error-alert.py.sha256 \
             mad-api-error-alert.service \
@@ -376,6 +407,8 @@ jobs:
             mad-api-error-alert.timer.sha256 \
             cpa-codex-autodeploy.sh \
             cpa-codex-autodeploy.sh.sha256 \
+            cpa-codex-canary-deploy.sh \
+            cpa-codex-canary-deploy.sh.sha256 \
             patch-cpa-codex-nginx.py \
             patch-cpa-codex-nginx.py.sha256 \
             compose-cpa-codex.py \

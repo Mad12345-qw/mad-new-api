@@ -153,20 +153,21 @@ fi
 history_home="$home/history-recovery"; history_project="$history_home/project"; history_session="$history_home/sessions/2026/08/04/rollout-2026-08-04T00-00-00-00000000-0000-7000-8000-000000000001.jsonl"
 mkdir -p "$(dirname -- "$history_session")" "$history_project"
 printf '%s' '{"timestamp":"2026-08-04T00:00:00Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000001","timestamp":"2026-08-04T00:00:00Z","cwd":"'"$history_project"'"}}' > "$history_session"
+printf '%s\n' '{"id":"00000000-0000-7000-8000-000000000001","thread_name":"Existing conversation","updated_at":"2026-08-04T00:00:00Z"}' > "$history_home/session_index.jsonl"
 printf '%s\n' 'model_provider = "custom"' > "$history_home/config.toml"
 python3 - "$history_home/state_5.sqlite" <<'PY'
 import sqlite3
 import sys
 
 connection = sqlite3.connect(sys.argv[1])
-connection.execute("create table threads (id text primary key, model_provider text, archived integer not null)")
-connection.execute("insert into threads (id, model_provider, archived) values (?, ?, ?)", ("00000000-0000-7000-8000-000000000001", "openai", 0))
+connection.execute("create table threads (id text primary key, model_provider text, archived integer not null, source text, thread_source text)")
+connection.execute("insert into threads (id, model_provider, archived, source, thread_source) values (?, ?, ?, ?, ?)", ("00000000-0000-7000-8000-000000000001", "openai", 0, "vscode", "user"))
 connection.commit()
 connection.close()
 PY
 printf '%s' '{"local-projects":{"local-test":{"rootPaths":["'"$history_project"'"]}},"projectless-thread-ids":["00000000-0000-7000-8000-000000000001"]}' > "$history_home/.codex-global-state.json"
 CODEX_HOME="$history_home" /bin/sh "$(dirname -- "$installer_path")/restore-history.sh"
-grep -Fq '00000000-0000-7000-8000-000000000001' "$history_home/session_index.jsonl" || fail 'History recovery did not rebuild the session index.'
+grep -Fq 'Existing conversation' "$history_home/session_index.jsonl" || fail 'History recovery changed the existing session index.'
 grep -Fq '"projectId":"local-test"' "$history_home/.codex-global-state.json" || fail 'History recovery did not restore project ownership.'
 history_provider=$(python3 - "$history_home/state_5.sqlite" <<'PY'
 import sqlite3

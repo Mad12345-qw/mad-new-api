@@ -77,7 +77,10 @@ public static class MadApiHistorySqlite
 
             string sql =
                 "UPDATE threads SET model_provider = '" + provider + "'" +
-                " WHERE archived = 0 AND COALESCE(model_provider, '') IN ('', 'openai');";
+                " WHERE archived = 0" +
+                " AND source = 'vscode'" +
+                " AND thread_source = 'user'" +
+                " AND model_provider = 'openai';";
             if (sqlite3_exec(db, sql, IntPtr.Zero, IntPtr.Zero, out error) != 0)
                 throw new InvalidOperationException("Unable to migrate Codex history provider.");
             return sqlite3_changes(db);
@@ -104,7 +107,6 @@ $indexPath = Join-Path $CodexHome 'session_index.jsonl'
 $statePath = Join-Path $CodexHome '.codex-global-state.json'
 $configPath = Join-Path $CodexHome 'config.toml'
 $databasePath = Join-Path $CodexHome 'state_5.sqlite'
-if (-not (Test-Path -LiteralPath $sessionsPath)) { Write-Output 'MadAPI local history recovery: no existing sessions.'; exit 0 }
 $providerId = if ([string]::IsNullOrWhiteSpace($ProviderId)) { Get-CurrentProviderId $configPath } else { $ProviderId.Trim() }
 if ([string]::IsNullOrWhiteSpace($providerId)) { throw 'Current Codex provider is missing; history was not changed.' }
 
@@ -117,38 +119,16 @@ if (Test-Path -LiteralPath $statePath) { [IO.File]::Copy($statePath, (Join-Path 
 Backup-HistoryDatabase $databasePath $backupPath
 $migratedThreads = Migrate-HistoryProvider $databasePath $providerId
 
-$existingTitles = @{}
-if (Test-Path -LiteralPath $indexPath) {
-    foreach ($line in [IO.File]::ReadAllLines($indexPath, [Text.Encoding]::UTF8)) {
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        try {
-            $item = $line | ConvertFrom-Json
-            if ($null -ne $item.id -and -not [string]::IsNullOrWhiteSpace([string]$item.thread_name)) { $existingTitles[[string]$item.id] = [string]$item.thread_name }
-        } catch {}
+$records = New-Object 'System.Collections.Generic.List[object]'
+if (Test-Path -LiteralPath $sessionsPath) {
+    foreach ($file in @(Get-ChildItem -LiteralPath $sessionsPath -Recurse -Filter 'rollout-*.jsonl' -File -ErrorAction SilentlyContinue)) {
+        $firstLine = ([IO.File]::ReadAllLines($file.FullName, [Text.Encoding]::UTF8) | Select-Object -First 1)
+        if ([string]::IsNullOrWhiteSpace($firstLine)) { continue }
+        try { $meta = $firstLine | ConvertFrom-Json } catch { continue }
+        if ($meta.type -ne 'session_meta' -or $null -eq $meta.payload -or [string]::IsNullOrWhiteSpace([string]$meta.payload.id)) { continue }
+        $records.Add([pscustomobject]@{ Id = [string]$meta.payload.id; Cwd = [string]$meta.payload.cwd })
     }
 }
-
-$records = New-Object 'System.Collections.Generic.List[object]'
-foreach ($file in @(Get-ChildItem -LiteralPath $sessionsPath -Recurse -Filter 'rollout-*.jsonl' -File -ErrorAction SilentlyContinue)) {
-    $firstLine = [IO.File]::ReadLines($file.FullName, [Text.Encoding]::UTF8) | Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace($firstLine)) { continue }
-    try { $meta = $firstLine | ConvertFrom-Json } catch { continue }
-    if ($meta.type -ne 'session_meta' -or $null -eq $meta.payload -or [string]::IsNullOrWhiteSpace([string]$meta.payload.id)) { continue }
-    $timestamp = [datetime]::MinValue
-    [void][datetime]::TryParse([string]$meta.payload.timestamp, [ref]$timestamp)
-    $records.Add([pscustomobject]@{ Id = [string]$meta.payload.id; Cwd = [string]$meta.payload.cwd; UpdatedAt = $timestamp.ToUniversalTime().ToString('o'); SortAt = $timestamp; File = $file.FullName })
-}
-
-$records = @($records | Sort-Object SortAt, Id -Unique)
-$indexLines = New-Object 'System.Collections.Generic.List[string]'
-foreach ($record in $records) {
-    $title = if ($existingTitles.ContainsKey($record.Id)) { $existingTitles[$record.Id] } elseif (-not [string]::IsNullOrWhiteSpace($record.Cwd)) { Split-Path -Leaf $record.Cwd } else { 'Recovered conversation' }
-    $indexLines.Add(([ordered]@{ id = $record.Id; thread_name = $title; updated_at = $record.UpdatedAt } | ConvertTo-Json -Compress))
-}
-
-$indexTemp = $indexPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-[IO.File]::WriteAllText($indexTemp, (($indexLines -join [Environment]::NewLine) + $(if ($indexLines.Count -gt 0) { [Environment]::NewLine } else { '' })), $utf8)
-Move-Item -LiteralPath $indexTemp -Destination $indexPath -Force
 
 $assigned = 0
 $assignedIds = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -190,6 +170,6 @@ if (Test-Path -LiteralPath $statePath) {
     }
 }
 
-Write-Output ('MadAPI local history recovered: ' + $records.Count + ' conversations, ' + $assigned + ' project mappings.')
+Write-Output ('MadAPI local history recovered: ' + $migratedThreads + ' conversations, ' + $assigned + ' project mappings.')
 Write-Output ('MadAPI local history provider migrated: ' + $migratedThreads + ' conversations to ' + $providerId + '.')
 Write-Output ('History backup created: ' + $backupPath)

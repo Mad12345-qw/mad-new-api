@@ -3,9 +3,9 @@ index 4ebc7b53..1c09f8ce 100644
 --- a/common/model.go
 +++ b/common/model.go
 @@ -13,6 +13,8 @@ var (
-		"dall-e-3",
-		"dall-e-2",
-		"gpt-image-1",
+ 		"dall-e-3",
+ 		"dall-e-2",
+ 		"gpt-image-1",
 +		"gpt-image-2",
 +		"grok-imagine-image",
  		"prefix:imagen-",

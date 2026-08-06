@@ -212,7 +212,7 @@ jobs:
 
       - name: Test backend paths
         working-directory: source
-        run: go test ./controller ./middleware ./relay/common ./relay/channel/claude ./relay/channel/deepseek ./relay/channel/moonshot ./relay/channel/openai ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/codexclientmodels ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
+        run: go test ./common ./controller ./middleware ./relay/common ./relay/channel/claude ./relay/channel/deepseek ./relay/channel/moonshot ./relay/channel/openai ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/codexclientmodels ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
 
       - name: Verify playground frontend
         working-directory: source/web/default

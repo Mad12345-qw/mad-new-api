@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Route Codex execution through complete CPA front proxies."""
+"""Route public Codex traffic through MadAPI's authenticated controllers."""
 
 from __future__ import annotations
 
@@ -29,14 +29,14 @@ MODEL_PROXY = """        proxy_pass http://127.0.0.1:3001;
         proxy_read_timeout 60s;
         proxy_send_timeout 60s;"""
 
-CPA_PROXY = """        client_max_body_size 64m;
+CODEX_PROXY = """        proxy_pass http://127.0.0.1:3001;
+        client_max_body_size 64m;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-MadAPI-Authorization $http_authorization;
-        proxy_set_header Authorization "Bearer madapi-codex-gateway";
+        proxy_set_header Authorization $http_authorization;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_request_buffering off;
@@ -55,13 +55,11 @@ MANAGED_BLOCK = f"""    {BEGIN_MARKER}
     }}
 
     location ^~ /codex/v1/ {{
-        proxy_pass http://127.0.0.1:8318/v1/;
-{CPA_PROXY}
+{CODEX_PROXY}
     }}
 
     location ^~ /codex/cockpit/v1/ {{
-        proxy_pass http://127.0.0.1:8319/v1/;
-{CPA_PROXY}
+{CODEX_PROXY}
     }}
     {END_MARKER}
 

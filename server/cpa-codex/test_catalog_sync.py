@@ -28,6 +28,7 @@ class CatalogSyncTests(unittest.TestCase):
         self.assertIn("request-retry: 3", rendered)
         self.assertIn("max-retry-credentials: 0", rendered)
         self.assertIn("disable-cooling: false", rendered)
+        self.assertIn('disable-image-generation: "passthrough"', rendered)
         self.assertIn("xai-api-key:", rendered)
         self.assertIn("openai-compatibility:", rendered)
         self.assertEqual(rendered.count("madapi-passthrough: true"), 2)

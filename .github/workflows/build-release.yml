@@ -92,11 +92,16 @@ jobs:
             if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover.patch" ]; then
               continue
             fi
+            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch" ]; then
+              continue
+            fi
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done
           git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover.patch"
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover.patch"
+          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch"
+          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch"
 
       - name: Verify protected Mad API customizations
         working-directory: source
@@ -268,6 +273,8 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0012-claude-compaction-replay.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0013-madapi-first-event-failover.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0013-madapi-first-event-failover.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0014-madapi-protocol-routing.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0014-madapi-protocol-routing.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \

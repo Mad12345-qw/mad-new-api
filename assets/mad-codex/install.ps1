@@ -83,6 +83,16 @@ function Close-CodexDesktop {
     }
 }
 
+function Restore-HistoryBackup([string]$CodexHome, [string]$HistoryBackupPath) {
+    if ([string]::IsNullOrWhiteSpace($HistoryBackupPath) -or -not (Test-Path -LiteralPath $HistoryBackupPath -PathType Container)) { return }
+    foreach ($name in @('session_index.jsonl', '.codex-global-state.json', 'state_5.sqlite', 'state_5.sqlite-wal', 'state_5.sqlite-shm')) {
+        $source = Join-Path $HistoryBackupPath $name
+        $destination = Join-Path $CodexHome $name
+        if (Test-Path -LiteralPath $source) { [IO.File]::Copy($source, $destination, $true) }
+        elseif (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Force }
+    }
+}
+
 $apiKey = [string]$env:MADAPI_KEY
 if ([string]::IsNullOrWhiteSpace($apiKey) -or $apiKey -notmatch '^sk-[A-Za-z0-9._-]+$') {
     throw 'MADAPI_KEY is missing or invalid.'
@@ -111,6 +121,7 @@ $tempCatalogPath = Join-Path $codexHome ("madapi-cockpit-model-catalog.$transact
 $tempAuthPath = Join-Path $codexHome ("auth.json.madapi.$transactionId.tmp")
 $backupPath = $null
 $authBackupPath = $null
+$historyBackupPath = $null
 $hadConfig = Test-Path -LiteralPath $configPath
 $hadAuth = Test-Path -LiteralPath $authPath
 $configInstalled = $false
@@ -303,13 +314,11 @@ try {
     }
     if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
     if (-not $testMode) { Register-CatalogRefreshTask $refreshLauncherPath }
-    try {
-        & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $historyScriptPath -CodexHome $codexHome
-        if ($LASTEXITCODE -ne 0) { Write-Warning 'MadAPI local history recovery did not complete.' }
-    } catch {
-        Write-Warning ('MadAPI local history recovery skipped: ' + $_.Exception.Message)
-    }
+    $historyBackupPath = Join-Path $codexHome ('madapi-install-history-backup-' + $transactionId)
+    & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $historyScriptPath -CodexHome $codexHome -ProviderId $providerId -BackupPath $historyBackupPath
+    if ($LASTEXITCODE -ne 0) { throw 'MadAPI local history recovery did not complete.' }
 } catch {
+    Restore-HistoryBackup $codexHome $historyBackupPath
     if ($authChanged) {
         if ($hadAuth -and $null -ne $authBackupPath -and (Test-Path -LiteralPath $authBackupPath)) { [IO.File]::Copy($authBackupPath, $authPath, $true) }
         elseif (-not $hadAuth -and (Test-Path -LiteralPath $authPath)) { Remove-Item -LiteralPath $authPath -Force }
@@ -331,6 +340,7 @@ try {
 Write-Host "MadAPI Codex desktop configuration installed: $configPath"
 if ($null -ne $backupPath) { Write-Host "Backup created: $backupPath" }
 if ($null -ne $authBackupPath) { Write-Host "Authentication backup created: $authBackupPath" }
+if ($null -ne $historyBackupPath) { Write-Host "History backup created: $historyBackupPath" }
 if ($requestedLoginMode -eq 'oauth' -and $existingAuthKind -ne 'oauth') { Write-Host 'OAuth mode prepared. Restart Codex Desktop and sign in with ChatGPT.' }
 elseif ($requestedLoginMode -eq 'apikey') { Write-Host 'Codex Desktop API Key sign-in configured.' }
 elseif ($authKind -eq 'oauth') { Write-Host 'Existing ChatGPT OAuth session preserved.' }

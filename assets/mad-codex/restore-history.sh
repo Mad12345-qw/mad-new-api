@@ -7,29 +7,69 @@ if [ ! -d "$codex_home/sessions" ]; then
   exit 0
 fi
 
+config_path=$codex_home/config.toml
+[ -f "$config_path" ] || { printf '%s\n' 'MadAPI local history recovery skipped: config.toml is missing.' >&2; exit 1; }
+provider=${MADAPI_HISTORY_PROVIDER:-}
+if [ -z "$provider" ]; then
+  provider=$(awk '
+  /^[[:space:]]*\[/ { exit }
+  /^[[:space:]]*model_provider[[:space:]]*=/ {
+    line = $0
+    sub(/^[^=]*=[[:space:]]*"/, "", line)
+    sub(/".*/, "", line)
+    print line
+    exit
+  }
+' "$config_path")
+fi
+case "$provider" in
+  ''|*[!A-Za-z0-9_-]*) printf '%s\n' 'MadAPI local history recovery skipped: current provider is invalid.' >&2; exit 1 ;;
+esac
+
 if ! command -v python3 >/dev/null 2>&1; then
   printf '%s\n' 'MadAPI local history recovery skipped: python3 is unavailable.' >&2
   exit 0
 fi
 
-CODEX_HOME="$codex_home" python3 - <<'PY'
+CODEX_HOME="$codex_home" MADAPI_HISTORY_PROVIDER="$provider" MADAPI_HISTORY_BACKUP_DIR="${MADAPI_HISTORY_BACKUP_DIR:-}" python3 - <<'PY'
 import json
 import os
 import shutil
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 root = Path(os.environ["CODEX_HOME"])
+provider = os.environ["MADAPI_HISTORY_PROVIDER"]
 sessions = root / "sessions"
 index = root / "session_index.jsonl"
 state_path = root / ".codex-global-state.json"
+database = root / "state_5.sqlite"
 stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-backup = root / f"madapi-history-backup-{stamp}"
+backup_override = os.environ.get("MADAPI_HISTORY_BACKUP_DIR", "").strip()
+backup = Path(backup_override) if backup_override else root / f"madapi-history-backup-{stamp}"
 backup.mkdir(exist_ok=False)
 if index.exists():
     shutil.copy2(index, backup / "session_index.jsonl.before")
 if state_path.exists():
     shutil.copy2(state_path, backup / ".codex-global-state.json.before")
+for suffix in ("", "-wal", "-shm"):
+    source = Path(str(database) + suffix)
+    if source.exists():
+        shutil.copy2(source, backup / source.name)
+
+migrated = 0
+if database.exists() and provider != "openai":
+    connection = sqlite3.connect(database)
+    try:
+        cursor = connection.execute(
+            "UPDATE threads SET model_provider = ? WHERE archived = 0 AND COALESCE(model_provider, '') IN ('', 'openai')",
+            (provider,),
+        )
+        migrated = cursor.rowcount
+        connection.commit()
+    finally:
+        connection.close()
 
 titles = {}
 if index.exists():
@@ -104,5 +144,6 @@ if state_path.exists():
         print("MadAPI local project recovery skipped: " + str(error))
 
 print(f"MadAPI local history recovered: {len(records)} conversations, {assigned} project mappings.")
+print(f"MadAPI local history provider migrated: {migrated} conversations to {provider}.")
 print("History backup created: " + str(backup))
 PY

@@ -1,4 +1,8 @@
-param([string]$CodexHome)
+param(
+    [string]$CodexHome,
+    [string]$ProviderId,
+    [string]$BackupPath
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -20,6 +24,76 @@ function Get-ProjectContainers([object]$Value) {
     foreach ($property in $Value.PSObject.Properties) { Get-ProjectContainers $property.Value }
 }
 
+function Get-CurrentProviderId([string]$ConfigPath) {
+    if (-not (Test-Path -LiteralPath $ConfigPath)) { return $null }
+    $config = [IO.File]::ReadAllText($ConfigPath, [Text.Encoding]::UTF8)
+    $match = [regex]::Match($config, '(?m)^\s*model_provider\s*=\s*"([A-Za-z0-9_-]+)"\s*$')
+    if (-not $match.Success) { return $null }
+    return $match.Groups[1].Value
+}
+
+function Backup-HistoryDatabase([string]$DatabasePath, [string]$BackupPath) {
+    foreach ($suffix in @('', '-wal', '-shm')) {
+        $source = $DatabasePath + $suffix
+        if (Test-Path -LiteralPath $source) {
+            [IO.File]::Copy($source, (Join-Path $BackupPath ([IO.Path]::GetFileName($source))), $false)
+        }
+    }
+}
+
+function Migrate-HistoryProvider([string]$DatabasePath, [string]$ProviderId) {
+    if (-not (Test-Path -LiteralPath $DatabasePath) -or $ProviderId -eq 'openai') { return 0 }
+    if ($ProviderId -notmatch '^[A-Za-z0-9_-]+$') { throw 'Current Codex provider identifier is invalid.' }
+    if (-not ('MadApiHistorySqlite' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class MadApiHistorySqlite
+{
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    private static extern int sqlite3_open16(string filename, out IntPtr db);
+
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int sqlite3_close_v2(IntPtr db);
+
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+    private static extern int sqlite3_exec(IntPtr db, string sql, IntPtr callback, IntPtr context, out IntPtr error);
+
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int sqlite3_changes(IntPtr db);
+
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void sqlite3_free(IntPtr pointer);
+
+    public static int MigrateOpenAIThreads(string path, string provider)
+    {
+        IntPtr db = IntPtr.Zero;
+        IntPtr error = IntPtr.Zero;
+        try
+        {
+            if (sqlite3_open16(path, out db) != 0)
+                throw new InvalidOperationException("Unable to open Codex history database.");
+
+            string sql =
+                "UPDATE threads SET model_provider = '" + provider + "'" +
+                " WHERE archived = 0 AND COALESCE(model_provider, '') IN ('', 'openai');";
+            if (sqlite3_exec(db, sql, IntPtr.Zero, IntPtr.Zero, out error) != 0)
+                throw new InvalidOperationException("Unable to migrate Codex history provider.");
+            return sqlite3_changes(db);
+        }
+        finally
+        {
+            if (error != IntPtr.Zero) sqlite3_free(error);
+            if (db != IntPtr.Zero) sqlite3_close_v2(db);
+        }
+    }
+}
+'@
+    }
+    return [MadApiHistorySqlite]::MigrateOpenAIThreads($DatabasePath, $ProviderId)
+}
+
 if ([string]::IsNullOrWhiteSpace($CodexHome)) {
     $userHome = [Environment]::GetFolderPath('UserProfile')
     $CodexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) { Join-Path $userHome '.codex' } else { [string]$env:CODEX_HOME }
@@ -28,14 +102,20 @@ if ([string]::IsNullOrWhiteSpace($CodexHome)) {
 $sessionsPath = Join-Path $CodexHome 'sessions'
 $indexPath = Join-Path $CodexHome 'session_index.jsonl'
 $statePath = Join-Path $CodexHome '.codex-global-state.json'
+$configPath = Join-Path $CodexHome 'config.toml'
+$databasePath = Join-Path $CodexHome 'state_5.sqlite'
 if (-not (Test-Path -LiteralPath $sessionsPath)) { Write-Output 'MadAPI local history recovery: no existing sessions.'; exit 0 }
+$providerId = if ([string]::IsNullOrWhiteSpace($ProviderId)) { Get-CurrentProviderId $configPath } else { $ProviderId.Trim() }
+if ([string]::IsNullOrWhiteSpace($providerId)) { throw 'Current Codex provider is missing; history was not changed.' }
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
-$backupPath = Join-Path $CodexHome ('madapi-history-backup-' + $stamp)
-New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+$backupPath = if ([string]::IsNullOrWhiteSpace($BackupPath)) { Join-Path $CodexHome ('madapi-history-backup-' + $stamp) } else { $BackupPath }
+New-Item -ItemType Directory -Path $backupPath -ErrorAction Stop | Out-Null
 if (Test-Path -LiteralPath $indexPath) { [IO.File]::Copy($indexPath, (Join-Path $backupPath 'session_index.jsonl.before'), $false) }
 if (Test-Path -LiteralPath $statePath) { [IO.File]::Copy($statePath, (Join-Path $backupPath '.codex-global-state.json.before'), $false) }
+Backup-HistoryDatabase $databasePath $backupPath
+$migratedThreads = Migrate-HistoryProvider $databasePath $providerId
 
 $existingTitles = @{}
 if (Test-Path -LiteralPath $indexPath) {
@@ -111,4 +191,5 @@ if (Test-Path -LiteralPath $statePath) {
 }
 
 Write-Output ('MadAPI local history recovered: ' + $records.Count + ' conversations, ' + $assigned + ' project mappings.')
+Write-Output ('MadAPI local history provider migrated: ' + $migratedThreads + ' conversations to ' + $providerId + '.')
 Write-Output ('History backup created: ' + $backupPath)

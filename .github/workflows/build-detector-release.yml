@@ -59,6 +59,10 @@ jobs:
               printf 'Skipping full-production Codex patch: %s\n' "$name"
               continue
             fi
+            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch" ]; then
+              printf 'Skipping full-production Codex patch: %s\n' "$name"
+              continue
+            fi
             if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-cpa-native-executor.patch" ]; then
               printf 'Skipping CPA-only patch: %s\n' "$name"
               continue

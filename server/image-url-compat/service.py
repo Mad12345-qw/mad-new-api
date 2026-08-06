@@ -46,6 +46,17 @@ except OSError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("image-url-compat")
 
+
+def loaded_source_sha256():
+    try:
+        return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    except OSError:
+        LOG.exception("unable to fingerprint loaded compatibility source")
+        return "unavailable"
+
+
+LOADED_SOURCE_SHA256 = loaded_source_sha256()
+
 HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -1060,7 +1071,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            raw = b'{"status":"ok"}'
+            raw = json.dumps(
+                {
+                    "status": "ok",
+                    "source_sha256": LOADED_SOURCE_SHA256,
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(raw)))

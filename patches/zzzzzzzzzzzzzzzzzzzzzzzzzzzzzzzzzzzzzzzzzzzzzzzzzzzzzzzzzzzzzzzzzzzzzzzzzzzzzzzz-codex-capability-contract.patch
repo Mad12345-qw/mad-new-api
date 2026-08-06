@@ -1,0 +1,463 @@
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+index f01d5ab5..b3930926 100644
+--- a/controller/codex_compat.go
++++ b/controller/codex_compat.go
+@@ -189,14 +189,19 @@ func CodexResponses(c *gin.Context) {
+ 		codexCompatibilityError(c, http.StatusBadGateway, fmt.Errorf("native Responses request failed: %w", err))
+ 		return
+ 	}
++	isStream := lo.FromPtrOr(responsesReq.Stream, false)
+ 	if resp.StatusCode != http.StatusOK {
+ 		defer resp.Body.Close()
++		if isStream {
++			writeCodexFailureStream(c, codexUpstreamErrorMessage(resp), "upstream_error")
++			return
++		}
+ 		proxyCodexErrorResponse(c, resp)
+ 		return
+ 	}
+ 	defer resp.Body.Close()
+ 	copyCodexTraceHeaders(c, resp)
+-	if err = proxyCodexNativeResponses(c, resp, originalBody, lo.FromPtrOr(responsesReq.Stream, false)); err != nil && !c.Writer.Written() {
++	if err = proxyCodexNativeResponses(c, resp, originalBody, isStream); err != nil && !c.Writer.Written() {
+ 		codexCompatibilityError(c, http.StatusBadGateway, err)
+ 	}
+ }
+@@ -280,22 +285,176 @@ func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, origin
+ 	c.Status(resp.StatusCode)
+ 	scanner := bufio.NewScanner(resp.Body)
+ 	scanner.Buffer(make([]byte, 64*1024), 32<<20)
+-	for scanner.Scan() {
+-		line := append([]byte(nil), scanner.Bytes()...)
+-		if bytes.HasPrefix(line, []byte("data:")) {
+-			payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+-			if len(payload) > 0 && !bytes.Equal(payload, []byte("[DONE]")) {
+-				if restored, err := relayconvert.RestoreCPAResponsesPayload(originalRequest, payload); err == nil {
+-					line = append([]byte("data: "), restored...)
++	frame := make([][]byte, 0, 4)
++	responseID := ""
++	started := false
++	terminal := false
++
++	flushFrame := func() error {
++		if len(frame) == 0 {
++			return nil
++		}
++		if terminal {
++			frame = frame[:0]
++			return nil
++		}
++		eventType := ""
++		payload := []byte(nil)
++		for i, rawLine := range frame {
++			line := rawLine
++			if bytes.HasPrefix(line, []byte("event:")) {
++				eventType = strings.TrimSpace(string(bytes.TrimPrefix(line, []byte("event:"))))
++			}
++			if bytes.HasPrefix(line, []byte("data:")) {
++				candidate := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
++				if len(candidate) > 0 && !bytes.Equal(candidate, []byte("[DONE]")) {
++					if restored, err := relayconvert.RestoreCPAResponsesPayload(originalRequest, candidate); err == nil {
++						candidate = restored
++						frame[i] = append([]byte("data: "), restored...)
++					}
++					payload = candidate
+ 				}
+ 			}
+ 		}
+-		if _, err := c.Writer.Write(append(line, '\n')); err != nil {
++
++		if len(payload) > 0 && json.Valid(payload) {
++			var event map[string]any
++			if json.Unmarshal(payload, &event) == nil {
++				if value, ok := event["type"].(string); ok && value != "" {
++					eventType = value
++				}
++				if response, ok := event["response"].(map[string]any); ok {
++					if id, ok := response["id"].(string); ok && id != "" {
++						responseID = id
++					}
++				}
++				if id, ok := event["id"].(string); ok && id != "" && responseID == "" {
++					responseID = id
++				}
++			}
++		}
++
++		if eventType == "error" || eventType == "response.error" {
++			message := codexEventErrorMessage(payload)
++			writeCodexTerminalEvent(c, "response.failed", responseID, message, "upstream_error")
++			terminal = true
++			frame = frame[:0]
++			return nil
++		}
++		if strings.HasPrefix(eventType, "response.") {
++			started = true
++		}
++		if eventType == "response.completed" || eventType == "response.failed" || eventType == "response.incomplete" {
++			terminal = true
++		}
++		for _, line := range frame {
++			if _, err := c.Writer.Write(append(line, '\n')); err != nil {
++				return err
++			}
++		}
++		if _, err := c.Writer.Write([]byte("\n")); err != nil {
+ 			return err
+ 		}
+ 		c.Writer.Flush()
++		frame = frame[:0]
++		return nil
++	}
++
++	for scanner.Scan() {
++		line := append([]byte(nil), scanner.Bytes()...)
++		if len(bytes.TrimSpace(line)) == 0 {
++			if err := flushFrame(); err != nil {
++				return err
++			}
++			continue
++		}
++		frame = append(frame, line)
++	}
++	if err := scanner.Err(); err != nil && !terminal {
++		writeCodexTerminalEvent(c, "response.incomplete", responseID, err.Error(), "stream_error")
++		terminal = true
++	}
++	if err := flushFrame(); err != nil {
++		return err
++	}
++	if !terminal {
++		eventType := "response.failed"
++		code := "empty_stream"
++		message := "upstream stream ended before producing a complete response"
++		if started {
++			eventType = "response.incomplete"
++			code = "stream_ended"
++			message = "upstream stream ended before its terminal event"
++		}
++		writeCodexTerminalEvent(c, eventType, responseID, message, code)
++	}
++	return nil
++}
++
++func codexUpstreamErrorMessage(resp *http.Response) string {
++	if resp == nil || resp.Body == nil {
++		return "upstream request failed"
++	}
++	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
++	if err != nil || len(bytes.TrimSpace(body)) == 0 {
++		return fmt.Sprintf("upstream request failed with status %d", resp.StatusCode)
++	}
++	if message := codexEventErrorMessage(body); message != "" {
++		return message
++	}
++	return strings.TrimSpace(string(body))
++}
++
++func codexEventErrorMessage(payload []byte) string {
++	if !json.Valid(payload) {
++		return strings.TrimSpace(string(payload))
++	}
++	var value map[string]any
++	if json.Unmarshal(payload, &value) != nil {
++		return strings.TrimSpace(string(payload))
++	}
++	if message, ok := value["message"].(string); ok && message != "" {
++		return message
++	}
++	if errValue, ok := value["error"].(map[string]any); ok {
++		if message, ok := errValue["message"].(string); ok && message != "" {
++			return message
++		}
++	}
++	return "upstream stream failed"
++}
++
++func writeCodexFailureStream(c *gin.Context, message string, code string) {
++	c.Header("Content-Type", "text/event-stream")
++	c.Header("Cache-Control", "no-cache")
++	c.Header("Connection", "keep-alive")
++	c.Status(http.StatusOK)
++	writeCodexTerminalEvent(c, "response.failed", "", message, code)
++}
++
++func writeCodexTerminalEvent(c *gin.Context, eventType string, responseID string, message string, code string) {
++	if responseID == "" {
++		responseID = fmt.Sprintf("resp_madapi_%d", time.Now().UnixNano())
++	}
++	status := "failed"
++	if eventType == "response.incomplete" {
++		status = "incomplete"
++	}
++	payload := map[string]any{
++		"type": eventType,
++		"response": map[string]any{
++			"id":     responseID,
++			"object": "response",
++			"status": status,
++			"error": map[string]any{
++				"code":    code,
++				"message": message,
++			},
++		},
+ 	}
+-	return scanner.Err()
++	encoded, _ := json.Marshal(payload)
++	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, encoded)
++	c.Writer.Flush()
+ }
+ 
+ func copyCodexResponseHeaders(c *gin.Context, resp *http.Response) {
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index 3c7ce3fc..05525211 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -616,6 +616,73 @@ func TestCodexResponsesPassesNativeResponsesStreamEvents(t *testing.T) {
+ 	require.Contains(t, body, "response.completed")
+ }
+ 
++func TestCodexResponsesTurnsPostOutputErrorIntoOneTerminalFailure(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "text/event-stream")
++		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-broken\",\"status\":\"in_progress\"}}\n\n")
++		_, _ = fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
++		_, _ = fmt.Fprint(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"provider disconnected\"}}\n\n")
++	}), "gpt-test")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","stream":true}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++	body := recorder.Body.String()
++	require.Contains(t, body, "partial")
++	require.NotContains(t, body, "event: error")
++	require.Equal(t, 1, strings.Count(body, "event: response.failed"))
++	require.Contains(t, body, "provider disconnected")
++}
++
++func TestCodexResponsesTurnsAbruptStreamEndIntoIncomplete(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "text/event-stream")
++		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-short\",\"status\":\"in_progress\"}}\n\n")
++		_, _ = fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
++	}), "gpt-test")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","stream":true}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: response.incomplete"))
++}
++
++func TestCodexResponsesTurnsExhaustedPreEventFailureIntoTerminalStream(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++		w.WriteHeader(http.StatusServiceUnavailable)
++		_, _ = io.WriteString(w, `{"error":{"message":"no weighted channel is currently available"}}`)
++	}), "gpt-test")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","stream":true}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++	require.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
++	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: response.failed"))
++	require.Contains(t, recorder.Body.String(), "no weighted channel")
++}
++
+ func TestCodexResponsesRejectsFixedPriceModelBeforeInnerRequest(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	var calls atomic.Int32
+diff --git a/relay/cpa_native_codex.go b/relay/cpa_native_codex.go
+index 7caece48..57292eb9 100644
+--- a/relay/cpa_native_codex.go
++++ b/relay/cpa_native_codex.go
+@@ -64,6 +64,11 @@ type madAPICodexDispatchRequest struct {
+ 	FirstEventTimeoutSeconds int               `json:"first_event_timeout_seconds,omitempty"`
+ }
+ 
++type madAPICodexCapability struct {
++	WireProtocol     string
++	FirstEventWindow time.Duration
++}
++
+ func isMadAPICodexNativeRequest(c *gin.Context) bool {
+ 	if c == nil || c.Request == nil || !madAPILoopbackRemote(c.Request.RemoteAddr) {
+ 		return false
+@@ -158,17 +163,52 @@ func relayMadAPICodexNative(c *gin.Context, info *relaycommon.RelayInfo) *types.
+ 	return nil
+ }
+ 
+-func madAPICodexFirstEventTimeoutForModel(model string) time.Duration {
+-	switch strings.ToLower(strings.TrimSpace(model)) {
+-	case "gpt-5.5", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna":
+-		return 60 * time.Second
++func madAPICodexCapabilityFor(channelType int, model string) madAPICodexCapability {
++	family := madAPICodexModelFamily(model)
++	capability := madAPICodexCapability{
++		WireProtocol:     madAPICodexProtocolOpenAIChat,
++		FirstEventWindow: 60 * time.Second,
++	}
++
++	switch {
++	case family == "gpt" && channelType == appconstant.ChannelTypeCodex:
++		capability.WireProtocol = madAPICodexProtocolOpenAIResponses
++	case family == "claude" && channelType == appconstant.ChannelTypeAnthropic:
++		capability.WireProtocol = madAPICodexProtocolAnthropicMessages
++	case family == "gemini" && channelType == appconstant.ChannelTypeGemini:
++		capability.WireProtocol = madAPICodexProtocolGeminiGenerate
++	case family == "grok" && channelType == appconstant.ChannelTypeXai:
++		capability.WireProtocol = madAPICodexProtocolXAIResponses
++	}
++	return capability
++}
++
++func madAPICodexModelFamily(model string) string {
++	model = strings.ToLower(strings.TrimSpace(model))
++	switch {
++	case strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3") || strings.HasPrefix(model, "o4"):
++		return "gpt"
++	case strings.HasPrefix(model, "claude-"):
++		return "claude"
++	case strings.HasPrefix(model, "gemini-"):
++		return "gemini"
++	case strings.HasPrefix(model, "grok-"):
++		return "grok"
++	case strings.HasPrefix(model, "kimi-"):
++		return "kimi"
++	case strings.HasPrefix(model, "deepseek-"):
++		return "deepseek"
+ 	default:
+-		return 0
++		return "compatible"
+ 	}
+ }
+ 
++func madAPICodexFirstEventTimeoutForModel(model string) time.Duration {
++	return madAPICodexCapabilityFor(0, model).FirstEventWindow
++}
++
+ func madAPICPADispatchClientForFirstEvent(model string) *http.Client {
+-	timeout := madAPICodexFirstEventTimeoutForModel(model)
++	timeout := madAPICodexCapabilityFor(0, model).FirstEventWindow
+ 	if timeout <= 0 {
+ 		return madAPICPADispatchClient
+ 	}
+@@ -184,20 +224,7 @@ func madAPICPADispatchClientForFirstEvent(model string) *http.Client {
+ }
+ 
+ func madAPICodexWireProtocol(channelType int, model string) string {
+-	switch channelType {
+-	case appconstant.ChannelTypeCodex:
+-		return madAPICodexProtocolOpenAIResponses
+-	case appconstant.ChannelTypeAnthropic:
+-		return madAPICodexProtocolAnthropicMessages
+-	case appconstant.ChannelTypeGemini:
+-		return madAPICodexProtocolGeminiGenerate
+-	case appconstant.ChannelTypeXai:
+-		return madAPICodexProtocolXAIResponses
+-	case appconstant.ChannelTypeOpenAI:
+-		return madAPICodexProtocolOpenAIChat
+-	}
+-	_ = model
+-	return madAPICodexProtocolOpenAIChat
++	return madAPICodexCapabilityFor(channelType, model).WireProtocol
+ }
+ 
+ func madAPICodexBaseURLForProtocol(baseURL string, wireProtocol string) string {
+@@ -254,12 +281,12 @@ func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*m
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	wireProtocol := madAPICodexWireProtocol(info.ChannelType, info.UpstreamModelName)
++	capability := madAPICodexCapabilityFor(info.ChannelType, info.UpstreamModelName)
+ 	return &madAPICodexDispatchRequest{
+ 		ChannelType:              info.ChannelType,
+ 		ChannelID:                info.ChannelId,
+-		WireProtocol:             wireProtocol,
+-		BaseURL:                  madAPICodexBaseURLForProtocol(info.ChannelBaseUrl, wireProtocol),
++		WireProtocol:             capability.WireProtocol,
++		BaseURL:                  madAPICodexBaseURLForProtocol(info.ChannelBaseUrl, capability.WireProtocol),
+ 		APIKey:                   info.ApiKey,
+ 		Model:                    info.UpstreamModelName,
+ 		Headers:                  headers,
+@@ -267,6 +294,6 @@ func madAPICodexDispatchPayload(c *gin.Context, info *relaycommon.RelayInfo) (*m
+ 		Stream:                   info.IsStream,
+ 		Compact:                  info.RelayMode == relayconstant.RelayModeResponsesCompact,
+ 		RequestPath:              info.RequestURLPath,
+-		FirstEventTimeoutSeconds: int(madAPICodexFirstEventTimeoutForModel(info.OriginModelName) / time.Second),
++		FirstEventTimeoutSeconds: int(capability.FirstEventWindow / time.Second),
+ 	}, nil
+ }
+diff --git a/relay/cpa_native_codex_test.go b/relay/cpa_native_codex_test.go
+index fd710a56..0973defc 100644
+--- a/relay/cpa_native_codex_test.go
++++ b/relay/cpa_native_codex_test.go
+@@ -32,22 +32,21 @@ func TestMadAPICodexNativeRequestRequiresLoopbackAndToken(t *testing.T) {
+ 	}
+ }
+ 
+-func TestMadAPICodexFirstEventDeadlineOnlyAppliesToMeasuredGPTModels(t *testing.T) {
+-	for _, model := range []string{"gpt-5.5", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna"} {
++func TestMadAPICodexFirstEventDeadlineAppliesToEveryConversationModel(t *testing.T) {
++	for _, model := range []string{"gpt-5.5", "gpt-5.6-terra", "claude-opus-5", "gemini-3.6-flash", "grok-4.5", "deepseek-v4-pro", "kimi-k3"} {
+ 		if timeout := madAPICodexFirstEventTimeoutForModel(model); timeout != 60*time.Second {
+ 			t.Fatalf("model %s timeout = %s, want 60 seconds", model, timeout)
+ 		}
+ 	}
+-	if timeout := madAPICodexFirstEventTimeoutForModel("deepseek-v4-pro"); timeout != 0 {
+-		t.Fatal("slow-thinking DeepSeek model must keep the existing dispatch timeout")
+-	}
+ 	client := madAPICPADispatchClientForFirstEvent("gpt-5.6-sol")
+ 	transport, ok := client.Transport.(*http.Transport)
+ 	if !ok || transport.ResponseHeaderTimeout != 70*time.Second {
+ 		t.Fatalf("first-event transport timeout = %#v, want 70 seconds", client.Transport)
+ 	}
+-	if madAPICPADispatchClientForFirstEvent("deepseek-v4-pro") != madAPICPADispatchClient {
+-		t.Fatal("unmeasured model must keep the existing dispatch client")
++	deepseekClient := madAPICPADispatchClientForFirstEvent("deepseek-v4-pro")
++	deepseekTransport, ok := deepseekClient.Transport.(*http.Transport)
++	if !ok || deepseekTransport.ResponseHeaderTimeout != 70*time.Second {
++		t.Fatalf("DeepSeek first-event transport timeout = %#v, want 70 seconds", deepseekClient.Transport)
+ 	}
+ }
+ 
+@@ -95,8 +94,8 @@ func TestMadAPICodexDispatchPayloadPreservesSelectedChannel(t *testing.T) {
+ 	if got := payload.Headers["x-provider-test"]; got != "yes" {
+ 		t.Fatalf("resolved header = %q", got)
+ 	}
+-	if payload.FirstEventTimeoutSeconds != 0 {
+-		t.Fatalf("unmeasured model timeout = %d, want 0", payload.FirstEventTimeoutSeconds)
++	if payload.FirstEventTimeoutSeconds != 60 {
++		t.Fatalf("conversation model timeout = %d, want 60", payload.FirstEventTimeoutSeconds)
+ 	}
+ 	info.OriginModelName = "gpt-5.6-sol"
+ 	payload, err = madAPICodexDispatchPayload(c, info)
+@@ -122,6 +121,8 @@ func TestMadAPICodexWireProtocolUsesModelAndChannelContract(t *testing.T) {
+ 		{"native Claude uses Messages", appconstant.ChannelTypeAnthropic, "claude-opus-5", "https://claude.example/v1", madAPICodexProtocolAnthropicMessages, "https://claude.example"},
+ 		{"native Gemini uses generateContent", appconstant.ChannelTypeGemini, "gemini-3.6-flash", "https://gemini.example/v1beta", madAPICodexProtocolGeminiGenerate, "https://gemini.example"},
+ 		{"native xAI uses Responses", appconstant.ChannelTypeXai, "grok-4.5", "https://xai.example", madAPICodexProtocolXAIResponses, "https://xai.example/v1"},
++		{"Claude model on xAI-compatible channel stays compatible", appconstant.ChannelTypeXai, "claude-opus-5", "https://compat.example", madAPICodexProtocolOpenAIChat, "https://compat.example/v1"},
++		{"Grok model on Anthropic-compatible channel stays compatible", appconstant.ChannelTypeAnthropic, "grok-4.5", "https://compat.example", madAPICodexProtocolOpenAIChat, "https://compat.example/v1"},
+ 		{"custom Kimi stays compatible", appconstant.ChannelTypeMoonshot, "kimi-k3", "https://kimi.example", madAPICodexProtocolOpenAIChat, "https://kimi.example/v1"},
+ 		{"DeepSeek stays compatible", appconstant.ChannelTypeDeepSeek, "deepseek-v4-flash", "https://deepseek.example/v1", madAPICodexProtocolOpenAIChat, "https://deepseek.example/v1"},
+ 		{"Codex channel uses Responses", appconstant.ChannelTypeCodex, "gpt-5.6-terra", "https://codex.example", madAPICodexProtocolOpenAIResponses, "https://codex.example/v1"},

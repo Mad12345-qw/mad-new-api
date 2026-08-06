@@ -98,6 +98,9 @@ jobs:
             if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch" ]; then
               continue
             fi
+            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch" ]; then
+              continue
+            fi
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done
@@ -107,6 +110,8 @@ jobs:
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch"
           git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch"
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch"
+          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch"
+          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch"
 
       - name: Verify protected Mad API customizations
         working-directory: source
@@ -300,6 +305,8 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0014-madapi-protocol-routing.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0015-madapi-production-hardening.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0015-madapi-production-hardening.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0016-openai-inline-thinking-normalization.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0016-openai-inline-thinking-normalization.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \
@@ -314,6 +321,8 @@ jobs:
             internal/translator/claude/openai/responses/claude_openai-responses_response.go \
             internal/translator/claude/openai/responses/claude_openai-responses_response_test.go \
             internal/translator/openai/openai/responses/openai_openai-responses_request_test.go \
+            internal/translator/openai/openai/responses/openai_openai-responses_response.go \
+            internal/translator/openai/openai/responses/openai_openai-responses_response_test.go \
             internal/translator/openai/openai/responses/openai_openai-responses_tools.go \
             internal/watcher/synthesizer/config.go \
             internal/watcher/synthesizer/config_test.go \

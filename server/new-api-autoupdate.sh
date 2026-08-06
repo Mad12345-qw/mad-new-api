@@ -168,8 +168,13 @@ sha256sum -c image-url-compat.service.sha256
 sha256sum -c patch-image-compat-nginx.py.sha256
 release_sha=$(sha256sum mad-new-api.tar.gz | awk '{print $1}')
 compat_sha=$(cat image-url-compat.py.sha256 image-url-compat.service.sha256 patch-image-compat-nginx.py.sha256 | sha256sum | awk '{print $1}')
+expected_compat_source_sha=$(awk '{print $1}' image-url-compat.py.sha256)
+running_compat_source_sha=$(curl -fsS --max-time 3 "$COMPAT_HEALTH_URL" 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_sha256", ""))' 2>/dev/null || true)
 
-if [ ! -f "$COMPAT_STATE_FILE" ] || [ "$(cat "$COMPAT_STATE_FILE")" != "$compat_sha" ]; then
+if [ ! -f "$COMPAT_STATE_FILE" ] \
+  || [ "$(cat "$COMPAT_STATE_FILE")" != "$compat_sha" ] \
+  || [ "$running_compat_source_sha" != "$expected_compat_source_sha" ]; then
   compat_backup_dir="$COMPOSE_DIR/backups/image-compat-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$compat_backup_dir"
   [ ! -f "$COMPAT_SCRIPT" ] || cp -a "$COMPAT_SCRIPT" "$compat_backup_dir/service.py"
@@ -184,7 +189,9 @@ if [ ! -f "$COMPAT_STATE_FILE" ] || [ "$(cat "$COMPAT_STATE_FILE")" != "$compat_
 
   compat_healthy=0
   for _ in $(seq 1 30); do
-    if curl -fsS --max-time 3 "$COMPAT_HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; then
+    running_compat_source_sha=$(curl -fsS --max-time 3 "$COMPAT_HEALTH_URL" 2>/dev/null \
+      | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("source_sha256", "") if data.get("status") == "ok" else "")' 2>/dev/null || true)
+    if [ "$running_compat_source_sha" = "$expected_compat_source_sha" ]; then
       compat_healthy=1
       break
     fi

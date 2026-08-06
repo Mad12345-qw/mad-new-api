@@ -27,6 +27,7 @@ temp_plist_path="$codex_home/madapi-model-catalog.$transaction_id.plist"
 body_path="$codex_home/config.toml.madapi.$transaction_id.body"
 backup_path=
 auth_backup_path=
+history_backup_path=
 had_config=0
 had_auth=0
 config_installed=0
@@ -170,6 +171,11 @@ else
 fi
 
 cleanup() {
+  if [ "$success" -ne 1 ] && [ -n "$history_backup_path" ] && [ -d "$history_backup_path" ]; then
+    for name in session_index.jsonl .codex-global-state.json state_5.sqlite state_5.sqlite-wal state_5.sqlite-shm; do
+      if [ -f "$history_backup_path/$name" ]; then cp -p "$history_backup_path/$name" "$codex_home/$name"; else rm -f "$codex_home/$name"; fi
+    done
+  fi
   if [ "$success" -ne 1 ] && [ "$auth_changed" -eq 1 ]; then
     if [ "$had_auth" -eq 1 ] && [ -n "$auth_backup_path" ] && [ -f "$auth_backup_path" ]; then cp "$auth_backup_path" "$auth_path"; else rm -f "$auth_path"; fi
   fi
@@ -311,12 +317,14 @@ EOF
     /bin/launchctl bootstrap "gui/$uid" "$plist_path"
 fi
 rm -f "$models_cache_path"
-/bin/sh "$history_script_path" || printf '%s\n' 'MadAPI local history recovery skipped.' >&2
+history_backup_path="$codex_home/madapi-install-history-backup-$transaction_id"
+MADAPI_HISTORY_PROVIDER="$provider_id" MADAPI_HISTORY_BACKUP_DIR="$history_backup_path" /bin/sh "$history_script_path"
 success=1
 
 printf 'MadAPI Codex desktop configuration installed: %s\n' "$config_path"
 [ -z "$backup_path" ] || printf 'Backup created: %s\n' "$backup_path"
 [ -z "$auth_backup_path" ] || printf 'Authentication backup created: %s\n' "$auth_backup_path"
+[ -z "$history_backup_path" ] || printf 'History backup created: %s\n' "$history_backup_path"
 if [ "$requested_login_mode" = oauth ] && [ "$existing_auth_kind" != oauth ]; then
   printf '%s\n' 'OAuth mode prepared. Restart Codex Desktop and sign in with ChatGPT.'
 elif [ "$requested_login_mode" = apikey ]; then

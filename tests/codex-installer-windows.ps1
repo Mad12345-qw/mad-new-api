@@ -108,12 +108,33 @@ try {
     $historySession = Join-Path $historyHome 'sessions\2026\08\04\rollout-2026-08-04T00-00-00-00000000-0000-7000-8000-000000000001.jsonl'
     New-Item -ItemType Directory -Path (Split-Path -Parent $historySession), $historyProject -Force | Out-Null
     Write-Utf8 $historySession ('{"timestamp":"2026-08-04T00:00:00Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000001","timestamp":"2026-08-04T00:00:00Z","cwd":"' + $historyProject.Replace('\', '\\') + '"}}')
+    Write-Utf8 (Join-Path $historyHome 'session_index.jsonl') '{"id":"00000000-0000-7000-8000-000000000001","thread_name":"Existing conversation","updated_at":"2026-08-04T00:00:00Z"}'
+    Write-Utf8 (Join-Path $historyHome 'config.toml') 'model_provider = "newapi"'
+    $historyDatabase = Join-Path $historyHome 'state_5.sqlite'
+    @'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+connection.execute("create table threads (id text primary key, model_provider text, archived integer not null, source text, thread_source text)")
+connection.execute("insert into threads (id, model_provider, archived, source, thread_source) values (?, ?, ?, ?, ?)", ("00000000-0000-7000-8000-000000000001", "openai", 0, "vscode", "user"))
+connection.commit()
+connection.close()
+'@ | python - $historyDatabase
     Write-Utf8 (Join-Path $historyHome '.codex-global-state.json') ('{"local-projects":{"local-test":{"rootPaths":["' + $historyProject.Replace('\', '\\') + '"]}},"projectless-thread-ids":["00000000-0000-7000-8000-000000000001"]}')
-    & (Join-Path (Split-Path -Parent $InstallerPath) 'restore-history.ps1') -CodexHome $historyHome
+    & (Join-Path (Split-Path -Parent $InstallerPath) 'restore-history.ps1') -CodexHome $historyHome -ProviderId 'newapi'
     $historyIndex = Get-Content -LiteralPath (Join-Path $historyHome 'session_index.jsonl') -Raw | ConvertFrom-Json
-    Assert-True ($historyIndex.id -eq '00000000-0000-7000-8000-000000000001') 'History recovery did not rebuild the session index.'
+    Assert-True ($historyIndex.thread_name -eq 'Existing conversation') 'History recovery changed the existing session index.'
     $historyState = Get-Content -LiteralPath (Join-Path $historyHome '.codex-global-state.json') -Raw | ConvertFrom-Json
     Assert-True ($historyState.'thread-project-assignments'.'00000000-0000-7000-8000-000000000001'.projectId -eq 'local-test') 'History recovery did not restore project ownership.'
+    $historyProvider = @'
+import sqlite3
+import sys
+connection = sqlite3.connect(sys.argv[1])
+print(connection.execute("select model_provider from threads where id = ?", ("00000000-0000-7000-8000-000000000001",)).fetchone()[0])
+connection.close()
+'@ | python - $historyDatabase
+    Assert-True ($historyProvider.Trim() -eq 'newapi') 'History recovery did not migrate the active thread provider.'
     Assert-True (([IO.File]::ReadAllText((Join-Path $codexHome 'madapi-cockpit-model-catalog.json'))).Contains('silent-launcher-test')) 'OAuth silent refresh launcher did not update the catalog.'
     Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json')) 'OAuth catalog file is missing.'
     $backup = @(Get-ChildItem -LiteralPath $codexHome -Filter 'config.toml.madapi-backup-*' -File)[0]

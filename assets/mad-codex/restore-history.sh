@@ -2,65 +2,83 @@
 set -eu
 
 codex_home=${CODEX_HOME:-$HOME/.codex}
-if [ ! -d "$codex_home/sessions" ]; then
-  printf '%s\n' 'MadAPI local history recovery: no existing sessions.'
-  exit 0
+
+config_path=$codex_home/config.toml
+[ -f "$config_path" ] || { printf '%s\n' 'MadAPI local history recovery skipped: config.toml is missing.' >&2; exit 1; }
+provider=${MADAPI_HISTORY_PROVIDER:-}
+if [ -z "$provider" ]; then
+  provider=$(awk '
+  /^[[:space:]]*\[/ { exit }
+  /^[[:space:]]*model_provider[[:space:]]*=/ {
+    line = $0
+    sub(/^[^=]*=[[:space:]]*"/, "", line)
+    sub(/".*/, "", line)
+    print line
+    exit
+  }
+' "$config_path")
 fi
+case "$provider" in
+  ''|*[!A-Za-z0-9_-]*) printf '%s\n' 'MadAPI local history recovery skipped: current provider is invalid.' >&2; exit 1 ;;
+esac
 
 if ! command -v python3 >/dev/null 2>&1; then
   printf '%s\n' 'MadAPI local history recovery skipped: python3 is unavailable.' >&2
   exit 0
 fi
 
-CODEX_HOME="$codex_home" python3 - <<'PY'
+CODEX_HOME="$codex_home" MADAPI_HISTORY_PROVIDER="$provider" MADAPI_HISTORY_BACKUP_DIR="${MADAPI_HISTORY_BACKUP_DIR:-}" python3 - <<'PY'
 import json
 import os
 import shutil
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 root = Path(os.environ["CODEX_HOME"])
+provider = os.environ["MADAPI_HISTORY_PROVIDER"]
 sessions = root / "sessions"
 index = root / "session_index.jsonl"
 state_path = root / ".codex-global-state.json"
+database = root / "state_5.sqlite"
 stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-backup = root / f"madapi-history-backup-{stamp}"
+backup_override = os.environ.get("MADAPI_HISTORY_BACKUP_DIR", "").strip()
+backup = Path(backup_override) if backup_override else root / f"madapi-history-backup-{stamp}"
 backup.mkdir(exist_ok=False)
 if index.exists():
     shutil.copy2(index, backup / "session_index.jsonl.before")
 if state_path.exists():
     shutil.copy2(state_path, backup / ".codex-global-state.json.before")
+for suffix in ("", "-wal", "-shm"):
+    source = Path(str(database) + suffix)
+    if source.exists():
+        shutil.copy2(source, backup / source.name)
 
-titles = {}
-if index.exists():
-    for line in index.read_text(encoding="utf-8").splitlines():
-        try:
-            item = json.loads(line)
-            if item.get("id") and item.get("thread_name"):
-                titles[item["id"]] = item["thread_name"]
-        except json.JSONDecodeError:
-            pass
+migrated = 0
+if database.exists() and provider != "openai":
+    connection = sqlite3.connect(database)
+    try:
+        cursor = connection.execute(
+            "UPDATE threads SET model_provider = ? WHERE archived = 0 AND source = 'vscode' AND thread_source = 'user' AND model_provider = 'openai'",
+            (provider,),
+        )
+        migrated = cursor.rowcount
+        connection.commit()
+    finally:
+        connection.close()
 
 records = []
-for path in sessions.rglob("rollout-*.jsonl"):
-    try:
-        first = path.open(encoding="utf-8").readline()
-        event = json.loads(first)
-        payload = event.get("payload", {})
-        if event.get("type") != "session_meta" or not payload.get("id"):
-            continue
-        raw_time = payload.get("timestamp", "")
-        parsed = datetime.fromisoformat(raw_time.replace("Z", "+00:00")) if raw_time else datetime.fromtimestamp(0, timezone.utc)
-        records.append({"id": payload["id"], "cwd": payload.get("cwd", ""), "updated_at": parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")})
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
-records.sort(key=lambda item: (item["updated_at"], item["id"]))
-
-with index.with_suffix(".jsonl.tmp").open("w", encoding="utf-8", newline="\n") as handle:
-    for record in records:
-        title = titles.get(record["id"]) or Path(record["cwd"]).name or "Recovered conversation"
-        handle.write(json.dumps({"id": record["id"], "thread_name": title, "updated_at": record["updated_at"]}, ensure_ascii=False) + "\n")
-os.replace(index.with_suffix(".jsonl.tmp"), index)
+if sessions.is_dir():
+    for path in sessions.rglob("rollout-*.jsonl"):
+        try:
+            first = path.open(encoding="utf-8").readline()
+            event = json.loads(first)
+            payload = event.get("payload", {})
+            if event.get("type") != "session_meta" or not payload.get("id"):
+                continue
+            records.append({"id": payload["id"], "cwd": payload.get("cwd", "")})
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
 
 assigned = 0
 assigned_ids = set()
@@ -103,6 +121,7 @@ if state_path.exists():
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print("MadAPI local project recovery skipped: " + str(error))
 
-print(f"MadAPI local history recovered: {len(records)} conversations, {assigned} project mappings.")
+print(f"MadAPI local history recovered: {migrated} conversations, {assigned} project mappings.")
+print(f"MadAPI local history provider migrated: {migrated} conversations to {provider}.")
 print("History backup created: " + str(backup))
 PY

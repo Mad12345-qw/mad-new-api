@@ -40,9 +40,12 @@ class PatchNginxTests(unittest.TestCase):
         result = patch_nginx.reconcile_routes(BASE)
         self.assertIn("location = /codex/v1/models", result)
         self.assertIn("location = /codex/cockpit/v1/models", result)
-        self.assertIn("proxy_pass http://127.0.0.1:8318/v1/;", result)
-        self.assertIn("proxy_pass http://127.0.0.1:8319/v1/;", result)
-        self.assertIn("X-MadAPI-Authorization $http_authorization", result)
+        self.assertEqual(result.count("proxy_pass http://127.0.0.1:3001;"), 5)
+        self.assertNotIn("proxy_pass http://127.0.0.1:8318/v1/;", result)
+        self.assertNotIn("proxy_pass http://127.0.0.1:8319/v1/;", result)
+        self.assertNotIn("X-MadAPI-Authorization", result)
+        self.assertNotIn("Bearer madapi-codex-gateway", result)
+        self.assertIn("proxy_set_header Authorization $http_authorization", result)
         self.assertLess(result.index("location = /codex/v1/models"), result.index("location / {"))
 
     def test_is_idempotent(self):
@@ -53,8 +56,9 @@ class PatchNginxTests(unittest.TestCase):
 
     def test_replaces_legacy_front_route(self):
         result = patch_nginx.reconcile_routes(LEGACY)
-        self.assertEqual(result.count("proxy_pass http://127.0.0.1:8318/v1/;"), 1)
-        self.assertIn("proxy_pass http://127.0.0.1:8319/v1/;", result)
+        self.assertEqual(result.count("proxy_pass http://127.0.0.1:3001;"), 5)
+        self.assertNotIn("proxy_pass http://127.0.0.1:8318/v1/;", result)
+        self.assertNotIn("proxy_pass http://127.0.0.1:8319/v1/;", result)
 
     def test_rejects_unmanaged_codex_route(self):
         unmanaged = BASE.replace(

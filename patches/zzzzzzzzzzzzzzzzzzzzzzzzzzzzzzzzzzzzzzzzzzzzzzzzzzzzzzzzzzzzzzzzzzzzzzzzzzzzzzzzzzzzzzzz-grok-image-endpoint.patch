@@ -1,0 +1,55 @@
+diff --git a/common/model.go b/common/model.go
+index 4ebc7b53..1c09f8ce 100644
+--- a/common/model.go
++++ b/common/model.go
+@@ -13,6 +13,8 @@ var (
+ 		"dall-e-3",
+ 		"dall-e-2",
+ 		"gpt-image-1",
++		"gpt-image-2",
++		"grok-imagine-image",
+ 		"prefix:imagen-",
+ 		"flux-",
+ 		"flux.1-",
+diff --git a/common/model_test.go b/common/model_test.go
+new file mode 100644
+index 00000000..7d0d0d35
+--- /dev/null
++++ b/common/model_test.go
+@@ -0,0 +1,36 @@
++package common
++
++import (
++	"testing"
++
++	"github.com/QuantumNous/new-api/constant"
++)
++
++func TestIsImageGenerationModelRecognizesGrokImagineImages(t *testing.T) {
++	tests := []struct {
++		model string
++		want  bool
++	}{
++		{"grok-imagine-image", true},
++		{"grok-imagine-image-quality", true},
++		{"grok-imagine-image-pro", true},
++		{"gpt-image-2", true},
++		{"gpt-image-2-4k", true},
++		{"grok-imagine-video", false},
++		{"grok-4.5", false},
++	}
++	for _, test := range tests {
++		t.Run(test.model, func(t *testing.T) {
++			if got := IsImageGenerationModel(test.model); got != test.want {
++				t.Fatalf("IsImageGenerationModel(%q) = %v, want %v", test.model, got, test.want)
++			}
++		})
++	}
++}
++
++func TestGrokImagineImagePrefersImageGenerationEndpoint(t *testing.T) {
++	endpoints := GetEndpointTypesByChannelType(constant.ChannelTypeXai, "grok-imagine-image-quality")
++	if len(endpoints) == 0 || endpoints[0] != constant.EndpointTypeImageGeneration {
++		t.Fatalf("endpoint types = %v, want image generation first", endpoints)
++	}
++}

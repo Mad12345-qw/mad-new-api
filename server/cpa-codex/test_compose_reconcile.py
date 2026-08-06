@@ -28,6 +28,8 @@ class ComposeReconcileTests(unittest.TestCase):
         result = compose_reconcile.reconcile_compose(BASE)
         self.assertIn("MADAPI_CODEX_DISPATCH_TOKEN: ${MADAPI_CODEX_DISPATCH_TOKEN}", result)
         self.assertIn("MADAPI_CPA_DISPATCH_URL: http://cpa-codex:8317/internal/madapi/codex/execute", result)
+        self.assertIn("MADAPI_CPA_CANARY_DISPATCH_URL: http://cpa-codex-canary:8317/internal/madapi/codex/execute", result)
+        self.assertIn("MADAPI_CPA_CANARY_COCKPIT_DISPATCH_URL: http://cpa-codex-cockpit-canary:8317/internal/madapi/codex/execute", result)
         self.assertIn("MADAPI_INTERNAL_CATALOG_TOKEN: ${MADAPI_INTERNAL_CATALOG_TOKEN}", result)
         self.assertIn("127.0.0.1:8318:8317", result)
         self.assertIn("127.0.0.1:8319:8317", result)

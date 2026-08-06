@@ -43,7 +43,19 @@ class PatchNginxTests(unittest.TestCase):
         self.assertIn("proxy_pass http://127.0.0.1:8318/v1/;", result)
         self.assertIn("proxy_pass http://127.0.0.1:8319/v1/;", result)
         self.assertIn("X-MadAPI-Authorization $http_authorization", result)
+        self.assertIn("location ^~ /codex-canary/v1/", result)
+        self.assertIn("location ^~ /codex-canary/cockpit/v1/", result)
+        self.assertIn("X-MadAPI-Codex-Canary 1", result)
         self.assertLess(result.index("location = /codex/v1/models"), result.index("location / {"))
+
+    def test_direct_mode_keeps_canary_header_only_on_newapi_routes(self):
+        result = patch_nginx.reconcile_routes(BASE, mode="direct")
+        primary = result[result.index("location ^~ /codex/v1/"):result.index("location ^~ /codex/cockpit/v1/")]
+        self.assertIn("proxy_pass http://127.0.0.1:3001;", primary)
+        self.assertIn("X-MadAPI-Codex-Canary 1", primary)
+        self.assertNotIn("127.0.0.1:8318", primary)
+        cockpit = result[result.index("location ^~ /codex/cockpit/v1/"):result.index("location = /codex-canary/v1/models")]
+        self.assertIn("X-MadAPI-Codex-Cockpit 1", cockpit)
 
     def test_is_idempotent(self):
         first = patch_nginx.reconcile_routes(BASE)

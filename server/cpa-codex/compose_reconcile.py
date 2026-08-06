@@ -82,6 +82,8 @@ def reconcile_compose(source: str) -> str:
         {
             "MADAPI_CODEX_DISPATCH_TOKEN": "${MADAPI_CODEX_DISPATCH_TOKEN}",
             "MADAPI_CPA_DISPATCH_URL": "http://cpa-codex:8317/internal/madapi/codex/execute",
+            "MADAPI_CPA_CANARY_DISPATCH_URL": "http://cpa-codex-canary:8317/internal/madapi/codex/execute",
+            "MADAPI_CPA_CANARY_COCKPIT_DISPATCH_URL": "http://cpa-codex-cockpit-canary:8317/internal/madapi/codex/execute",
             "MADAPI_INTERNAL_CATALOG_TOKEN": "${MADAPI_INTERNAL_CATALOG_TOKEN}",
         },
     )

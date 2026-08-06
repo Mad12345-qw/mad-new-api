@@ -212,8 +212,7 @@ if [ -f "$STATE_FILE" ] \
   install_updater
   install_cpa_deployer
   install_error_alert
-  "$CPA_DEPLOY_SCRIPT"
-  logger -t new-api-autoupdate "already current: $release_sha"
+  logger -t new-api-autoupdate "already current: $release_sha; CPA containers left untouched"
   exit 0
 fi
 
@@ -251,8 +250,7 @@ if [ "$healthy" -eq 1 ]; then
   install_updater
   install_cpa_deployer
   install_error_alert
-  "$CPA_DEPLOY_SCRIPT"
-  logger -t new-api-autoupdate "release deployed successfully: $release_sha"
+  logger -t new-api-autoupdate "release deployed successfully: $release_sha; CPA containers left untouched"
   exit 0
 fi
 

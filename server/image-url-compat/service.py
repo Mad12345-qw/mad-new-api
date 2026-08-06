@@ -70,6 +70,11 @@ HOP_HEADERS = {
     "content-encoding",
 }
 IMAGE2_MODELS = {"gpt-image-2", "gpt-image-2-4k"}
+GROK_IMAGE_MODELS = {
+    "grok-imagine-image",
+    "grok-imagine-image-quality",
+    "grok-imagine-image-pro",
+}
 GEMINI_IMAGE_MODELS = {
     "gemini-3.1-flash-image-preview",
     "gemini-3-pro-image-preview",
@@ -129,6 +134,10 @@ def is_image2_model(model):
 
 def is_image2_4k_model(model):
     return isinstance(model, str) and model.strip().lower() == "gpt-image-2-4k"
+
+
+def is_grok_image_model(model):
+    return isinstance(model, str) and model.strip().lower() in GROK_IMAGE_MODELS
 
 
 def is_gemini_image_model(model):
@@ -365,15 +374,16 @@ def prepare_upstream_body(body):
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}, body
 
-    if not isinstance(request_json, dict) or not is_image2_model(
-        request_json.get("model")
+    if not isinstance(request_json, dict) or not (
+        is_image2_model(request_json.get("model"))
+        or is_grok_image_model(request_json.get("model"))
     ):
         return request_json, body
 
     upstream_json = dict(request_json)
-    upstream_json["response_format"] = (
-        "url" if is_image2_4k_model(request_json.get("model")) else "b64_json"
-    )
+    upstream_json["response_format"] = "url" if is_image2_4k_model(
+        request_json.get("model")
+    ) else "b64_json"
     upstream_body = json.dumps(
         upstream_json, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
@@ -927,12 +937,20 @@ def transform_image_response(request_json, content_type, response_body):
         return transform_gemini_chat_response(request_json, response_body)
     if not (
         isinstance(request_json, dict)
-        and is_image2_model(request_json.get("model"))
+        and (
+            is_image2_model(request_json.get("model"))
+            or is_grok_image_model(request_json.get("model"))
+        )
         and "application/json" in content_type.lower()
     ):
         return response_body, "passthrough"
 
     requested_format = str(request_json.get("response_format") or "").lower()
+    if is_grok_image_model(request_json.get("model")) and requested_format not in {
+        "url",
+        "b64_json",
+    }:
+        requested_format = "url"
     if requested_format == "b64_json" and not is_image2_4k_model(
         request_json.get("model")
     ):

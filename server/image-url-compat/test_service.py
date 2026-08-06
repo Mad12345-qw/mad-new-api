@@ -187,6 +187,40 @@ class ImageURLCompatTest(unittest.TestCase):
         self.assertEqual(request_json["response_format"], "b64_json")
         self.assertEqual(json.loads(upstream_body)["response_format"], "url")
 
+    def test_grok_image_forces_base64_upstream(self):
+        original = json.dumps(
+            {
+                "model": "grok-imagine-image",
+                "prompt": "test",
+                "response_format": "url",
+            }
+        ).encode("utf-8")
+        request_json, upstream_body = service.prepare_upstream_body(original)
+        self.assertEqual(request_json["response_format"], "url")
+        self.assertEqual(json.loads(upstream_body)["response_format"], "b64_json")
+
+    def test_grok_base64_response_becomes_madapi_url(self):
+        body, mode = service.transform_image_response(
+            {"model": "grok-imagine-image", "response_format": "url"},
+            "application/json",
+            self.response(),
+        )
+        item = json.loads(body)["data"][0]
+        self.assertEqual(mode, "url")
+        self.assertTrue(item["url"].startswith("https://mad.example/image-cache/"))
+        self.assertNotIn("b64_json", item)
+
+    def test_grok_omitted_format_returns_url_only(self):
+        body, mode = service.transform_image_response(
+            {"model": "grok-imagine-image"},
+            "application/json",
+            self.response(),
+        )
+        item = json.loads(body)["data"][0]
+        self.assertEqual(mode, "url")
+        self.assertTrue(item["url"].startswith("https://mad.example/image-cache/"))
+        self.assertNotIn("b64_json", item)
+
     def test_explicit_base64_returns_base64_only(self):
         body, mode = service.transform_image_response(
             {"model": "gpt-image-2-4k", "response_format": "b64_json"},
@@ -544,10 +578,19 @@ class ImageURLCompatTest(unittest.TestCase):
                 method="POST",
             )
             with urllib.request.urlopen(grok_request) as response:
-                json.load(response)
+                grok_payload = json.load(response)
+                self.assertEqual(response.headers["X-Image-URL-Compat"], "url")
             self.assertEqual(MockUpstreamHandler.last_path, "/v1/images/generations")
             self.assertEqual(
                 MockUpstreamHandler.last_request["model"], "grok-imagine-image"
+            )
+            self.assertEqual(
+                MockUpstreamHandler.last_request["response_format"], "b64_json"
+            )
+            self.assertTrue(
+                grok_payload["data"][0]["url"].startswith(
+                    "https://mad.example/image-cache/"
+                )
             )
 
             edit_body, edit_content_type = multipart_body(

@@ -31,7 +31,37 @@ class MockMadAPIHandler(BaseHTTPRequestHandler):
                 }
             )
 
-        if body.get("stream"):
+        if self.path == "/v1/chat/completions":
+            chunks = [
+                {
+                    "id": "mock-chat",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "gpt-5.6-terra",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "reasoning_content": "mock reasoning"},
+                            "finish_reason": None,
+                        }
+                    ],
+                },
+                {
+                    "id": "mock-chat",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "gpt-5.6-terra",
+                    "choices": [
+                        {"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}
+                    ],
+                },
+            ]
+            payload = b"".join(
+                b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
+                for chunk in chunks
+            ) + b"data: [DONE]\n\n"
+            content_type = "text/event-stream"
+        elif body.get("stream"):
             payload = b'data: {"type":"image_generation.partial_image","url":"https://example.invalid/partial.png"}\n\ndata: [DONE]\n\n'
             content_type = "text/event-stream"
         else:
@@ -121,18 +151,35 @@ def main() -> int:
         image_url = f"http://127.0.0.1:{cpa_port}/v1/images/generations"
         non_stream = request_bytes(image_url, {"model": "gpt-image-2", "prompt": "test image"})
         stream = request_bytes(image_url, {"model": "gpt-image-2", "prompt": "test stream", "stream": True})
+        responses = request_bytes(
+            f"http://127.0.0.1:{cpa_port}/v1/responses",
+            {"model": "gpt-5.6-terra", "input": "test reasoning", "stream": True},
+        )
 
         if b'"url":"https://example.invalid/image.png"' not in non_stream:
             raise RuntimeError("native image response was not relayed")
         if b"data:" not in stream or b"[DONE]" not in stream:
             raise RuntimeError("native image stream was not relayed")
-        if len(MockMadAPIHandler.calls) != 2:
-            raise RuntimeError(f"expected two MadAPI calls, got {len(MockMadAPIHandler.calls)}")
+        for required_event in (
+            b"response.reasoning_summary_text.delta",
+            b"response.reasoning_summary_text.done",
+            b"response.output_text.delta",
+            b"response.completed",
+        ):
+            if required_event not in responses:
+                raise RuntimeError(f"missing native Responses event: {required_event.decode('ascii')}")
+        if b"[reasoning unavailable]" in responses:
+            raise RuntimeError("native Responses stream leaked a reasoning placeholder")
+        if len(MockMadAPIHandler.calls) != 3:
+            raise RuntimeError(f"expected three MadAPI calls, got {len(MockMadAPIHandler.calls)}")
         for call in MockMadAPIHandler.calls:
-            if call["path"] != "/v1/images/generations":
-                raise RuntimeError(f"wrong upstream path: {call['path']}")
             if call["authorization"] != "Bearer native-runtime-acceptance":
                 raise RuntimeError("caller authorization was not preserved")
+        for call in MockMadAPIHandler.calls[:2]:
+            if call["path"] != "/v1/images/generations":
+                raise RuntimeError(f"wrong upstream path: {call['path']}")
+        if MockMadAPIHandler.calls[2]["path"] != "/v1/chat/completions":
+            raise RuntimeError(f"wrong Responses upstream path: {MockMadAPIHandler.calls[2]['path']}")
         if MockMadAPIHandler.calls[1]["body"] != {"model": "gpt-image-2", "prompt": "test stream", "stream": True}:
             raise RuntimeError("stream image request body changed unexpectedly")
     finally:

@@ -81,6 +81,8 @@ jobs:
       - name: Build native single-instance image
         run: |
           docker build --pull --file server/cpa-codex-native/Dockerfile --tag mad-cpa-codex:native-acceptance .
+      - name: Verify native image contents
+        run: |
+          docker run --rm --entrypoint /bin/sh mad-cpa-codex:native-acceptance -c 'test -x /CLIProxyAPI/CLIProxyAPI && test -s /app/plugins/madapi-dynamic.so'
       - name: Exercise native image routing
         run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:native-acceptance
-          docker run --rm --entrypoint /bin/sh mad-cpa-codex:native-acceptance -c 'test -x /CLIProxyAPI/CLIProxyAPI && test -s /app/plugins/madapi-dynamic.so'

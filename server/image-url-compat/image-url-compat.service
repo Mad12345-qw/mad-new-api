@@ -1,6 +1,6 @@
 [Unit]
 Description=Mad API image response compatibility layer
-After=network-online.target new-api.service
+After=network-online.target docker.service new-api.service
 Wants=network-online.target
 
 [Service]
@@ -10,6 +10,7 @@ Group=www-data
 Environment=PYTHONUNBUFFERED=1
 Environment=UPSTREAM=http://127.0.0.1:3001
 Environment=PUBLIC_BASE_URL=https://mad.myddns.me
+Environment=LISTEN_HOST=172.22.0.1
 Environment=CACHE_DIR=/opt/image-url-cache
 Environment=CACHE_TTL=1800
 Environment=CLEAN_INTERVAL=300

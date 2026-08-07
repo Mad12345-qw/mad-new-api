@@ -18,6 +18,11 @@ SPEC = importlib.util.spec_from_file_location("image_url_compat", MODULE_PATH)
 service = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(service)
 
+
+class ImageCompatConfigurationTests(unittest.TestCase):
+    def test_listener_defaults_to_loopback(self):
+        self.assertEqual(service.LISTEN_HOST, "127.0.0.1")
+
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"test-image"
 PNG_B64 = base64.b64encode(PNG_BYTES).decode("ascii")
 

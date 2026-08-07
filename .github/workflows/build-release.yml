@@ -326,10 +326,14 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0019-madapi-codex-work-collapse.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0020-madapi-native-image-build-fix.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0020-madapi-native-image-build-fix.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0021-madapi-image-work-contract.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0021-madapi-image-work-contract.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \
             internal/runtime/executor/openai_compat_executor_madapi_test.go \
+            internal/runtime/executor/codex_executor_request.go \
+            internal/runtime/executor/codex_executor_imagegen_test.go \
             internal/runtime/executor/claude_executor_execute.go \
             internal/runtime/executor/claude_executor_request.go \
             internal/runtime/executor/claude_executor_stream.go \
@@ -353,7 +357,7 @@ jobs:
             sdk/cliproxy/auth/conductor_execution.go \
             sdk/cliproxy/auth/madapi_passthrough_test.go
           GOMAXPROCS=1 go test -p 1 ./internal/api ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth
-          GOMAXPROCS=1 go test -p 1 -run '^(TestApplyMadAPIPassthroughAuthorization|TestBuildClaudeCompactResponseUsesCompactionContract)$' ./internal/runtime/executor
+          GOMAXPROCS=1 go test -p 1 -run '^(TestApplyMadAPIPassthroughAuthorization|TestBuildClaudeCompactResponseUsesCompactionContract|TestEnsureImageGenerationTool_MadAPIPassthroughResponsesLiteInjectsTool)$' ./internal/runtime/executor
 
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source

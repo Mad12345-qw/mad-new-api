@@ -205,7 +205,7 @@ def wait_for_health(port: int) -> None:
             with urlopen(url, timeout=2) as response:  # nosec B310 - localhost test server
                 if response.status == 200:
                     return
-        except URLError:
+        except (OSError, URLError):
             time.sleep(0.5)
     raise RuntimeError("native CPA container did not become healthy")
 

@@ -70,6 +70,37 @@ func TestMadAPIEndpointUsesNativeImageRouteOnlyForImageFormat(t *testing.T) {
 	if got := madAPIEndpoint(pluginapi.ExecutorRequest{Format: "chat-completions"}); got != chatCompletionsPath {
 		t.Fatalf("chat endpoint = %q, want %q", got, chatCompletionsPath)
 	}
+	if got := madAPIEndpoint(pluginapi.ExecutorRequest{Format: openAIResponsesFormat}); got != responsesPath {
+		t.Fatalf("Responses endpoint = %q, want %q", got, responsesPath)
+	}
+}
+
+func TestMadAPIResponsesPayloadInjectsNativeImageTool(t *testing.T) {
+	request := pluginapi.ExecutorRequest{
+		Format:  openAIResponsesFormat,
+		Payload: []byte(`{"model":"gpt-5.6-luna","input":"create an image"}`),
+	}
+	payload := madAPIPayload(request)
+	if got := gjson.GetBytes(payload, "tools.0.type").String(); got != "image_generation" {
+		t.Fatalf("tools.0.type = %q, payload=%s", got, payload)
+	}
+	if got := gjson.GetBytes(payload, "tools.0.model").String(); got != "gpt-image-2" {
+		t.Fatalf("tools.0.model = %q, payload=%s", got, payload)
+	}
+}
+
+func TestMadAPIResponsesPayloadKeepsExistingImageTool(t *testing.T) {
+	request := pluginapi.ExecutorRequest{
+		Format:  openAIResponsesFormat,
+		Payload: []byte(`{"model":"gpt-5.6-luna","tools":[{"type":"image_generation","action":"generate","model":"custom-image"}]}`),
+	}
+	payload := madAPIPayload(request)
+	if got := len(gjson.GetBytes(payload, "tools").Array()); got != 1 {
+		t.Fatalf("image tool count = %d, payload=%s", got, payload)
+	}
+	if got := gjson.GetBytes(payload, "tools.0.model").String(); got != "custom-image" {
+		t.Fatalf("tools.0.model = %q, payload=%s", got, payload)
+	}
 }
 
 func TestRouteModelAcceptsNativeImageFormat(t *testing.T) {

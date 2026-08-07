@@ -107,6 +107,9 @@ jobs:
             if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch" ]; then
               continue
             fi
+            if [[ "$(basename "$patch")" == *"-codex-auth-gate.patch" ]]; then
+              continue
+            fi
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done
@@ -123,6 +126,13 @@ jobs:
 
           git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
+
+      - name: Apply CPA gateway auth endpoint
+        run: |
+          auth_patch="$(find "$GITHUB_WORKSPACE/patches" -maxdepth 1 -name '*-codex-auth-gate.patch' -print -quit)"
+          test -n "$auth_patch"
+          git -C source apply --check "$auth_patch"
+          git -C source apply "$auth_patch"
 
       - name: Verify protected Mad API customizations
         working-directory: source
@@ -262,14 +272,11 @@ jobs:
       - name: Test image response compatibility service
         run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
 
-      - name: Test Codex route reconciliation
-        run: python3 -m unittest server/cpa-codex/test_patch_nginx.py
+      - name: Test native CPA route reconciliation
+        run: python3 -m unittest server/cpa-codex-native/test_patch_nginx.py
 
-      - name: Test CPA front-proxy catalogs
-        run: python3 -m unittest server/cpa-codex/test_catalog_sync.py
-
-      - name: Test CPA front-proxy deployment reconciliation
-        run: python3 -m unittest server/cpa-codex/test_compose_reconcile.py
+      - name: Test native CPA deployment reconciliation
+        run: python3 -m unittest server/cpa-codex-native/test_compose_reconcile.py
 
       - name: Test disaster recovery tooling
         run: python3 -m unittest discover -s server/disaster-recovery -p 'test_*.py'
@@ -278,12 +285,12 @@ jobs:
         run: |
           sh -n server/new-api-autoupdate.sh
           sh -n server/new-api-component-deploy.sh
-          sh -n server/cpa-codex/entrypoint.sh
-          sh -n server/cpa-codex/sidecar-autodeploy.sh
-          sh -n server/cpa-codex/canary-deploy.sh
+          sh -n server/cpa-codex-native/entrypoint.sh
+          sh -n server/cpa-codex-native/autodeploy.sh
           sh -n server/disaster-recovery/install.sh
 
-      - name: Apply and test CPA full Codex front proxy
+      - name: Legacy CPA patch-chain verification (retired)
+        if: ${{ false }}
         working-directory: cpa-source
         run: |
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
@@ -328,6 +335,8 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0020-madapi-native-image-build-fix.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0021-madapi-image-work-contract.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0021-madapi-image-work-contract.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0022-madapi-cpa-event-parity.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0022-madapi-cpa-event-parity.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \
@@ -362,14 +371,14 @@ jobs:
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
 
-      - name: Build CPA full Codex front-proxy image
-        run: docker build --pull --build-arg CPA_PATCHED=1 --file server/cpa-codex/Dockerfile --tag mad-cpa-codex:latest .
+      - name: Build native single-instance CPA image
+        run: docker build --pull --file server/cpa-codex-native/Dockerfile --tag mad-cpa-codex:latest .
 
-      - name: Verify CPA runtime dependencies
-        run: docker run --rm --entrypoint python3 mad-cpa-codex:latest --version
+      - name: Verify native CPA runtime contents
+        run: docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest -c 'test -x /CLIProxyAPI/CLIProxyAPI && test -s /app/plugins/madapi-dynamic.so'
 
-      - name: Verify CPA catalog synchronizer entrypoint
-        run: docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest -c 'test "$(head -n 1 /usr/local/bin/catalog-sync.py)" = "#!/usr/bin/env python3"'
+      - name: Exercise native CPA image routing
+        run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:latest
 
       - name: Export image
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -387,10 +396,9 @@ jobs:
           cp server/mad-api-error-alert/mad-api-error-alert.py mad-api-error-alert.py
           cp server/mad-api-error-alert/mad-api-error-alert.service mad-api-error-alert.service
           cp server/mad-api-error-alert/mad-api-error-alert.timer mad-api-error-alert.timer
-          cp server/cpa-codex/sidecar-autodeploy.sh cpa-codex-autodeploy.sh
-          cp server/cpa-codex/canary-deploy.sh cpa-codex-canary-deploy.sh
-          cp server/cpa-codex/patch_nginx.py patch-cpa-codex-nginx.py
-          cp server/cpa-codex/compose_reconcile.py compose-cpa-codex.py
+          cp server/cpa-codex-native/autodeploy.sh cpa-codex-autodeploy.sh
+          cp server/cpa-codex-native/patch_nginx.py patch-cpa-codex-nginx.py
+          cp server/cpa-codex-native/compose_reconcile.py compose-cpa-codex.py
           cp guards/cpa-upstream-commit.txt cpa-upstream-commit.txt
           sha256sum mad-home.tar.gz > mad-home.tar.gz.sha256
           sha256sum image-url-compat.py > image-url-compat.py.sha256
@@ -402,7 +410,6 @@ jobs:
           sha256sum mad-api-error-alert.service > mad-api-error-alert.service.sha256
           sha256sum mad-api-error-alert.timer > mad-api-error-alert.timer.sha256
           sha256sum cpa-codex-autodeploy.sh > cpa-codex-autodeploy.sh.sha256
-          sha256sum cpa-codex-canary-deploy.sh > cpa-codex-canary-deploy.sh.sha256
           sha256sum patch-cpa-codex-nginx.py > patch-cpa-codex-nginx.py.sha256
           sha256sum compose-cpa-codex.py > compose-cpa-codex.py.sha256
           sha256sum cpa-upstream-commit.txt > cpa-upstream-commit.txt.sha256
@@ -439,8 +446,6 @@ jobs:
             mad-api-error-alert.timer.sha256 \
             cpa-codex-autodeploy.sh \
             cpa-codex-autodeploy.sh.sha256 \
-            cpa-codex-canary-deploy.sh \
-            cpa-codex-canary-deploy.sh.sha256 \
             patch-cpa-codex-nginx.py \
             patch-cpa-codex-nginx.py.sha256 \
             compose-cpa-codex.py \

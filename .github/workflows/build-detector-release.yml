@@ -79,6 +79,10 @@ jobs:
               printf 'Skipping CPA-only patch: %s\n' "$name"
               continue
             fi
+            if [[ "$name" == *"-codex-auth-gate.patch" ]]; then
+              printf 'Skipping full-production CPA auth patch: %s\n' "$name"
+              continue
+            fi
             if [[ "$name" =~ $excluded ]]; then
               printf 'Skipping old personalized patch: %s\n' "$name"
               continue

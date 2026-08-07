@@ -38,6 +38,8 @@ class ComposeReconcileTests(unittest.TestCase):
         self.assertEqual(result.count('MADAPI_IMAGE_COMPAT_URL: http://host.docker.internal:3010'), 2)
         self.assertIn("    mem_limit: 512m\n", result)
         self.assertIn("    mem_limit: 384m\n", result)
+        self.assertIn("    cpus: 0.75\n", result)
+        self.assertIn("    cpus: 0.50\n", result)
         self.assertIn("CPA_CATALOG_MODE: native", result)
         self.assertIn("CPA_CATALOG_MODE: cockpit", result)
 

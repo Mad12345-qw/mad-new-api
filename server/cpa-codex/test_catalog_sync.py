@@ -25,7 +25,7 @@ class CatalogSyncTests(unittest.TestCase):
     def test_native_config_keeps_real_model_names_and_retries(self):
         rendered = catalog_sync.render_config(["gpt-5.6-sol", "grok-4.5"], "native")
         self.assertIn('alias: "gpt-5.6-sol"', rendered)
-        self.assertIn("request-retry: 3", rendered)
+        self.assertIn("request-retry: 0", rendered)
         self.assertIn("max-retry-credentials: 0", rendered)
         self.assertIn("streaming:\n  bootstrap-retries: 2", rendered)
         self.assertIn("disable-cooling: false", rendered)

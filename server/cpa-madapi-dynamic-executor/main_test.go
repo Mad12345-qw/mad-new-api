@@ -75,17 +75,14 @@ func TestMadAPIEndpointUsesNativeImageRouteOnlyForImageFormat(t *testing.T) {
 	}
 }
 
-func TestMadAPIResponsesPayloadInjectsNativeImageTool(t *testing.T) {
+func TestMadAPIResponsesPayloadDoesNotInjectImageTool(t *testing.T) {
 	request := pluginapi.ExecutorRequest{
 		Format:  openAIResponsesFormat,
 		Payload: []byte(`{"model":"gpt-5.6-luna","input":"create an image"}`),
 	}
 	payload := madAPIPayload(request)
-	if got := gjson.GetBytes(payload, "tools.0.type").String(); got != "image_generation" {
-		t.Fatalf("tools.0.type = %q, payload=%s", got, payload)
-	}
-	if got := gjson.GetBytes(payload, "tools.0.model").String(); got != "gpt-image-2" {
-		t.Fatalf("tools.0.model = %q, payload=%s", got, payload)
+	if gjson.GetBytes(payload, "tools").Exists() {
+		t.Fatalf("unexpected injected tools, payload=%s", payload)
 	}
 }
 

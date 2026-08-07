@@ -501,9 +501,6 @@ func madAPIEndpoint(request pluginapi.ExecutorRequest) string {
 
 func madAPIPayload(request pluginapi.ExecutorRequest) []byte {
 	payload := bytes.Clone(request.Payload)
-	if strings.EqualFold(strings.TrimSpace(request.Format), openAIResponsesFormat) {
-		payload = ensureNativeImageGenerationTool(payload)
-	}
 	if !strings.EqualFold(strings.TrimSpace(headerValue(request.Headers, cockpitHeader)), "1") {
 		return payload
 	}
@@ -513,34 +510,6 @@ func madAPIPayload(request pluginapi.ExecutorRequest) []byte {
 		return payload
 	}
 	updated, err := sjson.SetBytes(payload, "model", upstream)
-	if err != nil {
-		return payload
-	}
-	return updated
-}
-
-func ensureNativeImageGenerationTool(payload []byte) []byte {
-	if !json.Valid(payload) {
-		return payload
-	}
-	tools := gjson.GetBytes(payload, "tools")
-	if tools.IsArray() {
-		for _, tool := range tools.Array() {
-			if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "image_generation") {
-				return payload
-			}
-		}
-	}
-	tool := []byte(`{"type":"image_generation","action":"generate","model":"gpt-image-2"}`)
-	var (
-		updated []byte
-		err     error
-	)
-	if tools.IsArray() {
-		updated, err = sjson.SetRawBytes(payload, "tools.-1", tool)
-	} else {
-		updated, err = sjson.SetRawBytes(payload, "tools", append([]byte{'['}, append(tool, ']')...))
-	}
 	if err != nil {
 		return payload
 	}

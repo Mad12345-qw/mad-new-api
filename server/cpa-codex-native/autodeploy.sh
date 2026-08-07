@@ -11,6 +11,7 @@ IMAGE=mad-cpa-codex:latest
 NATIVE_HEALTH_URL=http://127.0.0.1:8320/healthz
 RELEASE_BASE=https://github.com/Mad12345-qw/mad-new-api/releases/download/build-latest
 STATE_FILE=$COMPOSE_DIR/mad-cpa-codex-sha256.txt
+ROLLBACK_STATE_FILE=$COMPOSE_DIR/mad-cpa-codex-rollback.env
 INSTALL_DIR=/usr/local/lib/mad-cpa-codex
 NGINX_PATCH=$INSTALL_DIR/patch-nginx.py
 COMPOSE_RECONCILE=$INSTALL_DIR/compose-reconcile.py
@@ -37,6 +38,9 @@ timestamp=$(date +%Y%m%d-%H%M%S)
 backup_dir="$COMPOSE_DIR/backups/cpa-native-$timestamp"
 mkdir -p "$backup_dir"
 cp -a "$COMPOSE_FILE" "$ENV_FILE" "$NGINX_CONFIG" "$backup_dir/"
+if [ -f "$STATE_FILE" ]; then
+  cp -a "$STATE_FILE" "$backup_dir/"
+fi
 
 rollback_tag="mad-cpa-codex:rollback-$timestamp"
 old_image_id=$(docker image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null || true)
@@ -50,8 +54,10 @@ rollback() {
   cp -a "$backup_dir/mad.myddns.me" "$NGINX_CONFIG"
   nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
   docker rm -f "$NATIVE_SERVICE" >/dev/null 2>&1 || true
-  if [ -n "$old_image_id" ]; then docker image tag "$rollback_tag" "$IMAGE"; fi
-  docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps "$LEGACY_NATIVE_SERVICE" "$LEGACY_COCKPIT_SERVICE" || true
+  if [ -n "$old_image_id" ]; then
+    docker image tag "$rollback_tag" "$IMAGE"
+    docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps "$NATIVE_SERVICE"
+  fi
 }
 
 install -d -m 0755 "$INSTALL_DIR"
@@ -99,4 +105,13 @@ fi
 
 docker rm -f "$LEGACY_NATIVE_SERVICE" "$LEGACY_COCKPIT_SERVICE" >/dev/null 2>&1 || true
 printf '%s\n' "$release_sha" > "$STATE_FILE"
+docker image tag "$IMAGE" "mad-cpa-codex:stable-$release_sha"
+if [ -n "$old_image_id" ]; then
+  old_release_sha=$(cat "$backup_dir/mad-cpa-codex-sha256.txt" 2>/dev/null || true)
+  {
+    printf 'rollback_tag=%s\n' "$rollback_tag"
+    printf 'rollback_release_sha=%s\n' "$old_release_sha"
+    printf 'backup_dir=%s\n' "$backup_dir"
+  } > "$ROLLBACK_STATE_FILE"
+fi
 logger -t new-api-autoupdate "native CPA Codex gateway deployed successfully: $release_sha"

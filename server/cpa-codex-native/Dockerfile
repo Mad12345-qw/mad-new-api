@@ -8,8 +8,13 @@ RUN apt-get update \
 
 COPY cpa-source/ ./
 COPY server/cpa-madapi-dynamic-executor/ ./.madapi-dynamic-executor/
+COPY server/cpa-codex-native/contracts/ /tmp/madapi-native-contracts/
 
-RUN go mod download \
+RUN git apply --check /tmp/madapi-native-contracts/0001-inline-thinking-responses-contract.patch \
+    && git apply /tmp/madapi-native-contracts/0001-inline-thinking-responses-contract.patch \
+    && git apply --check /tmp/madapi-native-contracts/0002-tool-work-collapse-contract.patch \
+    && git apply /tmp/madapi-native-contracts/0002-tool-work-collapse-contract.patch \
+    && go mod download \
     && go test ./.madapi-dynamic-executor \
     && CGO_ENABLED=1 go build -buildmode=c-shared -o /out/madapi-dynamic.so ./.madapi-dynamic-executor \
     && CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o /out/CLIProxyAPI ./cmd/server/

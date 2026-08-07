@@ -56,6 +56,36 @@ class MockMadAPIHandler(BaseHTTPRequestHandler):
                         for chunk in chunks
                     ) + b"data: [DONE]\n\n"
                     content_type = "text/event-stream"
+            elif "inline thinking" in serialized:
+                chunks = [
+                    {
+                        "id": "mock-inline-thinking",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "gpt-5.6-luna",
+                        "choices": [
+                            {"index": 0, "delta": {"role": "assistant", "content": "<think"}, "finish_reason": None}
+                        ],
+                    },
+                    {
+                        "id": "mock-inline-thinking",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "gpt-5.6-luna",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": "ing>private trace</thinking>public answer"},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    },
+                ]
+                payload = b"".join(
+                    b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
+                    for chunk in chunks
+                ) + b"data: [DONE]\n\n"
+                content_type = "text/event-stream"
             elif body.get("tools"):
                 chunks = [
                     {
@@ -225,12 +255,17 @@ def main() -> int:
             f"http://127.0.0.1:{cpa_port}/v1/responses",
             {"model": "gpt-5.6-terra", "input": "test reasoning", "stream": True},
         )
+        inline_thinking = request_bytes(
+            f"http://127.0.0.1:{cpa_port}/v1/responses",
+            {"model": "gpt-5.6-luna", "input": "test inline thinking", "stream": True},
+        )
         tools = request_bytes(
             f"http://127.0.0.1:{cpa_port}/v1/responses",
             {
                 "model": "gpt-5.6-terra",
                 "input": "test tool",
                 "stream": True,
+                "reasoning": {"effort": "medium"},
                 "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
             },
         )
@@ -253,15 +288,32 @@ def main() -> int:
                 raise RuntimeError(f"missing native Responses event: {required_event.decode('ascii')}")
         if b"[reasoning unavailable]" in responses:
             raise RuntimeError("native Responses stream leaked a reasoning placeholder")
-        for required_event in (b"response.function_call_arguments.delta", b"response.function_call_arguments.done", b"response.completed"):
+        if b"<thinking>" in inline_thinking or b"</thinking>" in inline_thinking:
+            raise RuntimeError("inline thinking tags leaked into the native Responses stream")
+        for required_event in (
+            b"response.reasoning_summary_text.delta",
+            b"response.reasoning_summary_text.done",
+            b"response.output_text.delta",
+            b"response.completed",
+        ):
+            if required_event not in inline_thinking:
+                raise RuntimeError(f"missing inline-thinking Responses event: {required_event.decode('ascii')}")
+        for required_event in (
+            b"response.output_item.added",
+            b"response.function_call_arguments.delta",
+            b"response.function_call_arguments.done",
+            b"response.completed",
+        ):
             if required_event not in tools:
                 raise RuntimeError(f"missing native tool event: {required_event.decode('ascii')}")
+        if b'"type":"reasoning"' not in tools:
+            raise RuntimeError("tool work did not receive a collapsible reasoning envelope")
         if b"response.completed" not in bootstrap:
             raise RuntimeError("bootstrap retry did not finish the Responses stream")
         if MockMadAPIHandler.bootstrap_attempts != 2:
             raise RuntimeError(f"expected one pre-event bootstrap retry, got {MockMadAPIHandler.bootstrap_attempts} attempts")
-        if len(MockMadAPIHandler.calls) != 6:
-            raise RuntimeError(f"expected six MadAPI calls, got {len(MockMadAPIHandler.calls)}")
+        if len(MockMadAPIHandler.calls) != 7:
+            raise RuntimeError(f"expected seven MadAPI calls, got {len(MockMadAPIHandler.calls)}")
         for call in MockMadAPIHandler.calls:
             if call["authorization"] != "Bearer native-runtime-acceptance":
                 raise RuntimeError("caller authorization was not preserved")

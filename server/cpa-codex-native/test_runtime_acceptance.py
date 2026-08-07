@@ -302,7 +302,18 @@ def main() -> int:
         )
         native_image = request_bytes(
             f"http://127.0.0.1:{cpa_port}/v1/responses",
-            {"model": "gpt-5.6-luna", "input": "test native image", "stream": True},
+            {
+                "model": "gpt-5.6-luna",
+                "input": "test native image",
+                "stream": True,
+                "tools": [
+                    {
+                        "type": "image_generation",
+                        "action": "generate",
+                        "model": "gpt-image-2",
+                    }
+                ],
+            },
         )
         bootstrap = request_bytes(
             f"http://127.0.0.1:{cpa_port}/v1/responses",
@@ -358,8 +369,11 @@ def main() -> int:
         for call in MockMadAPIHandler.calls[2:]:
             if call["path"] != "/v1/responses":
                 raise RuntimeError(f"wrong Responses upstream path: {call['path']}")
-            if not any(tool.get("type") == "image_generation" for tool in call["body"].get("tools", [])):
-                raise RuntimeError("native Responses request did not include the image_generation tool")
+        if not any(
+            tool.get("type") == "image_generation"
+            for tool in MockMadAPIHandler.calls[5]["body"].get("tools", [])
+        ):
+            raise RuntimeError("explicit native image tool was not forwarded")
         if MockMadAPIHandler.calls[1]["body"] != {"model": "gpt-image-2", "prompt": "test stream", "stream": True}:
             raise RuntimeError("stream image request body changed unexpectedly")
     finally:

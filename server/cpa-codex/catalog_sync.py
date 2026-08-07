@@ -137,7 +137,9 @@ def render_config(model_ids: list[str], mode: str) -> str:
         "port: 8317",
         "logging-to-file: false",
         "request-log: false",
-        "request-retry: 3",
+        # NewAPI owns eligible channel rotation. CPA only retries safely before
+        # any semantic stream event, configured below.
+        "request-retry: 0",
         "max-retry-credentials: 0",
         "streaming:",
         "  bootstrap-retries: 2",

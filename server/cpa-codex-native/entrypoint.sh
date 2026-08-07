@@ -12,6 +12,8 @@ logging-to-file: false
 request-log: false
 request-retry: 0
 max-retry-credentials: 0
+streaming:
+  bootstrap-retries: 2
 api-keys: []
 plugins:
   enabled: true
@@ -20,6 +22,7 @@ plugins:
     madapi-dynamic:
       enabled: true
       base_url: "${base_url}/v1"
+      bootstrap_retries: 2
 EOF
 
 exec /CLIProxyAPI/CLIProxyAPI -config "$config_path"

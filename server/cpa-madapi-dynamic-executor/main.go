@@ -33,6 +33,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -49,6 +50,8 @@ import (
 const pluginIdentifier = "madapi-dynamic-executor"
 
 const cockpitHeader = "X-MadAPI-Codex-Cockpit"
+
+var errMadAPIEmptyStream = errors.New("MadAPI stream closed before a valid event")
 
 var cockpitModelAliases = map[string]string{
 	"gpt-5.5":       "claude-fable-5",
@@ -79,8 +82,9 @@ type lifecycleRequest struct {
 }
 
 type pluginConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	BaseURL string `yaml:"base_url"`
+	Enabled          bool   `yaml:"enabled"`
+	BaseURL          string `yaml:"base_url"`
+	BootstrapRetries int    `yaml:"bootstrap_retries"`
 }
 
 type registration struct {
@@ -346,6 +350,19 @@ func forwardMadAPIStream(ctx context.Context, request rpcExecutorRequest) error 
 	if !config.Enabled || config.BaseURL == "" {
 		return fmt.Errorf("dynamic MadAPI executor is not configured")
 	}
+	maxRetries := config.BootstrapRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	for attempt := 0; ; attempt++ {
+		err := forwardMadAPIStreamAttempt(ctx, request, config)
+		if err == nil || !errors.Is(err, errMadAPIEmptyStream) || attempt >= maxRetries {
+			return err
+		}
+	}
+}
+
+func forwardMadAPIStreamAttempt(ctx context.Context, request rpcExecutorRequest, config pluginConfig) error {
 	raw, err := callHost(pluginabi.MethodHostHTTPDoStream, rpcHostHTTPRequest{HostCallbackID: request.HostCallbackID, Request: &httpRequest{
 		Method: http.MethodPost, URL: config.BaseURL + "/chat/completions", Headers: madAPIHeaders(request.Headers), Body: madAPIPayload(request.ExecutorRequest),
 	}})
@@ -363,11 +380,15 @@ func forwardMadAPIStream(ctx context.Context, request rpcExecutorRequest) error 
 		_, _ = callHost(pluginabi.MethodHostHTTPStreamClose, rpcHostHTTPStreamCloseRequest{StreamID: response.StreamID})
 	}()
 	seenTerminalMarker := false
+	seenUpstreamEvent := false
 	pendingLine := make([]byte, 0, 4096)
 	emitLine := func(line []byte) error {
 		line = bytes.TrimSuffix(line, []byte("\r"))
 		if len(line) == 0 {
 			return nil
+		}
+		if isValidSSEDataLine(line) {
+			seenUpstreamEvent = true
 		}
 		if bytes.Contains(line, []byte("[DONE]")) {
 			seenTerminalMarker = true
@@ -425,6 +446,9 @@ func forwardMadAPIStream(ctx context.Context, request rpcExecutorRequest) error 
 			break
 		}
 	}
+	if !seenUpstreamEvent {
+		return errMadAPIEmptyStream
+	}
 	// MadAPI can close a valid OpenAI-compatible SSE stream without a literal
 	// terminal marker. CPA's Responses translator needs that marker to emit the
 	// final response.completed event, just as its built-in compatibility executor does.
@@ -437,6 +461,15 @@ func forwardMadAPIStream(ctx context.Context, request rpcExecutorRequest) error 
 		return fmt.Errorf("MadAPI returned HTTP %d", response.StatusCode)
 	}
 	return nil
+}
+
+func isValidSSEDataLine(line []byte) bool {
+	line = bytes.TrimSpace(line)
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return false
+	}
+	payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	return len(payload) > 0 && !bytes.Equal(payload, []byte("[DONE]"))
 }
 
 func madAPIHeaders(headers http.Header) http.Header {

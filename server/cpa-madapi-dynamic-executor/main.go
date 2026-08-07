@@ -53,8 +53,10 @@ const cockpitHeader = "X-MadAPI-Codex-Cockpit"
 
 const (
 	chatCompletionsPath = "/chat/completions"
+	responsesPath       = "/responses"
 	imagesGenerationsPath = "/images/generations"
 	openAIImageFormat    = "openai-image"
+	openAIResponsesFormat = "openai-response"
 )
 
 var errMadAPIEmptyStream = errors.New("MadAPI stream closed before a valid event")
@@ -275,8 +277,8 @@ func pluginRegistration() registration {
 			ModelRouter:           true,
 			Executor:              true,
 			ExecutorModelScope:    string(pluginapi.ExecutorModelScopeBoth),
-			ExecutorInputFormats:  []string{"chat-completions", openAIImageFormat},
-			ExecutorOutputFormats: []string{"chat-completions", openAIImageFormat},
+			ExecutorInputFormats:  []string{openAIResponsesFormat, "chat-completions", openAIImageFormat},
+			ExecutorOutputFormats: []string{openAIResponsesFormat, "chat-completions", openAIImageFormat},
 		},
 	}
 }
@@ -487,14 +489,21 @@ func madAPIHeaders(headers http.Header) http.Header {
 }
 
 func madAPIEndpoint(request pluginapi.ExecutorRequest) string {
-	if strings.EqualFold(strings.TrimSpace(request.Format), openAIImageFormat) {
+	switch strings.ToLower(strings.TrimSpace(request.Format)) {
+	case openAIImageFormat:
 		return imagesGenerationsPath
+	case openAIResponsesFormat:
+		return responsesPath
+	default:
+		return chatCompletionsPath
 	}
-	return chatCompletionsPath
 }
 
 func madAPIPayload(request pluginapi.ExecutorRequest) []byte {
 	payload := bytes.Clone(request.Payload)
+	if strings.EqualFold(strings.TrimSpace(request.Format), openAIResponsesFormat) {
+		payload = ensureNativeImageGenerationTool(payload)
+	}
 	if !strings.EqualFold(strings.TrimSpace(headerValue(request.Headers, cockpitHeader)), "1") {
 		return payload
 	}
@@ -504,6 +513,34 @@ func madAPIPayload(request pluginapi.ExecutorRequest) []byte {
 		return payload
 	}
 	updated, err := sjson.SetBytes(payload, "model", upstream)
+	if err != nil {
+		return payload
+	}
+	return updated
+}
+
+func ensureNativeImageGenerationTool(payload []byte) []byte {
+	if !json.Valid(payload) {
+		return payload
+	}
+	tools := gjson.GetBytes(payload, "tools")
+	if tools.IsArray() {
+		for _, tool := range tools.Array() {
+			if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "image_generation") {
+				return payload
+			}
+		}
+	}
+	tool := []byte(`{"type":"image_generation","action":"generate","model":"gpt-image-2"}`)
+	var (
+		updated []byte
+		err     error
+	)
+	if tools.IsArray() {
+		updated, err = sjson.SetRawBytes(payload, "tools.-1", tool)
+	} else {
+		updated, err = sjson.SetRawBytes(payload, "tools", append([]byte{'['}, append(tool, ']')...))
+	}
 	if err != nil {
 		return payload
 	}

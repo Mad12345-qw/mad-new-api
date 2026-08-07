@@ -32,7 +32,38 @@ class MockMadAPIHandler(BaseHTTPRequestHandler):
                 }
             )
 
-        if self.path == "/v1/chat/completions":
+        if self.path == "/v1/responses":
+            serialized = json.dumps(body, ensure_ascii=True)
+            if "bootstrap retry" in serialized:
+                with self.calls_lock:
+                    type(self).bootstrap_attempts += 1
+                    attempt = type(self).bootstrap_attempts
+                if attempt == 1:
+                    payload = b""
+                else:
+                    payload = b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
+            elif any(tool.get("type") == "function" for tool in body.get("tools", [])):
+                payload = (
+                    b"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\"}}\n\n"
+                    b"event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"delta\":\"{}\"}\n\n"
+                    b"event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\"}\n\n"
+                    b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
+                )
+            elif "native image" in serialized:
+                payload = (
+                    b"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"image_generation_call\"}}\n\n"
+                    b"event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"image_generation_call\",\"result\":\"mock-image\"}}\n\n"
+                    b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
+                )
+            else:
+                payload = (
+                    b"event: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"native reasoning\"}\n\n"
+                    b"event: response.reasoning_summary_text.done\ndata: {\"type\":\"response.reasoning_summary_text.done\"}\n\n"
+                    b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
+                    b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
+                )
+            content_type = "text/event-stream"
+        elif self.path == "/v1/chat/completions":
             serialized = json.dumps(body, ensure_ascii=True)
             if "bootstrap retry" in serialized:
                 with self.calls_lock:
@@ -269,6 +300,10 @@ def main() -> int:
                 "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
             },
         )
+        native_image = request_bytes(
+            f"http://127.0.0.1:{cpa_port}/v1/responses",
+            {"model": "gpt-5.6-luna", "input": "test native image", "stream": True},
+        )
         bootstrap = request_bytes(
             f"http://127.0.0.1:{cpa_port}/v1/responses",
             {"model": "gpt-5.6-terra", "input": "bootstrap retry", "stream": True},
@@ -306,14 +341,14 @@ def main() -> int:
         ):
             if required_event not in tools:
                 raise RuntimeError(f"missing native tool event: {required_event.decode('ascii')}")
-        if b'"type":"reasoning"' not in tools:
-            raise RuntimeError("tool work did not receive a collapsible reasoning envelope")
+        if b"image_generation_call" not in native_image or b"response.completed" not in native_image:
+            raise RuntimeError("native Responses image tool was not returned to Codex")
         if b"response.completed" not in bootstrap:
             raise RuntimeError("bootstrap retry did not finish the Responses stream")
         if MockMadAPIHandler.bootstrap_attempts != 2:
             raise RuntimeError(f"expected one pre-event bootstrap retry, got {MockMadAPIHandler.bootstrap_attempts} attempts")
-        if len(MockMadAPIHandler.calls) != 7:
-            raise RuntimeError(f"expected seven MadAPI calls, got {len(MockMadAPIHandler.calls)}")
+        if len(MockMadAPIHandler.calls) != 8:
+            raise RuntimeError(f"expected eight MadAPI calls, got {len(MockMadAPIHandler.calls)}")
         for call in MockMadAPIHandler.calls:
             if call["authorization"] != "Bearer native-runtime-acceptance":
                 raise RuntimeError("caller authorization was not preserved")
@@ -321,8 +356,10 @@ def main() -> int:
             if call["path"] != "/v1/images/generations":
                 raise RuntimeError(f"wrong upstream path: {call['path']}")
         for call in MockMadAPIHandler.calls[2:]:
-            if call["path"] != "/v1/chat/completions":
+            if call["path"] != "/v1/responses":
                 raise RuntimeError(f"wrong Responses upstream path: {call['path']}")
+            if not any(tool.get("type") == "image_generation" for tool in call["body"].get("tools", [])):
+                raise RuntimeError("native Responses request did not include the image_generation tool")
         if MockMadAPIHandler.calls[1]["body"] != {"model": "gpt-image-2", "prompt": "test stream", "stream": True}:
             raise RuntimeError("stream image request body changed unexpectedly")
     finally:

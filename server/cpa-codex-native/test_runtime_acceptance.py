@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 class MockMadAPIHandler(BaseHTTPRequestHandler):
     calls: list[dict[str, object]] = []
     calls_lock = threading.Lock()
+    bootstrap_attempts = 0
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
@@ -32,35 +33,103 @@ class MockMadAPIHandler(BaseHTTPRequestHandler):
             )
 
         if self.path == "/v1/chat/completions":
-            chunks = [
-                {
-                    "id": "mock-chat",
-                    "object": "chat.completion.chunk",
-                    "created": 1,
-                    "model": "gpt-5.6-terra",
-                    "choices": [
+            serialized = json.dumps(body, ensure_ascii=True)
+            if "bootstrap retry" in serialized:
+                with self.calls_lock:
+                    type(self).bootstrap_attempts += 1
+                    attempt = type(self).bootstrap_attempts
+                if attempt == 1:
+                    payload = b""
+                    content_type = "text/event-stream"
+                else:
+                    chunks = [
                         {
-                            "index": 0,
-                            "delta": {"role": "assistant", "reasoning_content": "mock reasoning"},
-                            "finish_reason": None,
+                            "id": "mock-bootstrap",
+                            "object": "chat.completion.chunk",
+                            "created": 1,
+                            "model": "gpt-5.6-terra",
+                            "choices": [{"index": 0, "delta": {"content": "recovered"}, "finish_reason": "stop"}],
                         }
-                    ],
-                },
-                {
-                    "id": "mock-chat",
-                    "object": "chat.completion.chunk",
-                    "created": 1,
-                    "model": "gpt-5.6-terra",
-                    "choices": [
-                        {"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}
-                    ],
-                },
-            ]
-            payload = b"".join(
-                b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
-                for chunk in chunks
-            ) + b"data: [DONE]\n\n"
-            content_type = "text/event-stream"
+                    ]
+                    payload = b"".join(
+                        b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
+                        for chunk in chunks
+                    ) + b"data: [DONE]\n\n"
+                    content_type = "text/event-stream"
+            elif body.get("tools"):
+                chunks = [
+                    {
+                        "id": "mock-tool",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "gpt-5.6-terra",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "role": "assistant",
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": "call_lookup",
+                                            "type": "function",
+                                            "function": {"name": "lookup", "arguments": ""},
+                                        }
+                                    ],
+                                },
+                                "finish_reason": None,
+                            }
+                        ],
+                    },
+                    {
+                        "id": "mock-tool",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "gpt-5.6-terra",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]},
+                                "finish_reason": "tool_calls",
+                            }
+                        ],
+                    },
+                ]
+                payload = b"".join(
+                    b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
+                    for chunk in chunks
+                ) + b"data: [DONE]\n\n"
+                content_type = "text/event-stream"
+            else:
+                chunks = [
+                    {
+                        "id": "mock-chat",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "gpt-5.6-terra",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"role": "assistant", "reasoning_content": "mock reasoning"},
+                                "finish_reason": None,
+                            }
+                        ],
+                    },
+                    {
+                        "id": "mock-chat",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": "gpt-5.6-terra",
+                        "choices": [
+                            {"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}
+                        ],
+                    },
+                ]
+                payload = b"".join(
+                    b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
+                    for chunk in chunks
+                ) + b"data: [DONE]\n\n"
+                content_type = "text/event-stream"
         elif body.get("stream"):
             payload = b'data: {"type":"image_generation.partial_image","url":"https://example.invalid/partial.png"}\n\ndata: [DONE]\n\n'
             content_type = "text/event-stream"
@@ -121,6 +190,7 @@ def main() -> int:
     args = parser.parse_args()
 
     MockMadAPIHandler.calls = []
+    MockMadAPIHandler.bootstrap_attempts = 0
     mock_port = free_port()
     cpa_port = free_port()
     server = ThreadingHTTPServer(("0.0.0.0", mock_port), MockMadAPIHandler)
@@ -155,6 +225,19 @@ def main() -> int:
             f"http://127.0.0.1:{cpa_port}/v1/responses",
             {"model": "gpt-5.6-terra", "input": "test reasoning", "stream": True},
         )
+        tools = request_bytes(
+            f"http://127.0.0.1:{cpa_port}/v1/responses",
+            {
+                "model": "gpt-5.6-terra",
+                "input": "test tool",
+                "stream": True,
+                "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
+            },
+        )
+        bootstrap = request_bytes(
+            f"http://127.0.0.1:{cpa_port}/v1/responses",
+            {"model": "gpt-5.6-terra", "input": "bootstrap retry", "stream": True},
+        )
 
         if b'"url":"https://example.invalid/image.png"' not in non_stream:
             raise RuntimeError("native image response was not relayed")
@@ -170,16 +253,24 @@ def main() -> int:
                 raise RuntimeError(f"missing native Responses event: {required_event.decode('ascii')}")
         if b"[reasoning unavailable]" in responses:
             raise RuntimeError("native Responses stream leaked a reasoning placeholder")
-        if len(MockMadAPIHandler.calls) != 3:
-            raise RuntimeError(f"expected three MadAPI calls, got {len(MockMadAPIHandler.calls)}")
+        for required_event in (b"response.function_call_arguments.delta", b"response.function_call_arguments.done", b"response.completed"):
+            if required_event not in tools:
+                raise RuntimeError(f"missing native tool event: {required_event.decode('ascii')}")
+        if b"response.completed" not in bootstrap:
+            raise RuntimeError("bootstrap retry did not finish the Responses stream")
+        if MockMadAPIHandler.bootstrap_attempts != 2:
+            raise RuntimeError(f"expected one pre-event bootstrap retry, got {MockMadAPIHandler.bootstrap_attempts} attempts")
+        if len(MockMadAPIHandler.calls) != 6:
+            raise RuntimeError(f"expected six MadAPI calls, got {len(MockMadAPIHandler.calls)}")
         for call in MockMadAPIHandler.calls:
             if call["authorization"] != "Bearer native-runtime-acceptance":
                 raise RuntimeError("caller authorization was not preserved")
         for call in MockMadAPIHandler.calls[:2]:
             if call["path"] != "/v1/images/generations":
                 raise RuntimeError(f"wrong upstream path: {call['path']}")
-        if MockMadAPIHandler.calls[2]["path"] != "/v1/chat/completions":
-            raise RuntimeError(f"wrong Responses upstream path: {MockMadAPIHandler.calls[2]['path']}")
+        for call in MockMadAPIHandler.calls[2:]:
+            if call["path"] != "/v1/chat/completions":
+                raise RuntimeError(f"wrong Responses upstream path: {call['path']}")
         if MockMadAPIHandler.calls[1]["body"] != {"model": "gpt-image-2", "prompt": "test stream", "stream": True}:
             raise RuntimeError("stream image request body changed unexpectedly")
     finally:

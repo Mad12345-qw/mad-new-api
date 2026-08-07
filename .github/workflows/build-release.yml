@@ -104,6 +104,9 @@ jobs:
             if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-session-replay-contract.patch" ]; then
               continue
             fi
+            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch" ]; then
+              continue
+            fi
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done
@@ -117,6 +120,9 @@ jobs:
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch"
           git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-session-replay-contract.patch"
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-session-replay-contract.patch"
+
+          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
+          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
 
       - name: Verify protected Mad API customizations
         working-directory: source
@@ -314,6 +320,12 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0016-openai-inline-thinking-normalization.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0017-madapi-session-replay-compact-contract.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0017-madapi-session-replay-compact-contract.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0018-madapi-native-image-generation.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0018-madapi-native-image-generation.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0019-madapi-codex-work-collapse.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0019-madapi-codex-work-collapse.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0020-madapi-native-image-build-fix.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0020-madapi-native-image-build-fix.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \

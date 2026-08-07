@@ -238,6 +238,28 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(chain["minimum_confirmed_hops"], 1)
         self.assertEqual(chain["observed_logical_layers"], 5)
 
+    def test_claude_compatibility_layer_never_claims_to_be_final_source(self) -> None:
+        route = route_for_model("claude-opus-4-8", "claude", ["anthropic"])
+        evidence = [
+            Evidence(
+                "anthropic_contract_matrix",
+                "claude_request_contract_rewrite",
+                "strong",
+                "claude_compatibility_relay",
+                "contract rewrite",
+                {"bypassed_count": 3},
+            )
+        ]
+        chain = observed_chain(
+            evidence,
+            route,
+            {"verdict": "suspected_substitution", "likely_channel": "claude_compatibility_relay", "confidence": 0.94},
+        )
+        self.assertIn("claude_compatibility_relay", [item["kind"] for item in chain["layers"]])
+        terminal = next(item for item in chain["layers"] if item["position"] == "terminal")
+        self.assertEqual(terminal["kind"], "unknown_terminal")
+        self.assertIn("Bedrock", next(item for item in chain["layers"] if item["kind"] == "claude_compatibility_relay")["note"])
+
     def test_capability_payloads_match_each_protocol(self) -> None:
         anthropic = route_for_model("claude-opus-5", "claude", ["anthropic"])
         responses = route_for_model("gpt-5.6-sol", "openai", ["openai"])

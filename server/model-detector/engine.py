@@ -2128,18 +2128,32 @@ def observed_chain(evidence: list[Evidence], route: ModelRoute, terminal: dict[s
             }
         )
     terminal_channel = terminal.get("likely_channel", "unknown")
+    # Contract rewriting proves a compatibility layer, not the provider behind
+    # it.  Treating it as the terminal source incorrectly rules out a hidden
+    # Bedrock, Vertex, OAuth, or custom executor hop.
+    compatibility_only = {"claude_compatibility_relay", "gemini_compatibility_relay"}
+    if terminal_channel in compatibility_only:
+        layers.append(
+            {
+                "position": "intermediate",
+                "kind": terminal_channel,
+                "label": "Claude 兼容/协议改写层" if terminal_channel == "claude_compatibility_relay" else "Gemini 兼容/协议改写层",
+                "confidence": terminal.get("confidence", 0.0),
+                "status": "confirmed",
+                "note": "已确认请求在此层被改写；该证据不能确认其后最终承载是 Bedrock、Vertex、OAuth 或其他执行器。",
+            }
+        )
+        terminal_channel = "unknown"
     if terminal_channel != "unknown" and terminal.get("verdict") != "inconclusive":
         terminal_labels = {
             "codex_subscription_relay": "Codex 订阅/OAuth 反代",
             "claude_subscription_relay": "Claude Code/OAuth 订阅反代",
-            "claude_compatibility_relay": "OpenAI→Claude 协议转换中转",
             "azure_openai": "Azure OpenAI",
             "aws_bedrock": "AWS Bedrock",
             "vertex_ai": "Google Vertex AI",
             "openai_official": "OpenAI 官方 API",
             "anthropic_official": "Anthropic 官方 API",
             "gemini_developer_api": "Gemini Developer API",
-            "gemini_compatibility_relay": "Gemini 兼容/改写中转",
             "antigravity_subscription_relay": "Google Antigravity OAuth/订阅反代",
             "heterogeneous_backend_pool": "异构后端池或渠道切换",
         }

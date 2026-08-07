@@ -26,6 +26,7 @@ from pathlib import Path
 
 UPSTREAM = os.getenv("UPSTREAM", "http://127.0.0.1:3001")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://mad.myddns.me")
+LISTEN_HOST = os.getenv("LISTEN_HOST", "127.0.0.1")
 CACHE_DIR = Path(os.getenv("CACHE_DIR", "/opt/image-url-cache"))
 CACHE_TTL = int(os.getenv("CACHE_TTL", "1800"))
 CLEAN_INTERVAL = int(os.getenv("CLEAN_INTERVAL", "300"))
@@ -1250,21 +1251,27 @@ def main():
     stop_event = threading.Event()
     cleaner = threading.Thread(target=cleanup_loop, args=(stop_event,), daemon=True)
     cleaner.start()
-    server = ThreadingHTTPServer(("127.0.0.1", 3010), Handler)
-    server.daemon_threads = True
+    listen_hosts = tuple(dict.fromkeys(("127.0.0.1", LISTEN_HOST)))
+    servers = [ThreadingHTTPServer((host, 3010), Handler) for host in listen_hosts]
+    for server in servers:
+        server.daemon_threads = True
 
     def stop(_signum, _frame):
         stop_event.set()
-        threading.Thread(target=server.shutdown, daemon=True).start()
+        for server in servers:
+            threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    LOG.info("listening on 127.0.0.1:3010; upstream=%s ttl=%ss", UPSTREAM, CACHE_TTL)
+    for server in servers[1:]:
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True).start()
+    LOG.info("listening on %s:3010; upstream=%s ttl=%ss", ", ".join(listen_hosts), UPSTREAM, CACHE_TTL)
     try:
-        server.serve_forever(poll_interval=0.5)
+        servers[0].serve_forever(poll_interval=0.5)
     finally:
         stop_event.set()
-        server.server_close()
+        for server in servers:
+            server.server_close()
 
 
 if __name__ == "__main__":

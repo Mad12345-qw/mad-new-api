@@ -107,6 +107,9 @@ jobs:
             if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch" ]; then
               continue
             fi
+            if [[ "$(basename "$patch")" == *"-codex-auth-gate.patch" ]]; then
+              continue
+            fi
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done
@@ -123,6 +126,13 @@ jobs:
 
           git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
+
+      - name: Apply CPA gateway auth endpoint
+        run: |
+          auth_patch="$(find "$GITHUB_WORKSPACE/patches" -maxdepth 1 -name '*-codex-auth-gate.patch' -print -quit)"
+          test -n "$auth_patch"
+          git -C source apply --check "$auth_patch"
+          git -C source apply "$auth_patch"
 
       - name: Verify protected Mad API customizations
         working-directory: source

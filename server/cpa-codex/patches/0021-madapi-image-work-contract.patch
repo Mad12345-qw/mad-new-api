@@ -123,15 +123,15 @@ index 10fc36e7..bea821a1 100644
  	}
  }
  
-+func TestEnsureImageGenerationTool_MadAPIPassthroughResponsesLiteInjectsTool(t *testing.T) {
++func TestEnsureImageGenerationTool_MadAPIPassthroughResponsesLiteDoesNotInjectTool(t *testing.T) {
 +	body := []byte(`{"model":"gpt-5.6-terra","input":"draw"}`)
 +	headers := make(http.Header)
 +	headers.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
 +	auth := &cliproxyauth.Auth{Attributes: map[string]string{"madapi_passthrough": "true"}}
 +
 +	result := ensureImageGenerationTool(body, "gpt-5.6-terra", auth, headers)
-+	if got := gjson.GetBytes(result, "tools.0.type").String(); got != "image_generation" {
-+		t.Fatalf("tools.0.type = %q, want image_generation; body=%s", got, result)
++	if gjson.GetBytes(result, "tools").Exists() {
++		t.Fatalf("Responses Lite request must not gain an image tool; body=%s", result)
 +	}
 +}
 +
@@ -174,7 +174,7 @@ index e079a846..10f47bb7 100644
 +
  func ensureImageGenerationTool(body []byte, baseModel string, auth *cliproxyauth.Auth, headers http.Header) []byte {
 -	if isCodexResponsesLiteRequest(body, headers) {
-+	if isCodexResponsesLiteRequest(body, headers) && !isMadAPIPassthroughAuth(auth) {
++	if isCodexResponsesLiteRequest(body, headers) {
  		return body
  	}
  	if strings.HasSuffix(baseModel, "spark") {

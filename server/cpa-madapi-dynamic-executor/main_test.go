@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -59,5 +60,47 @@ func TestPluginConfigAcceptsBoundedBootstrapRetries(t *testing.T) {
 	}
 	if got := loadedConfig().BootstrapRetries; got != 2 {
 		t.Fatalf("bootstrap retries = %d, want 2", got)
+	}
+}
+
+func TestMadAPIEndpointUsesNativeImageRouteOnlyForImageFormat(t *testing.T) {
+	if got := madAPIEndpoint(pluginapi.ExecutorRequest{Format: openAIImageFormat}); got != imagesGenerationsPath {
+		t.Fatalf("image endpoint = %q, want %q", got, imagesGenerationsPath)
+	}
+	if got := madAPIEndpoint(pluginapi.ExecutorRequest{Format: "chat-completions"}); got != chatCompletionsPath {
+		t.Fatalf("chat endpoint = %q, want %q", got, chatCompletionsPath)
+	}
+}
+
+func TestRouteModelAcceptsNativeImageFormat(t *testing.T) {
+	configYAML := "enabled: true\nbase_url: http://madapi/v1\n"
+	rawConfig := []byte(`{"config_yaml":"` + base64.StdEncoding.EncodeToString([]byte(configYAML)) + `"}`)
+	if err := configure(rawConfig); err != nil {
+		t.Fatalf("configure() error = %v", err)
+	}
+	routeRequest, err := json.Marshal(rpcModelRouteRequest{ModelRouteRequest: pluginapi.ModelRouteRequest{
+		SourceFormat:   openAIImageFormat,
+		RequestedModel: "gpt-image-2",
+	}})
+	if err != nil {
+		t.Fatalf("marshal route request: %v", err)
+	}
+	raw, err := routeModel(routeRequest)
+	if err != nil {
+		t.Fatalf("routeModel() error = %v", err)
+	}
+	var response envelope
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("routeModel response = %v", err)
+	}
+	if !response.OK {
+		t.Fatalf("routeModel response not ok: %s", string(raw))
+	}
+	var decision pluginapi.ModelRouteResponse
+	if err := json.Unmarshal(response.Result, &decision); err != nil {
+		t.Fatalf("route decision = %v", err)
+	}
+	if !decision.Handled || decision.TargetKind != pluginapi.ModelRouteTargetSelf {
+		t.Fatalf("route decision = %#v, want handled self route", decision)
 	}
 }

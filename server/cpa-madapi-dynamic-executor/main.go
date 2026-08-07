@@ -51,6 +51,12 @@ const pluginIdentifier = "madapi-dynamic-executor"
 
 const cockpitHeader = "X-MadAPI-Codex-Cockpit"
 
+const (
+	chatCompletionsPath = "/chat/completions"
+	imagesGenerationsPath = "/images/generations"
+	openAIImageFormat    = "openai-image"
+)
+
 var errMadAPIEmptyStream = errors.New("MadAPI stream closed before a valid event")
 
 var cockpitModelAliases = map[string]string{
@@ -269,8 +275,8 @@ func pluginRegistration() registration {
 			ModelRouter:           true,
 			Executor:              true,
 			ExecutorModelScope:    string(pluginapi.ExecutorModelScopeBoth),
-			ExecutorInputFormats:  []string{"chat-completions"},
-			ExecutorOutputFormats: []string{"chat-completions"},
+			ExecutorInputFormats:  []string{"chat-completions", openAIImageFormat},
+			ExecutorOutputFormats: []string{"chat-completions", openAIImageFormat},
 		},
 	}
 }
@@ -282,7 +288,7 @@ func routeModel(raw []byte) ([]byte, error) {
 	}
 	config := loadedConfig()
 	format := strings.ToLower(strings.TrimSpace(request.SourceFormat))
-	if !config.Enabled || (format != "openai" && format != "openai-response") {
+	if !config.Enabled || (format != "openai" && format != "openai-response" && format != openAIImageFormat) {
 		return okEnvelope(pluginapi.ModelRouteResponse{Handled: false})
 	}
 	if strings.TrimSpace(request.RequestedModel) == "" {
@@ -330,7 +336,7 @@ func callMadAPI(request pluginapi.ExecutorRequest, callbackID string, stream boo
 		return pluginapi.HTTPResponse{}, fmt.Errorf("streaming requires forwardMadAPIStream")
 	}
 	raw, err := callHost(pluginabi.MethodHostHTTPDo, rpcHostHTTPRequest{HostCallbackID: callbackID, Request: &httpRequest{
-		Method: http.MethodPost, URL: config.BaseURL + "/chat/completions", Headers: madAPIHeaders(request.Headers), Body: madAPIPayload(request),
+		Method: http.MethodPost, URL: config.BaseURL + madAPIEndpoint(request), Headers: madAPIHeaders(request.Headers), Body: madAPIPayload(request),
 	}})
 	if err != nil {
 		return pluginapi.HTTPResponse{}, err
@@ -364,7 +370,7 @@ func forwardMadAPIStream(ctx context.Context, request rpcExecutorRequest) error 
 
 func forwardMadAPIStreamAttempt(ctx context.Context, request rpcExecutorRequest, config pluginConfig) error {
 	raw, err := callHost(pluginabi.MethodHostHTTPDoStream, rpcHostHTTPRequest{HostCallbackID: request.HostCallbackID, Request: &httpRequest{
-		Method: http.MethodPost, URL: config.BaseURL + "/chat/completions", Headers: madAPIHeaders(request.Headers), Body: madAPIPayload(request.ExecutorRequest),
+		Method: http.MethodPost, URL: config.BaseURL + madAPIEndpoint(request.ExecutorRequest), Headers: madAPIHeaders(request.Headers), Body: madAPIPayload(request.ExecutorRequest),
 	}})
 	if err != nil {
 		return err
@@ -478,6 +484,13 @@ func madAPIHeaders(headers http.Header) http.Header {
 		return http.Header{"Content-Type": []string{"application/json"}}
 	}
 	return http.Header{"Authorization": []string{authorization}, "Content-Type": []string{"application/json"}}
+}
+
+func madAPIEndpoint(request pluginapi.ExecutorRequest) string {
+	if strings.EqualFold(strings.TrimSpace(request.Format), openAIImageFormat) {
+		return imagesGenerationsPath
+	}
+	return chatCompletionsPath
 }
 
 func madAPIPayload(request pluginapi.ExecutorRequest) []byte {

@@ -40,6 +40,10 @@ class PatchNginxTests(unittest.TestCase):
         result = patch_nginx.reconcile_routes(BASE)
         self.assertIn("location = /codex/v1/models", result)
         self.assertIn("location = /codex/cockpit/v1/models", result)
+        self.assertIn("location = /codex/v1/responses", result)
+        self.assertIn("location = /codex/cockpit/v1/responses", result)
+        self.assertIn("limit_req zone=madapi_codex_responses_per_ip burst=1 nodelay", result)
+        self.assertIn("add_header Retry-After 3 always", result)
         self.assertIn("proxy_pass http://127.0.0.1:8318/v1/;", result)
         self.assertIn("proxy_pass http://127.0.0.1:8319/v1/;", result)
         self.assertIn("X-MadAPI-Authorization $http_authorization", result)
@@ -47,6 +51,11 @@ class PatchNginxTests(unittest.TestCase):
         self.assertIn("location ^~ /codex-canary/cockpit/v1/", result)
         self.assertIn("X-MadAPI-Codex-Canary 1", result)
         self.assertLess(result.index("location = /codex/v1/models"), result.index("location / {"))
+
+    def test_retry_guard_is_scoped_to_codex_responses(self):
+        self.assertIn("limit_req_zone $binary_remote_addr", patch_nginx.RETRY_GUARD_CONFIG)
+        self.assertNotIn("location", patch_nginx.RETRY_GUARD_CONFIG)
+        self.assertNotIn("/v1/", patch_nginx.RETRY_GUARD_CONFIG)
 
     def test_direct_mode_keeps_canary_header_only_on_newapi_routes(self):
         result = patch_nginx.reconcile_routes(BASE, mode="direct")

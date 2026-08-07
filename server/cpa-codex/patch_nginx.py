@@ -13,10 +13,18 @@ from pathlib import Path
 
 CONFIG_PATH = Path("/etc/nginx/sites-enabled/mad.myddns.me")
 BACKUP_DIR = Path("/opt/new-api/backups/nginx")
+RETRY_GUARD_PATH = Path("/etc/nginx/conf.d/madapi-codex-retry-guard.conf")
 BEGIN_MARKER = "# MadAPI CPA Codex front routes begin"
 END_MARKER = "# MadAPI CPA Codex front routes end"
 LEGACY_MARKER = "# MadAPI CPA Codex sidecar"
 LEGACY_PROXY = "proxy_pass http://127.0.0.1:8318/v1/;"
+
+RETRY_GUARD_CONFIG = """# Managed by MadAPI CPA Codex deployment.\n# Only the Codex Responses front route uses this zone; ordinary /v1 traffic is untouched.\nlimit_req_zone $binary_remote_addr zone=madapi_codex_responses_per_ip:10m rate=1r/s;\n"""
+
+RETRY_GUARD = """        limit_req zone=madapi_codex_responses_per_ip burst=1 nodelay;
+        limit_req_status 429;
+        add_header Retry-After 3 always;
+"""
 
 MODEL_PROXY = """        proxy_pass http://127.0.0.1:3001;
         proxy_http_version 1.1;
@@ -77,6 +85,16 @@ def managed_block(mode: str) -> str:
     primary_cockpit = "http://127.0.0.1:8319/v1/;" if mode == "stable" else None
     native_body = f"        proxy_pass {primary_native}\n{primary_proxy}" if primary_native else primary_proxy
     cockpit_body = f"        proxy_pass {primary_cockpit}\n{primary_cockpit_proxy}" if primary_cockpit else primary_cockpit_proxy
+    native_responses_body = (
+        f"        proxy_pass http://127.0.0.1:8318/v1/responses;\n{CPA_PROXY}"
+        if mode == "stable"
+        else DIRECT_PROXY
+    )
+    cockpit_responses_body = (
+        f"        proxy_pass http://127.0.0.1:8319/v1/responses;\n{CPA_PROXY}"
+        if mode == "stable"
+        else DIRECT_COCKPIT_PROXY
+    )
     return f"""    {BEGIN_MARKER}
     # mode: {mode}
     location = /codex/v1/models {{
@@ -85,6 +103,15 @@ def managed_block(mode: str) -> str:
 
     location = /codex/cockpit/v1/models {{
 {MODEL_PROXY}
+    }}
+
+    # Stops a failed Codex client from repeatedly entering CPA. It does not apply to /v1.
+    location = /codex/v1/responses {{
+{RETRY_GUARD}{native_responses_body}
+    }}
+
+    location = /codex/cockpit/v1/responses {{
+{RETRY_GUARD}{cockpit_responses_body}
     }}
 
     location ^~ /codex/v1/ {{
@@ -175,6 +202,22 @@ def reconcile_routes(source: str, mode: str = "stable") -> str:
     return cleaned.replace(anchor, managed_block(mode) + anchor, 1)
 
 
+def write_retry_guard() -> tuple[bool, str | None]:
+    previous = RETRY_GUARD_PATH.read_text(encoding="utf-8") if RETRY_GUARD_PATH.exists() else None
+    if previous == RETRY_GUARD_CONFIG:
+        return False, previous
+    RETRY_GUARD_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RETRY_GUARD_PATH.write_text(RETRY_GUARD_CONFIG, encoding="utf-8")
+    return True, previous
+
+
+def restore_retry_guard(previous: str | None) -> None:
+    if previous is None:
+        RETRY_GUARD_PATH.unlink(missing_ok=True)
+    else:
+        RETRY_GUARD_PATH.write_text(previous, encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("stable", "direct"), default="stable")
@@ -183,18 +226,22 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError(f"missing Nginx configuration: {CONFIG_PATH}")
     source = CONFIG_PATH.read_text(encoding="utf-8")
     reconciled = reconcile_routes(source, args.mode)
-    if reconciled == source:
-        return 0
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     backup = BACKUP_DIR / f"mad.myddns.me.before-cpa-front-{datetime.utcnow():%Y%m%d-%H%M%S}"
-    shutil.copy2(CONFIG_PATH, backup)
-    CONFIG_PATH.write_text(reconciled, encoding="utf-8")
+    if reconciled != source:
+        shutil.copy2(CONFIG_PATH, backup)
+        CONFIG_PATH.write_text(reconciled, encoding="utf-8")
+    guard_changed, previous_guard = write_retry_guard()
+    if reconciled == source and not guard_changed:
+        return 0
     check = subprocess.run(["nginx", "-t"], text=True, capture_output=True, check=False)
     if check.returncode == 0:
         reload_result = subprocess.run(["systemctl", "reload", "nginx"], text=True, capture_output=True, check=False)
         if reload_result.returncode == 0:
             return 0
-    shutil.copy2(backup, CONFIG_PATH)
+    if reconciled != source:
+        shutil.copy2(backup, CONFIG_PATH)
+    restore_retry_guard(previous_guard)
     subprocess.run(["nginx", "-t"], text=True, capture_output=True, check=False)
     subprocess.run(["systemctl", "reload", "nginx"], text=True, capture_output=True, check=False)
     return 1

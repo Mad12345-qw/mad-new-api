@@ -76,7 +76,7 @@ jobs:
       - name: Check out pinned CLIProxyAPI
         uses: actions/checkout@v4
         with:
-          repository: router-for-me/CLIProxyAPI
+          repository: Mad12345-qw/CLIProxyAPI
           ref: ${{ steps.cpa-ref.outputs.sha }}
           path: cpa-source
           fetch-depth: 1

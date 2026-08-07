@@ -30,10 +30,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve upstream CPA commit
+      - name: Resolve controlled CPA source commit
         id: upstream
         run: |
-          candidate=$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git refs/heads/main | awk '{print $1}')
+          candidate=$(git ls-remote https://github.com/Mad12345-qw/CLIProxyAPI.git refs/heads/madapi/native-thinking-collapse | awk '{print $1}')
           pinned=$(tr -d '[:space:]' < guards/cpa-upstream-commit.txt)
           test ${#candidate} -eq 40
           test ${#pinned} -eq 40
@@ -45,11 +45,11 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check out upstream CPA candidate
+      - name: Check out controlled CPA source candidate
         if: steps.upstream.outputs.changed == 'true'
         uses: actions/checkout@v4
         with:
-          repository: router-for-me/CLIProxyAPI
+          repository: Mad12345-qw/CLIProxyAPI
           ref: ${{ steps.upstream.outputs.candidate }}
           path: cpa-source
           fetch-depth: 1
@@ -131,4 +131,4 @@ jobs:
 
       - name: Report no update
         if: steps.upstream.outputs.changed != 'true'
-        run: echo 'Native CPA gateway is already aligned with upstream main.'
+        run: echo 'Native CPA gateway is already aligned with the controlled CPA source.'

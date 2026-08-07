@@ -1,0 +1,165 @@
+diff --git a/constant/madapi_codex.go b/constant/madapi_codex.go
+index 687cb2b..505c126 100644
+--- a/constant/madapi_codex.go
++++ b/constant/madapi_codex.go
+@@ -4,6 +4,7 @@ const (
+ 	MadAPICodexDispatchTokenEnv   = "MADAPI_CODEX_DISPATCH_TOKEN"
+ 	MadAPICodexDispatchHeader     = "X-MadAPI-Codex-Dispatch-Token"
+ 	MadAPICPADispatchURLEnv       = "MADAPI_CPA_DISPATCH_URL"
++	MadAPICPAImageDispatchURLEnv  = "MADAPI_CPA_IMAGE_DISPATCH_URL"
+ 	MadAPICPACanaryDispatchURLEnv = "MADAPI_CPA_CANARY_DISPATCH_URL"
+ 	MadAPICPACanaryCockpitDispatchURLEnv = "MADAPI_CPA_CANARY_COCKPIT_DISPATCH_URL"
+ 	MadAPICodexCanaryHeader       = "X-MadAPI-Codex-Canary"
+diff --git a/controller/codex_compat.go b/controller/codex_compat.go
+index b393092..34f2013 100644
+--- a/controller/codex_compat.go
++++ b/controller/codex_compat.go
+@@ -22,10 +22,12 @@ import (
+ 	"github.com/QuantumNous/new-api/service/relayconvert"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/samber/lo"
++	"github.com/tidwall/gjson"
+ )
+ 
+ const (
+ 	defaultCodexInternalBaseURL = "http://127.0.0.1:3000/v1"
++	defaultCodexImageDispatchURL = "http://cpa-codex:8317/internal/madapi/codex/image"
+ 	codexCompatibilityLimit     = 16
+ )
+ 
+@@ -162,6 +164,12 @@ func CodexResponses(c *gin.Context) {
+ 		codexCompatibilityError(c, http.StatusBadRequest, err)
+ 		return
+ 	}
++	if isCodexForcedImageGenerationRequest(originalBody) {
++		if err = proxyCodexImageGeneration(c, originalBody); err != nil && !c.Writer.Written() {
++			codexCompatibilityError(c, http.StatusBadGateway, err)
++		}
++		return
++	}
+ 	responsesReq, err := helper.GetAndValidateResponsesRequest(c)
+ 	if err != nil {
+ 		codexCompatibilityError(c, http.StatusBadRequest, err)
+@@ -206,6 +214,66 @@ func CodexResponses(c *gin.Context) {
+ 	}
+ }
+ 
++// isCodexForcedImageGenerationRequest deliberately requires an explicit image
++// tool choice. A normal conversation may advertise image_generation alongside
++// other tools; that decision still belongs to the selected conversation model.
++func isCodexForcedImageGenerationRequest(raw []byte) bool {
++	root := gjson.ParseBytes(raw)
++	if !root.Get("tools").IsArray() {
++		return false
++	}
++	hasImageTool := false
++	root.Get("tools").ForEach(func(_, tool gjson.Result) bool {
++		if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "image_generation") &&
++			strings.EqualFold(strings.TrimSpace(tool.Get("action").String()), "generate") {
++			hasImageTool = true
++			return false
++		}
++		return true
++	})
++	if !hasImageTool {
++		return false
++	}
++	choice := root.Get("tool_choice")
++	if choice.Type == gjson.String {
++		return strings.EqualFold(strings.TrimSpace(choice.String()), "image_generation")
++	}
++	return strings.EqualFold(strings.TrimSpace(choice.Get("type").String()), "image_generation")
++}
++
++func proxyCodexImageGeneration(c *gin.Context, originalRequest []byte) error {
++	dispatchURL := strings.TrimSpace(os.Getenv(appconstant.MadAPICPAImageDispatchURLEnv))
++	if dispatchURL == "" {
++		dispatchURL = defaultCodexImageDispatchURL
++	}
++	if strings.TrimSpace(c.GetHeader(appconstant.MadAPICodexCockpitHeader)) == "1" {
++		dispatchURL = "http://cpa-codex-cockpit:8317/internal/madapi/codex/image"
++	}
++	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, dispatchURL, bytes.NewReader(originalRequest))
++	if err != nil {
++		return err
++	}
++	req.Header.Set("Content-Type", "application/json")
++	if authorization := c.GetHeader("Authorization"); authorization != "" {
++		req.Header.Set("Authorization", authorization)
++	}
++	if token := strings.TrimSpace(os.Getenv(appconstant.MadAPICodexDispatchTokenEnv)); token != "" {
++		req.Header.Set(appconstant.MadAPICodexDispatchHeader, token)
++	}
++
++	resp, err := codexInternalHTTPClient.Do(req)
++	if err != nil {
++		return fmt.Errorf("native image generation request failed: %w", err)
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		proxyCodexErrorResponse(c, resp)
++		return nil
++	}
++	copyCodexTraceHeaders(c, resp)
++	return proxyCodexNativeResponses(c, resp, originalRequest, gjson.GetBytes(originalRequest, "stream").Bool())
++}
++
+ func CodexResponsesCompact(c *gin.Context) {
+ 	select {
+ 	case codexCompatibilitySlots <- struct{}{}:
+diff --git a/controller/codex_compat_test.go b/controller/codex_compat_test.go
+index 0552521..0f4f4f4 100644
+--- a/controller/codex_compat_test.go
++++ b/controller/codex_compat_test.go
+@@ -12,6 +12,7 @@ import (
+ 	"testing"
+ 	"time"
+ 
++	appconstant "github.com/QuantumNous/new-api/constant"
+ 	"github.com/QuantumNous/new-api/dto"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/gorilla/websocket"
+@@ -475,6 +476,43 @@ func TestCodexResponsesPreservesFunctionToolsForChannelAdaptor(t *testing.T) {
+ 	require.Equal(t, http.StatusOK, recorder.Code)
+ }
+ 
++func TestCodexResponsesDispatchesForcedImageGenerationThroughCPA(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	var calls atomic.Int32
++	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls.Add(1)
++		require.Equal(t, "/internal/madapi/codex/image", r.URL.Path)
++		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
++		require.Equal(t, "dispatch-secret", r.Header.Get(appconstant.MadAPICodexDispatchHeader))
++		var payload map[string]any
++		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
++		require.Equal(t, "image_generation", payload["tool_choice"].(map[string]any)["type"])
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = io.WriteString(w, `{"id":"resp-image","object":"response","status":"completed","output":[{"id":"ig-1","type":"image_generation_call","status":"completed","result":"aGVsbG8=","output_format":"png"}]}`)
++	}))
++	defer imageServer.Close()
++	t.Setenv(appconstant.MadAPICodexDispatchTokenEnv, "dispatch-secret")
++	t.Setenv(appconstant.MadAPICPAImageDispatchURLEnv, imageServer.URL+"/internal/madapi/codex/image")
++
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{
++		"model":"gpt-5.6-sol",
++		"input":"draw a lighthouse",
++		"tools":[{"type":"image_generation","action":"generate","model":"gpt-image-2"}],
++		"tool_choice":{"type":"image_generation"},
++		"stream":false
++	}`))
++	c.Request.Header.Set("Authorization", "Bearer test-token")
++	c.Request.Header.Set("Content-Type", "application/json")
++
++	CodexResponses(c)
++
++	require.Equal(t, http.StatusOK, recorder.Code)
++	require.Equal(t, int32(1), calls.Load())
++	require.Contains(t, recorder.Body.String(), `"type":"image_generation_call"`)
++}
++
+ func TestCodexResponsesUsesCPAForResponsesOnlyAndNamespaceTools(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

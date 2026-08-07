@@ -314,6 +314,10 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0016-openai-inline-thinking-normalization.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0017-madapi-session-replay-compact-contract.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0017-madapi-session-replay-compact-contract.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0018-madapi-native-image-generation.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0018-madapi-native-image-generation.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0019-madapi-codex-work-collapse.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0019-madapi-codex-work-collapse.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \

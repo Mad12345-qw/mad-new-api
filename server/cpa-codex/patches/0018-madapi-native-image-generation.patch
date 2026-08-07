@@ -1,0 +1,401 @@
+diff --git a/internal/api/madapi_native_codex.go b/internal/api/madapi_native_codex.go
+index a5f2d071..dd6807b7 100644
+--- a/internal/api/madapi_native_codex.go
++++ b/internal/api/madapi_native_codex.go
+@@ -16,6 +16,8 @@ import (
+ 	"time"
+ 
+ 	"github.com/gin-gonic/gin"
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
+ 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+ 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
+ 	openaihandler "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/openai"
+@@ -30,6 +32,8 @@ const (
+ 	madAPICodexDispatchMaxBody      = 64 << 20
+ 	madAPICodexFirstEventTimeoutMax = 60 * time.Second
+ 	madAPICodexStartupMaxBytes      = 256 << 10
++	madAPIInternalURLEnv             = "MADAPI_INTERNAL_URL"
++	madAPICodexImageResponseMaxBytes = 48 << 20
+ )
+ 
+ const (
+@@ -71,10 +75,273 @@ type madAPINativeExecutor interface {
+ 
+ type madAPINativeExecutorFactory func(*config.Config, string, int) (madAPINativeExecutor, string)
+ 
++var madAPIInternalHTTPClient = &http.Client{
++	Transport: &http.Transport{
++		Proxy:               http.ProxyFromEnvironment,
++		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
++		ForceAttemptHTTP2:   false,
++		MaxIdleConns:        16,
++		MaxIdleConnsPerHost: 16,
++		IdleConnTimeout:     90 * time.Second,
++	},
++}
++
+ func (s *Server) madAPINativeCodexExecute(c *gin.Context) {
+ 	s.madAPINativeCodexExecuteWithFactory(c, madAPINativeExecutorForProtocol)
+ }
+ 
++// madAPINativeCodexImage is the common CPA image bridge for both OAuth and
++// API-key Codex Desktop sessions. It deliberately calls MadAPI's image route
++// with the original user bearer token so channel selection and billing remain
++// entirely inside MadAPI rather than inside the CPA front proxy.
++func (s *Server) madAPINativeCodexImage(c *gin.Context) {
++	if !madAPICodexDispatchAuthorized(c.Request) {
++		c.Status(http.StatusNotFound)
++		return
++	}
++	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, madAPICodexDispatchMaxBody+1))
++	if err != nil {
++		writeMadAPINativeError(c, http.StatusBadRequest, fmt.Errorf("read image request: %w", err))
++		return
++	}
++	if len(raw) > madAPICodexDispatchMaxBody || !json.Valid(raw) {
++		writeMadAPINativeError(c, http.StatusBadRequest, errors.New("invalid image request JSON"))
++		return
++	}
++	imageRequest, responseModel, stream, err := madAPICodexImageRequest(raw)
++	if err != nil {
++		writeMadAPINativeError(c, http.StatusBadRequest, err)
++		return
++	}
++	authorization := strings.TrimSpace(c.GetHeader("Authorization"))
++	if !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
++		writeMadAPINativeError(c, http.StatusUnauthorized, errors.New("MadAPI bearer token is required for image generation"))
++		return
++	}
++	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv(madAPIInternalURLEnv)), "/")
++	if baseURL == "" {
++		baseURL = "http://new-api:3000"
++	}
++	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, baseURL+"/v1/images/generations", bytes.NewReader(imageRequest))
++	if err != nil {
++		writeMadAPINativeError(c, http.StatusBadGateway, err)
++		return
++	}
++	req.Header.Set("Authorization", authorization)
++	req.Header.Set("Content-Type", "application/json")
++	resp, err := madAPIInternalHTTPClient.Do(req)
++	if err != nil {
++		writeMadAPINativeError(c, http.StatusBadGateway, fmt.Errorf("MadAPI image request failed: %w", err))
++		return
++	}
++	defer resp.Body.Close()
++	body, err := io.ReadAll(io.LimitReader(resp.Body, madAPICodexImageResponseMaxBytes+1))
++	if err != nil {
++		writeMadAPINativeError(c, http.StatusBadGateway, fmt.Errorf("read MadAPI image response: %w", err))
++		return
++	}
++	if len(body) > madAPICodexImageResponseMaxBytes {
++		writeMadAPINativeError(c, http.StatusBadGateway, errors.New("MadAPI image response exceeds the Codex image size limit"))
++		return
++	}
++	if resp.StatusCode != http.StatusOK {
++		copyMadAPIUpstreamHeaders(c.Writer.Header(), resp.Header)
++		if json.Valid(body) {
++			c.Data(resp.StatusCode, "application/json", body)
++			return
++		}
++		writeMadAPINativeError(c, resp.StatusCode, fmt.Errorf("MadAPI image request returned HTTP %d", resp.StatusCode))
++		return
++	}
++	images, err := madAPIImageResults(body)
++	if err != nil {
++		writeMadAPINativeError(c, http.StatusBadGateway, err)
++		return
++	}
++	copyMadAPIUpstreamHeaders(c.Writer.Header(), resp.Header)
++	writeMadAPICodexImageResponse(c, responseModel, images, stream)
++}
++
++type madAPICodexImageResult struct {
++	Base64       string
++	OutputFormat string
++	RevisedPrompt string
++}
++
++func madAPICodexImageRequest(raw []byte) ([]byte, string, bool, error) {
++	root := gjson.ParseBytes(raw)
++	if !root.Get("tools").IsArray() {
++		return nil, "", false, errors.New("image_generation tool is required")
++	}
++	var tool gjson.Result
++	root.Get("tools").ForEach(func(_, candidate gjson.Result) bool {
++		if strings.EqualFold(strings.TrimSpace(candidate.Get("type").String()), "image_generation") &&
++			strings.EqualFold(strings.TrimSpace(candidate.Get("action").String()), "generate") {
++			tool = candidate
++			return false
++		}
++		return true
++	})
++	if !tool.Exists() {
++		return nil, "", false, errors.New("generate image_generation tool is required")
++	}
++	choice := root.Get("tool_choice")
++	if !strings.EqualFold(strings.TrimSpace(choice.Get("type").String()), "image_generation") &&
++		!strings.EqualFold(strings.TrimSpace(choice.String()), "image_generation") {
++		return nil, "", false, errors.New("image_generation must be explicitly selected")
++	}
++	model := strings.TrimSpace(tool.Get("model").String())
++	if model == "" {
++		model = "gpt-image-2"
++	}
++	if !strings.EqualFold(model, "gpt-image-2") {
++		return nil, "", false, fmt.Errorf("unsupported Codex image tool model %q", model)
++	}
++	prompt := madAPICodexImagePrompt(root.Get("input"))
++	if prompt == "" {
++		return nil, "", false, errors.New("image prompt is required")
++	}
++	payload := []byte(`{"model":"gpt-image-2","prompt":"","response_format":"b64_json"}`)
++	payload, _ = sjson.SetBytes(payload, "prompt", prompt)
++	for _, field := range []string{"size", "quality", "background", "output_format", "moderation"} {
++		if value := strings.TrimSpace(tool.Get(field).String()); value != "" {
++			payload, _ = sjson.SetBytes(payload, field, value)
++		}
++	}
++	for _, field := range []string{"output_compression", "partial_images"} {
++		if value := tool.Get(field); value.Exists() && value.Type == gjson.Number {
++			payload, _ = sjson.SetBytes(payload, field, value.Int())
++		}
++	}
++	responseModel := strings.TrimSpace(root.Get("model").String())
++	if responseModel == "" {
++		responseModel = "gpt-5.4-mini"
++	}
++	return payload, responseModel, root.Get("stream").Bool(), nil
++}
++
++func madAPICodexImagePrompt(input gjson.Result) string {
++	if input.Type == gjson.String {
++		return strings.TrimSpace(input.String())
++	}
++	if !input.IsArray() {
++		return ""
++	}
++	prompt := ""
++	input.ForEach(func(_, item gjson.Result) bool {
++		if item.Type == gjson.String {
++			if value := strings.TrimSpace(item.String()); value != "" {
++				prompt = value
++			}
++			return true
++		}
++		if role := strings.TrimSpace(item.Get("role").String()); role != "" && !strings.EqualFold(role, "user") {
++			return true
++		}
++		if value := madAPICodexImageContent(item.Get("content")); value != "" {
++			prompt = value
++		}
++		return true
++	})
++	return prompt
++}
++
++func madAPICodexImageContent(content gjson.Result) string {
++	if content.Type == gjson.String {
++		return strings.TrimSpace(content.String())
++	}
++	if !content.IsArray() {
++		return ""
++	}
++	parts := make([]string, 0, content.Num)
++	content.ForEach(func(_, part gjson.Result) bool {
++		for _, field := range []string{"text", "input_text"} {
++			if value := strings.TrimSpace(part.Get(field).String()); value != "" {
++				parts = append(parts, value)
++				break
++			}
++		}
++		return true
++	})
++	return strings.TrimSpace(strings.Join(parts, "\n"))
++}
++
++func madAPIImageResults(body []byte) ([]madAPICodexImageResult, error) {
++	if !json.Valid(body) {
++		return nil, errors.New("MadAPI returned invalid image JSON")
++	}
++	data := gjson.GetBytes(body, "data")
++	if !data.IsArray() {
++		return nil, errors.New("MadAPI returned no image data")
++	}
++	results := make([]madAPICodexImageResult, 0, len(data.Array()))
++	data.ForEach(func(_, item gjson.Result) bool {
++		encoded := strings.TrimSpace(item.Get("b64_json").String())
++		if encoded == "" {
++			return true
++		}
++		results = append(results, madAPICodexImageResult{
++			Base64:        encoded,
++			OutputFormat:  strings.TrimSpace(item.Get("output_format").String()),
++			RevisedPrompt: strings.TrimSpace(item.Get("revised_prompt").String()),
++		})
++		return true
++	})
++	if len(results) == 0 {
++		return nil, errors.New("MadAPI image response did not contain base64 image data")
++	}
++	return results, nil
++}
++
++func writeMadAPICodexImageResponse(c *gin.Context, model string, images []madAPICodexImageResult, stream bool) {
++	responseID := fmt.Sprintf("resp_madapi_image_%d", time.Now().UnixNano())
++	output := make([]map[string]any, 0, len(images))
++	for index, image := range images {
++		format := image.OutputFormat
++		if format == "" {
++			format = "png"
++		}
++		item := map[string]any{
++			"id":            fmt.Sprintf("ig_%s_%d", responseID, index),
++			"type":          "image_generation_call",
++			"status":        "completed",
++			"result":        image.Base64,
++			"output_format": format,
++		}
++		if image.RevisedPrompt != "" {
++			item["revised_prompt"] = image.RevisedPrompt
++		}
++		output = append(output, item)
++	}
++	response := map[string]any{
++		"id":     responseID,
++		"object": "response",
++		"status": "completed",
++		"model":  model,
++		"output": output,
++	}
++	if !stream {
++		c.JSON(http.StatusOK, response)
++		return
++	}
++	c.Header("Content-Type", "text/event-stream")
++	c.Header("Cache-Control", "no-cache")
++	c.Header("Connection", "keep-alive")
++	c.Status(http.StatusOK)
++	writeMadAPICodexImageEvent(c, "response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": responseID, "object": "response", "status": "in_progress", "model": model}})
++	for index, item := range output {
++		writeMadAPICodexImageEvent(c, "response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": index, "item": map[string]any{"id": item["id"], "type": "image_generation_call", "status": "in_progress"}})
++		writeMadAPICodexImageEvent(c, "response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": index, "item": item})
++	}
++	writeMadAPICodexImageEvent(c, "response.completed", map[string]any{"type": "response.completed", "response": response})
++}
++
++func writeMadAPICodexImageEvent(c *gin.Context, event string, payload map[string]any) {
++	encoded, _ := json.Marshal(payload)
++	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, encoded)
++	c.Writer.Flush()
++}
++
+ func (s *Server) madAPINativeCodexExecuteWithFactory(c *gin.Context, factory madAPINativeExecutorFactory) {
+ 	if !madAPICodexDispatchAuthorized(c.Request) {
+ 		c.Status(http.StatusNotFound)
+diff --git a/internal/api/madapi_native_codex_test.go b/internal/api/madapi_native_codex_test.go
+index 76a9a28c..9f1f30b0 100644
+--- a/internal/api/madapi_native_codex_test.go
++++ b/internal/api/madapi_native_codex_test.go
+@@ -185,6 +185,88 @@ func TestMadAPICodexDispatchAuthorization(t *testing.T) {
+ 	}
+ }
+ 
++func TestMadAPINativeCodexImageUsesMadAPIImageRouteAndEmitsResponsesOutput(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	t.Setenv(madAPICodexDispatchTokenEnv, "dispatch-secret")
++	var upstreamCalls int
++	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		upstreamCalls++
++		if r.URL.Path != "/v1/images/generations" {
++			t.Fatalf("path = %s", r.URL.Path)
++		}
++		if r.Header.Get("Authorization") != "Bearer user-token" {
++			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
++		}
++		var body map[string]any
++		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
++			t.Fatal(err)
++		}
++		if body["model"] != "gpt-image-2" || body["prompt"] != "draw a lighthouse" || body["response_format"] != "b64_json" {
++			t.Fatalf("image body = %#v", body)
++		}
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte(`{"created":1,"data":[{"b64_json":"aGVsbG8=","output_format":"png"}]}`))
++	}))
++	defer upstream.Close()
++	t.Setenv(madAPIInternalURLEnv, upstream.URL)
++
++	server := &Server{cfg: &config.Config{}}
++	router := gin.New()
++	router.POST("/internal/madapi/codex/image", server.madAPINativeCodexImage)
++	req := httptest.NewRequest(http.MethodPost, "/internal/madapi/codex/image", strings.NewReader(`{
++		"model":"gpt-5.6-sol",
++		"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"draw a lighthouse"}]}],
++		"tools":[{"type":"image_generation","action":"generate","model":"gpt-image-2","size":"1024x1024"}],
++		"tool_choice":{"type":"image_generation"},
++		"stream":false
++	}`))
++	req.RemoteAddr = "127.0.0.1:41000"
++	req.Header.Set(madAPICodexDispatchHeader, "dispatch-secret")
++	req.Header.Set("Authorization", "Bearer user-token")
++	recorder := httptest.NewRecorder()
++	router.ServeHTTP(recorder, req)
++
++	if recorder.Code != http.StatusOK {
++		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
++	}
++	if upstreamCalls != 1 {
++		t.Fatalf("MadAPI image calls = %d", upstreamCalls)
++	}
++	if !strings.Contains(recorder.Body.String(), `"type":"image_generation_call"`) || !strings.Contains(recorder.Body.String(), `"result":"aGVsbG8="`) {
++		t.Fatalf("Codex image response = %s", recorder.Body.String())
++	}
++}
++
++func TestMadAPINativeCodexImageStreamsResponsesEvents(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	t.Setenv(madAPICodexDispatchTokenEnv, "dispatch-secret")
++	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++		_, _ = w.Write([]byte(`{"data":[{"b64_json":"aGVsbG8=","output_format":"png"}]}`))
++	}))
++	defer upstream.Close()
++	t.Setenv(madAPIInternalURLEnv, upstream.URL)
++
++	server := &Server{cfg: &config.Config{}}
++	router := gin.New()
++	router.POST("/internal/madapi/codex/image", server.madAPINativeCodexImage)
++	req := httptest.NewRequest(http.MethodPost, "/internal/madapi/codex/image", strings.NewReader(`{"model":"gpt-5.6-sol","input":"draw","tools":[{"type":"image_generation","action":"generate"}],"tool_choice":{"type":"image_generation"},"stream":true}`))
++	req.RemoteAddr = "127.0.0.1:41000"
++	req.Header.Set(madAPICodexDispatchHeader, "dispatch-secret")
++	req.Header.Set("Authorization", "Bearer user-token")
++	recorder := httptest.NewRecorder()
++	router.ServeHTTP(recorder, req)
++
++	if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "text/event-stream" {
++		t.Fatalf("stream response = %d %q", recorder.Code, recorder.Header().Get("Content-Type"))
++	}
++	for _, event := range []string{"response.created", "response.output_item.added", "response.output_item.done", "response.completed"} {
++		if !strings.Contains(recorder.Body.String(), event) {
++			t.Fatalf("missing %s in %s", event, recorder.Body.String())
++		}
++	}
++}
++
+ func TestMadAPINativeExecutorMapping(t *testing.T) {
+ 	cfg := &config.Config{}
+ 	tests := []struct {
+diff --git a/internal/api/server_routes.go b/internal/api/server_routes.go
+index cdd131a6..4370da63 100644
+--- a/internal/api/server_routes.go
++++ b/internal/api/server_routes.go
+@@ -49,6 +49,7 @@ func (s *Server) setupRoutes() {
+ 	s.engine.GET("/healthz", healthzHandler)
+ 	s.engine.HEAD("/healthz", healthzHandler)
+ 	s.engine.POST("/internal/madapi/codex/execute", s.madAPINativeCodexExecute)
++	s.engine.POST("/internal/madapi/codex/image", s.madAPINativeCodexImage)
+ 
+ 	s.engine.GET("/management.html", s.serveManagementControlPanel)
+ 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)

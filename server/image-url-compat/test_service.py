@@ -237,6 +237,22 @@ class ImageURLCompatTest(unittest.TestCase):
             service.GROK_IMAGE_SLOTS = previous_slots
             service.TIMEOUT = previous_timeout
 
+    def test_image2_queue_has_a_dedicated_concurrency_limit(self):
+        previous_slots = service.IMAGE2_SLOTS
+        previous_timeout = service.TIMEOUT
+        slots = threading.BoundedSemaphore(1)
+        service.IMAGE2_SLOTS = slots
+        service.TIMEOUT = 0
+        self.assertTrue(slots.acquire(blocking=False))
+        try:
+            with self.assertRaises(TimeoutError):
+                with service.image_request_slot({"model": "gpt-image-2"}):
+                    self.fail("saturated gpt-image-2 queue should not enter")
+        finally:
+            slots.release()
+            service.IMAGE2_SLOTS = previous_slots
+            service.TIMEOUT = previous_timeout
+
     def test_explicit_base64_returns_base64_only(self):
         body, mode = service.transform_image_response(
             {"model": "gpt-image-2-4k", "response_format": "b64_json"},

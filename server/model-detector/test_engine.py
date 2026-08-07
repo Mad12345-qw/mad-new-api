@@ -159,6 +159,13 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(items), 3)
         self.assertTrue(all(item.strength == "weak" and item.supports is None for item in items))
 
+    def test_bedrock_native_model_identifier_is_a_public_candidate_signal(self) -> None:
+        items = model_alias_evidence(["global.anthropic.claude-sonnet-4-5-20250929-v1:0"])
+        bedrock = next(item for item in items if item.category == "bedrock_model_identifier")
+        self.assertEqual(bedrock.supports, "aws_bedrock")
+        self.assertEqual(bedrock.strength, "medium")
+        self.assertIn("botocore", bedrock.detail["source_urls"][0])
+
     def test_body_shape_discards_values(self) -> None:
         shaped = body_shape({"token": "secret", "nested": {"count": 2}})
         self.assertEqual(shaped["token"], "str")

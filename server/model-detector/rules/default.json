@@ -382,6 +382,7 @@
   "error_rules": [
     {"channel": "azure_openai", "pattern": "\\b(DeploymentNotFound|DeploymentNotReady)\\b", "strength": "medium", "title": "Azure 部署错误契约"},
     {"channel": "aws_bedrock", "pattern": "\\b(ValidationException|ThrottlingException|ModelNotReadyException|AccessDeniedException)\\b", "strength": "medium", "title": "AWS Bedrock 异常类型"},
+    {"channel": "aws_bedrock", "pattern": "Unsupported model .+ please use models API to get a list of supported models", "strength": "medium", "title": "AWS 官方 Bedrock Access Gateway 模型校验合同"},
     {"channel": "vertex_ai", "pattern": "\\b(PublisherModel|projects/[a-z0-9_-]+/locations/[a-z0-9_-]+)\\b", "strength": "medium", "title": "Vertex AI 资源路径错误契约"}
   ]
 }

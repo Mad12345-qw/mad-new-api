@@ -975,6 +975,14 @@ def provenance_evidence(
 
 def model_alias_evidence(models: list[str]) -> list[Evidence]:
     result: list[Evidence] = []
+    bedrock_identifier = re.compile(
+        r"^(?:(?:global|us|eu|apac)\.)?anthropic\.claude-[a-z0-9-]+-v\d+:\d+$|^arn:aws:bedrock:[a-z0-9-]+:\d{12}:application-inference-profile/[a-z0-9._-]+$",
+        re.IGNORECASE,
+    )
+    bedrock_sources = [
+        "https://github.com/boto/botocore/blob/497b30022e408e9217b3e232b73169da33055e03/botocore/data/bedrock-runtime/2023-09-30/service-2.json",
+        "https://github.com/aws-samples/bedrock-access-gateway/blob/274b794e2ef6a163327b5dc0720ea2be9bef720e/docs/Usage.md",
+    ]
     official_openai = {
         "gpt-5.5",
         "gpt-5.6-luna",
@@ -994,6 +1002,21 @@ def model_alias_evidence(models: list[str]) -> list[Evidence]:
     official_google = {"gemini-3.6-flash"}
     for model in models:
         normalized = model.lower()
+        if bedrock_identifier.match(model):
+            result.append(
+                Evidence(
+                    probe="configured_models",
+                    category="bedrock_model_identifier",
+                    strength="medium",
+                    supports="aws_bedrock",
+                    title="模型列表暴露 AWS Bedrock 原生模型或推理配置 ID",
+                    detail={
+                        "model": model,
+                        "source_urls": bedrock_sources,
+                        "note": "该标识与 AWS Bedrock 原生模型 ID 或应用推理配置 ARN 格式一致；须结合独立的错误、响应头或网关转换指纹才可确认最终承载。",
+                    },
+                )
+            )
         if normalized in official_openai or normalized in official_anthropic or normalized in official_google:
             source_url = (
                 f"https://developers.openai.com/api/docs/models/{normalized}"

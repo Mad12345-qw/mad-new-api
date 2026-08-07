@@ -531,7 +531,7 @@ func ensureNativeImageGenerationTool(payload []byte) []byte {
 			}
 		}
 	}
-	tool := []byte(`{"type":"image_generation","action":"generate","model":"gpt-image-2"}`)
+	tool := []byte(`{"type":"image_generation","action":"generate","model":"gpt-image-2","size":"1024x1024","output_format":"png"}`)
 	var (
 		updated []byte
 		err     error

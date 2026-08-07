@@ -87,6 +87,9 @@ func TestMadAPIResponsesPayloadInjectsNativeImageTool(t *testing.T) {
 	if got := gjson.GetBytes(payload, "tools.0.model").String(); got != "gpt-image-2" {
 		t.Fatalf("tools.0.model = %q, payload=%s", got, payload)
 	}
+	if got := gjson.GetBytes(payload, "tools.0.size").String(); got != "1024x1024" {
+		t.Fatalf("tools.0.size = %q, payload=%s", got, payload)
+	}
 }
 
 func TestMadAPIResponsesPayloadKeepsExistingImageTool(t *testing.T) {

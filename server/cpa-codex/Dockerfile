@@ -54,7 +54,9 @@ RUN if [ "$CPA_PATCHED" != "1" ]; then \
 		&& git apply --check /patches/0020-madapi-native-image-build-fix.patch \
 		&& git apply /patches/0020-madapi-native-image-build-fix.patch \
 		&& git apply --check /patches/0021-madapi-image-work-contract.patch \
-		&& git apply /patches/0021-madapi-image-work-contract.patch; \
+		&& git apply /patches/0021-madapi-image-work-contract.patch \
+		&& git apply --check /patches/0022-madapi-cpa-event-parity.patch \
+		&& git apply /patches/0022-madapi-cpa-event-parity.patch; \
 	fi \
 	&& gofmt -w internal/config/config_types.go internal/runtime/executor/claude_executor_execute.go internal/runtime/executor/claude_executor_request.go internal/runtime/executor/claude_executor_stream.go internal/runtime/executor/claude_executor_test.go internal/runtime/executor/claude_executor_tokens.go internal/runtime/executor/openai_compat_executor.go internal/runtime/executor/openai_compat_executor_madapi_test.go internal/runtime/executor/codex_executor_request.go internal/runtime/executor/codex_executor_imagegen_test.go internal/translator/claude/openai/responses/claude_openai-responses_request.go internal/translator/claude/openai/responses/claude_openai-responses_request_test.go internal/translator/claude/openai/responses/claude_openai-responses_response.go internal/translator/claude/openai/responses/claude_openai-responses_response_test.go internal/translator/openai/openai/responses/openai_openai-responses_request_test.go internal/translator/openai/openai/responses/openai_openai-responses_response.go internal/translator/openai/openai/responses/openai_openai-responses_response_test.go internal/translator/openai/openai/responses/openai_openai-responses_tools.go internal/watcher/synthesizer/config.go internal/watcher/synthesizer/config_test.go internal/api/madapi_native_codex.go internal/api/madapi_native_codex_test.go sdk/api/handlers/openai/madapi_responses_session.go sdk/api/handlers/openai/madapi_responses_session_test.go sdk/api/handlers/openai/openai_responses_handlers.go sdk/cliproxy/auth/conductor_execution.go sdk/cliproxy/auth/madapi_passthrough_test.go \
 	&& go mod download \

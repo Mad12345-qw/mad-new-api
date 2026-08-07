@@ -328,6 +328,8 @@ jobs:
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0020-madapi-native-image-build-fix.patch"
           git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0021-madapi-image-work-contract.patch"
           git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0021-madapi-image-work-contract.patch"
+          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0022-madapi-cpa-event-parity.patch"
+          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0022-madapi-cpa-event-parity.patch"
           gofmt -w \
             internal/config/config_types.go \
             internal/runtime/executor/openai_compat_executor.go \

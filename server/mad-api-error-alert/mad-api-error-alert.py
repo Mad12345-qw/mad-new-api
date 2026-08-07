@@ -124,7 +124,7 @@ def build_error_message(errors: list[dict], test: bool = False) -> EmailMessage:
     else:
         lines = [
             "Mad API has recorded five consecutive request errors.",
-            "This alert covers one batch of five consecutive errors. The next error starts a new batch.",
+            "No further alert will be sent until a successful request resets the error streak.",
             "",
         ]
         rows = []
@@ -155,7 +155,7 @@ def build_error_message(errors: list[dict], test: bool = False) -> EmailMessage:
         plain = "\n".join(lines)
         body = (
             "<h2>Mad API: five consecutive request errors</h2>"
-            "<p>This alert covers one batch of five consecutive errors. The next error starts a new batch.</p>"
+            "<p>No repeated alert will be sent until a successful request resets the streak.</p>"
             "<table border='1' cellpadding='6' cellspacing='0'>"
             "<tr><th>Log</th><th>Time</th><th>Channel ID</th><th>Channel Name</th><th>Model</th><th>Request ID</th><th>Error</th></tr>"
             + "".join(rows)
@@ -259,13 +259,9 @@ def monitor(connection: sqlite3.Connection, state_path: Path) -> None:
 
         state["streak"] += 1
         state["errors"] = (state["errors"] + [compact_error(row)])[-TRIGGER_COUNT:]
-        if state["streak"] >= TRIGGER_COUNT:
+        if state["streak"] >= TRIGGER_COUNT and not state["alerted"]:
             send_email(smtp_options(connection), build_error_message(state["errors"]))
-            # Each email closes exactly one five-error batch. The next error
-            # must begin a fresh batch, even when it arrives in this scan.
-            state["streak"] = 0
-            state["alerted"] = False
-            state["errors"] = []
+            state["alerted"] = True
             save_state(state_path, state)
             print(f"alert sent at log id {row['id']}")
 

@@ -139,8 +139,10 @@ def render_config(model_ids: list[str], mode: str) -> str:
         "request-log: false",
         "request-retry: 3",
         "max-retry-credentials: 0",
+        "streaming:",
+        "  bootstrap-retries: 2",
         "disable-cooling: false",
-        'disable-image-generation: "passthrough"',
+        "disable-image-generation: false",
         "api-keys:",
         '  - "madapi-codex-gateway"',
     ]

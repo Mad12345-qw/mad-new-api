@@ -51,11 +51,14 @@ OPTIONAL_PATHS = (
     Path("/etc/systemd/system/madapi-offsite-backup.timer"),
     Path("/opt/new-api/mad-release-sha256.txt"),
     Path("/opt/new-api/mad-cpa-codex-sha256.txt"),
+    Path("/opt/new-api/mad-image-gateway-sha256.txt"),
     Path("/usr/local/sbin/new-api-autoupdate.sh"),
     Path("/usr/local/sbin/cpa-codex-autodeploy.sh"),
     Path("/usr/local/sbin/new-api-watchdog.sh"),
     Path("/usr/local/lib/mad-cpa-codex"),
     Path("/opt/image-url-compat"),
+    Path("/opt/image-media-gateway/image-media-gateway"),
+    Path("/etc/systemd/system/image-media-gateway.service"),
 )
 
 

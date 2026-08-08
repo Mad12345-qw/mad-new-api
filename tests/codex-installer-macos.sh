@@ -135,15 +135,18 @@ requires_openai_auth = false
 experimental_bearer_token = "sk-macos-refresh-key"
 EOF
 valid_catalog="$home/valid-catalog.json"
-printf '%s' '{"models":[{"slug":"gemini-3.6-flash","display_name":"gemini-3.6-flash"}]}' > "$valid_catalog"
+printf '%s' '{"models":[{"slug":"gpt-5.6-sol-pro","display_name":"GPT 5.6 Sol Pro"},{"slug":"gpt-5.6-terra-pro","display_name":"GPT 5.6 Terra Pro"}]}' > "$valid_catalog"
 CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$valid_catalog" /bin/sh "$refresh_script_path"
-grep -Fq '"slug":"gemini-3.6-flash"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'Structured catalog refresh did not install the valid JSON fixture.'
+grep -Fq '"slug":"gpt-5.6-sol-pro"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'OAuth refresh omitted gpt-5.6-sol-pro.'
+grep -Fq '"slug":"gpt-5.6-terra-pro"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'OAuth refresh omitted gpt-5.6-terra-pro.'
 grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$refresh_home/config.toml" || fail 'Unsigned refresh did not select the OAuth-native route.'
 grep -Fq 'requires_openai_auth = true' "$refresh_home/config.toml" || fail 'Unsigned refresh did not enable the OAuth gate.'
 printf '%s' '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-local","tokens":null}' > "$refresh_home/auth.json"
 CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$valid_catalog" /bin/sh "$refresh_script_path"
 grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$refresh_home/config.toml" || fail 'API refresh did not select the mapped route.'
 grep -Fq 'requires_openai_auth = false' "$refresh_home/config.toml" || fail 'API refresh did not disable the OAuth gate.'
+grep -Fq '"slug":"gpt-5.6-sol-pro"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'API refresh omitted gpt-5.6-sol-pro.'
+grep -Fq '"slug":"gpt-5.6-terra-pro"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'API refresh omitted gpt-5.6-terra-pro.'
 invalid_catalog="$home/invalid-catalog.json"
 printf '%s' '{not-json}' > "$invalid_catalog"
 if CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$invalid_catalog" /bin/sh "$refresh_script_path" >/dev/null 2>&1; then

@@ -86,6 +86,9 @@ def reconcile_compose(source: str) -> str:
             "MADAPI_CODEX_DISPATCH_TOKEN": "${MADAPI_CODEX_DISPATCH_TOKEN}",
             "MADAPI_CPA_DISPATCH_URL": "http://cpa-codex-native:8317/internal/madapi/codex/execute",
             "MADAPI_CPA_IMAGE_DISPATCH_URL": "http://cpa-codex-native:8317/internal/madapi/codex/image",
+            "MADAPI_GEMINI_IMAGE_CONCURRENCY": "1",
+            "GOMEMLIMIT": "512MiB",
+            "GOGC": "50",
         },
     )
 
@@ -98,11 +101,14 @@ def reconcile_compose(source: str) -> str:
         "    cpus: 0.75\n",
         "    ports:\n",
         '      - "127.0.0.1:8320:8317"\n',
+        "    extra_hosts:\n",
+        '      - "host.docker.internal:host-gateway"\n',
         "    environment:\n",
         "      TZ: Asia/Shanghai\n",
         "      MADAPI_CODEX_DISPATCH_TOKEN: ${MADAPI_CODEX_DISPATCH_TOKEN}\n",
         "      MADAPI_CPA_MODE: selected-channel\n",
         "      MADAPI_INTERNAL_URL: http://new-api:3000\n",
+        "      MADAPI_IMAGE_COMPAT_URL: http://host.docker.internal:3012\n",
         "\n",
     ]
     lines = replace_service(lines, "cpa-codex-native", native_block)

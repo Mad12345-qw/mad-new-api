@@ -107,6 +107,12 @@ jobs:
             if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch" ]; then
               continue
             fi
+            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-pro-model-aliases.patch" ]; then
+              continue
+            fi
+            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-image-media-channel-matrix.patch" ]; then
+              continue
+            fi
             if [[ "$(basename "$patch")" == *"-codex-auth-gate.patch" ]]; then
               continue
             fi
@@ -126,6 +132,12 @@ jobs:
 
           git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
           git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
+
+          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-pro-model-aliases.patch"
+          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-pro-model-aliases.patch"
+
+          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-image-media-channel-matrix.patch"
+          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-image-media-channel-matrix.patch"
 
       - name: Apply CPA gateway auth endpoint
         run: |
@@ -184,6 +196,7 @@ jobs:
             controller/token_test.go
             controller/playground.go
             controller/relay.go
+            controller/relay_precommit_retry_test.go
             controller/relay_task_retry_test.go
             middleware/distributor.go
             middleware/distributor_madapi_test.go
@@ -194,6 +207,8 @@ jobs:
             relay/channel/claude/responses_via_messages.go
             relay/channel/deepseek/adaptor.go
             relay/channel/deepseek/adaptor_responses_test.go
+            relay/channel/gemini/adaptor.go
+            relay/channel/gemini/adaptor_image_preview_test.go
             relay/channel/moonshot/adaptor.go
             relay/channel/moonshot/adaptor_test.go
             relay/channel/openai/cpa_responses_via_chat.go
@@ -259,7 +274,7 @@ jobs:
 
       - name: Test backend paths
         working-directory: source
-        run: go test ./common ./controller ./middleware ./model ./relay/common ./relay/channel/claude ./relay/channel/deepseek ./relay/channel/moonshot ./relay/channel/openai ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/codexclientmodels ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
+        run: go test ./common ./controller ./middleware ./model ./relay/common ./relay/channel/claude ./relay/channel/deepseek ./relay/channel/gemini ./relay/channel/moonshot ./relay/channel/openai ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/codexclientmodels ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
 
       - name: Verify playground frontend
         working-directory: source/web/default
@@ -271,6 +286,13 @@ jobs:
 
       - name: Test image response compatibility service
         run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
+
+      - name: Test streaming image media gateway
+        working-directory: server/image-media-gateway
+        run: |
+          go test ./...
+          go vet ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/image-media-gateway" .
 
       - name: Test native CPA route reconciliation
         run: python3 -m unittest server/cpa-codex-native/test_patch_nginx.py
@@ -312,6 +334,7 @@ jobs:
           cp server/image-url-compat/service.py image-url-compat.py
           cp server/image-url-compat/image-url-compat.service image-url-compat.service
           cp server/image-url-compat/patch_nginx.py patch-image-compat-nginx.py
+          cp server/image-media-gateway/image-media-gateway.service image-media-gateway.service
           cp server/new-api-autoupdate.sh new-api-autoupdate.sh
           cp server/new-api-component-deploy.sh new-api-component-deploy.sh
           cp server/mad-api-error-alert/mad-api-error-alert.py mad-api-error-alert.py
@@ -325,6 +348,8 @@ jobs:
           sha256sum image-url-compat.py > image-url-compat.py.sha256
           sha256sum image-url-compat.service > image-url-compat.service.sha256
           sha256sum patch-image-compat-nginx.py > patch-image-compat-nginx.py.sha256
+          sha256sum image-media-gateway > image-media-gateway.sha256
+          sha256sum image-media-gateway.service > image-media-gateway.service.sha256
           sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
           sha256sum new-api-component-deploy.sh > new-api-component-deploy.sh.sha256
           sha256sum mad-api-error-alert.py > mad-api-error-alert.py.sha256
@@ -355,6 +380,10 @@ jobs:
             image-url-compat.service.sha256 \
             patch-image-compat-nginx.py \
             patch-image-compat-nginx.py.sha256 \
+            image-media-gateway \
+            image-media-gateway.sha256 \
+            image-media-gateway.service \
+            image-media-gateway.service.sha256 \
             new-api-autoupdate.sh \
             new-api-autoupdate.sh.sha256 \
             new-api-component-deploy.sh \

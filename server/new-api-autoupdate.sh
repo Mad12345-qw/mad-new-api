@@ -218,7 +218,18 @@ case "$new_api_gateway" in
     exit 2
     ;;
 esac
+docker_bridge_gateway=$(docker network inspect bridge \
+  --format '{{with (index .IPAM.Config 0)}}{{.Gateway}}{{end}}' 2>/dev/null || true)
+case "$docker_bridge_gateway" in
+  ''|*[!0-9.]*)
+    logger -t new-api-autoupdate "unable to detect the Docker host-gateway address; refusing image gateway changes"
+    exit 2
+    ;;
+esac
 gateway_listen_addrs="127.0.0.1:3013,$new_api_gateway:3013"
+if [ "$docker_bridge_gateway" != "$new_api_gateway" ]; then
+  gateway_listen_addrs="$gateway_listen_addrs,$docker_bridge_gateway:3013"
+fi
 expected_gateway_dropin=$(printf '[Service]\nEnvironment="LISTEN_ADDRS=%s"\n' "$gateway_listen_addrs")
 
 if [ ! -f "$COMPAT_STATE_FILE" ] \

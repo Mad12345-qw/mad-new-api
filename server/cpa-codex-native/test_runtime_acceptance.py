@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import socket
 import struct
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -52,6 +54,13 @@ class MockSelectedChannelHandler(BaseHTTPRequestHandler):
             )
             return
         if path.endswith("/images/generations"):
+            if body.get("response_format") == "url":
+                port = int(self.server.server_address[1])
+                self._json(
+                    200,
+                    {"created": 1, "data": [{"url": f"http://127.0.0.1:{port}/asset/test.png"}]},
+                )
+                return
             self._json(
                 200,
                 {
@@ -178,6 +187,16 @@ class MockSelectedChannelHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/asset/test.png":
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(PNG_1X1)))
+            self.end_headers()
+            self.wfile.write(PNG_1X1)
+            return
+        self.send_error(404)
+
     def _json(self, status: int, value: dict[str, object]) -> None:
         payload = json.dumps(value, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
@@ -252,6 +271,7 @@ def dispatch_body(mock_port: int, body: dict[str, object], *, stream: bool = Tru
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True)
+    parser.add_argument("--image-gateway")
     args = parser.parse_args()
 
     MockSelectedChannelHandler.calls = []
@@ -261,7 +281,58 @@ def main() -> int:
     threading.Thread(target=mock.serve_forever, daemon=True).start()
     container = f"selected-channel-cpa-{uuid.uuid4().hex[:12]}"
     dispatch_token = "runtime-dispatch-secret"
+    gateway_process: subprocess.Popen[bytes] | None = None
+    gateway_temp: tempfile.TemporaryDirectory[str] | None = None
     try:
+        image_compat_args: list[str] = []
+        if args.image_gateway:
+            gateway_port = free_port()
+            bridge_gateway = subprocess.run(
+                [
+                    "docker",
+                    "network",
+                    "inspect",
+                    "bridge",
+                    "--format",
+                    "{{with (index .IPAM.Config 0)}}{{.Gateway}}{{end}}",
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+            if not bridge_gateway:
+                raise RuntimeError("Docker host-gateway address is missing")
+            gateway_temp = tempfile.TemporaryDirectory(prefix="madapi-image-gateway-acceptance-")
+            gateway_root = gateway_temp.name
+            gateway_env = {
+                **os.environ,
+                "LISTEN_ADDRS": f"127.0.0.1:{gateway_port},{bridge_gateway}:{gateway_port}",
+                "UPSTREAM": f"http://127.0.0.1:{mock_port}",
+                "PUBLIC_BASE_URL": f"http://host.docker.internal:{gateway_port}",
+                "CACHE_DIR": os.path.join(gateway_root, "cache"),
+                "SPOOL_DIR": os.path.join(gateway_root, "spool"),
+            }
+            gateway_process = subprocess.Popen(
+                [args.image_gateway],
+                env=gateway_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                try:
+                    with urlopen(f"http://127.0.0.1:{gateway_port}/health", timeout=2) as response:  # nosec B310
+                        if response.status == 200:
+                            break
+                except (OSError, URLError):
+                    time.sleep(0.2)
+            else:
+                raise RuntimeError("image gateway did not become healthy")
+            image_compat_args = [
+                "--env",
+                f"MADAPI_IMAGE_COMPAT_URL=http://host.docker.internal:{gateway_port}",
+            ]
+
         subprocess.run(
             [
                 "docker",
@@ -278,6 +349,7 @@ def main() -> int:
                 f"MADAPI_CODEX_DISPATCH_TOKEN={dispatch_token}",
                 "--env",
                 f"MADAPI_INTERNAL_URL=http://host.docker.internal:{mock_port}",
+                *image_compat_args,
                 args.image,
             ],
             check=True,
@@ -441,6 +513,15 @@ def main() -> int:
         )
         mock.shutdown()
         mock.server_close()
+        if gateway_process is not None:
+            gateway_process.terminate()
+            try:
+                gateway_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                gateway_process.kill()
+                gateway_process.wait(timeout=10)
+        if gateway_temp is not None:
+            gateway_temp.cleanup()
 
     print("selected-channel CPA runtime acceptance passed")
     return 0

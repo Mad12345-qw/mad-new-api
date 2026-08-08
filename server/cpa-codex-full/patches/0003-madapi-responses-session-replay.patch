@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..56ec854
 --- /dev/null
 +++ b/sdk/api/handlers/openai/madapi_responses_session.go
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,332 @@
 +package openai
 +
 +import (
@@ -190,6 +190,25 @@ index 0000000..56ec854
 +	return json.Marshal(items)
 +}
 +
++func madAPIResponseSessionInput(rawJSON []byte) ([]byte, bool) {
++	input := gjson.GetBytes(rawJSON, "input")
++	if input.IsArray() {
++		return []byte(input.Raw), true
++	}
++	if input.Type != gjson.String {
++		return nil, false
++	}
++	normalized, err := json.Marshal([]map[string]any{{
++		"type": "message",
++		"role": "user",
++		"content": []map[string]any{{
++			"type": "input_text",
++			"text": input.String(),
++		}},
++	}})
++	return normalized, err == nil
++}
++
 +func rememberMadAPIResponseSession(scope string, rawJSON, response []byte) {
 +	if scope == "" {
 +		return
@@ -198,9 +217,9 @@ index 0000000..56ec854
 +		response = []byte(nested.Raw)
 +	}
 +	responseID := strings.TrimSpace(gjson.GetBytes(response, "id").String())
-+	input := gjson.GetBytes(rawJSON, "input")
++	input, inputOK := madAPIResponseSessionInput(rawJSON)
 +	output := gjson.GetBytes(response, "output")
-+	if responseID == "" || !input.IsArray() || !output.IsArray() || len(input.Raw)+len(output.Raw) > madAPIResponseSessionMaxBytes {
++	if responseID == "" || !inputOK || !output.IsArray() || len(input)+len(output.Raw) > madAPIResponseSessionMaxBytes {
 +		return
 +	}
 +	modelName := madAPIResponseSessionModel(rawJSON)
@@ -208,7 +227,7 @@ index 0000000..56ec854
 +		return
 +	}
 +	if gjson.GetBytes(response, "output.0.type").String() == "compaction" {
-+		input = gjson.Parse(`[]`)
++		input = []byte(`[]`)
 +	}
 +	now := time.Now()
 +	madAPIResponseSessions.Lock()
@@ -218,7 +237,7 @@ index 0000000..56ec854
 +		madAPIResponseSessions.totalBytes -= madAPIResponseSessionStateBytes(prior)
 +		delete(madAPIResponseSessions.entries, key)
 +	}
-+	state := madAPIResponseSessionState{input: bytes.Clone([]byte(input.Raw)), output: bytes.Clone([]byte(output.Raw)), updated: now}
++	state := madAPIResponseSessionState{input: bytes.Clone(input), output: bytes.Clone([]byte(output.Raw)), updated: now}
 +	madAPIResponseSessionTrim(now, madAPIResponseSessionMaxItems, madAPIResponseSessionMaxTotalBytes, madAPIResponseSessionStateBytes(state))
 +	madAPIResponseSessions.entries[key] = state
 +	madAPIResponseSessions.totalBytes += madAPIResponseSessionStateBytes(state)
@@ -322,7 +341,7 @@ new file mode 100644
 index 0000000..8858a58
 --- /dev/null
 +++ b/sdk/api/handlers/openai/madapi_responses_session_test.go
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,202 @@
 +package openai
 +
 +import (
@@ -350,6 +369,25 @@ index 0000000..8858a58
 +	for _, want := range []string{`"type":"reasoning"`, `"type":"function_call"`, `"type":"function_call_output"`} {
 +		if !strings.Contains(string(continued), want) {
 +			t.Fatalf("continuation lost %s: %s", want, continued)
++		}
++	}
++	if strings.Contains(string(continued), "previous_response_id") {
++		t.Fatalf("provider state leaked: %s", continued)
++	}
++}
++
++func TestMadAPIResponseSessionReplaysStringInput(t *testing.T) {
++	resetMadAPIResponseSessions()
++	first := []byte(`{"model":"deepseek-v4","input":"run tool"}`)
++	response := []byte(`{"id":"resp-string","output":[{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{}"}]}`)
++	rememberMadAPIResponseSession("scope-a", first, response)
++	continued, err := prepareMadAPIResponseSessionRequest("scope-a", []byte(`{"model":"deepseek-v4","previous_response_id":"resp-string","input":[{"type":"function_call_output","call_id":"call-1","output":"ok"}]}`))
++	if err != nil {
++		t.Fatalf("prepare string-input continuation: %v", err)
++	}
++	for _, want := range []string{`"type":"message"`, `"type":"input_text"`, `"text":"run tool"`, `"type":"function_call_output"`} {
++		if !strings.Contains(string(continued), want) {
++			t.Fatalf("string-input continuation lost %s: %s", want, continued)
 +		}
 +	}
 +	if strings.Contains(string(continued), "previous_response_id") {

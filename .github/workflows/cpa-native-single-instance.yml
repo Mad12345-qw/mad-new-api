@@ -5,7 +5,6 @@ on:
   pull_request:
     paths:
       - 'server/cpa-codex-native/**'
-      - 'server/cpa-madapi-dynamic-executor/**'
       - 'assets/mad-codex/**'
       - 'tests/codex-installer-*'
       - 'guards/cpa-upstream-commit.txt'
@@ -15,7 +14,6 @@ on:
       - main
     paths:
       - 'server/cpa-codex-native/**'
-      - 'server/cpa-madapi-dynamic-executor/**'
       - 'assets/mad-codex/**'
       - 'tests/codex-installer-*'
       - 'guards/cpa-upstream-commit.txt'
@@ -72,17 +70,11 @@ jobs:
           python3 -m unittest server/cpa-codex-native/test_patch_nginx.py
           sh -n server/cpa-codex-native/entrypoint.sh
           sh -n server/cpa-codex-native/autodeploy.sh
-      - name: Test and build official CPA plugin
-        working-directory: cpa-source
-        run: |
-          cp -R "$GITHUB_WORKSPACE/server/cpa-madapi-dynamic-executor" .madapi-dynamic-executor
-          go test ./.madapi-dynamic-executor
-          CGO_ENABLED=1 go build -buildmode=c-shared -o /tmp/madapi-dynamic.so ./.madapi-dynamic-executor
       - name: Build native single-instance image
         run: |
           docker build --pull --file server/cpa-codex-native/Dockerfile --tag mad-cpa-codex:native-acceptance .
       - name: Verify native image contents
         run: |
-          docker run --rm --entrypoint /bin/sh mad-cpa-codex:native-acceptance -c 'test -x /CLIProxyAPI/CLIProxyAPI && test -s /app/plugins/madapi-dynamic.so'
+          docker run --rm --entrypoint /bin/sh mad-cpa-codex:native-acceptance -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
       - name: Exercise native image routing
         run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:native-acceptance

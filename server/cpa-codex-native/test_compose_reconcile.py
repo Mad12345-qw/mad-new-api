@@ -27,6 +27,16 @@ class ComposeReconcileTests(unittest.TestCase):
         result = compose_reconcile.reconcile_compose(BASE)
         self.assertIn("  cpa-codex-native:\n", result)
         self.assertIn("127.0.0.1:8320:8317", result)
+        self.assertIn("MADAPI_CODEX_DISPATCH_TOKEN: ${MADAPI_CODEX_DISPATCH_TOKEN}", result)
+        self.assertIn(
+            "MADAPI_CPA_DISPATCH_URL: http://cpa-codex-native:8317/internal/madapi/codex/execute",
+            result,
+        )
+        self.assertIn(
+            "MADAPI_CPA_IMAGE_DISPATCH_URL: http://cpa-codex-native:8317/internal/madapi/codex/image",
+            result,
+        )
+        self.assertIn("MADAPI_CPA_MODE: selected-channel", result)
         self.assertIn("MADAPI_INTERNAL_URL: http://new-api:3000", result)
         self.assertNotIn("  cpa-codex:\n", result)
         self.assertNotIn("  cpa-codex-cockpit:\n", result)

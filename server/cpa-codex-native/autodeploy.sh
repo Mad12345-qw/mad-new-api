@@ -9,6 +9,7 @@ LEGACY_NATIVE_SERVICE=cpa-codex
 LEGACY_COCKPIT_SERVICE=cpa-codex-cockpit
 IMAGE=mad-cpa-codex:latest
 NATIVE_HEALTH_URL=http://127.0.0.1:8320/healthz
+NEW_API_HEALTH_URL=http://127.0.0.1:3001/api/status
 RELEASE_BASE=https://github.com/Mad12345-qw/mad-new-api/releases/download/build-latest
 STATE_FILE=$COMPOSE_DIR/mad-cpa-codex-sha256.txt
 INSTALL_DIR=/usr/local/lib/mad-cpa-codex
@@ -47,16 +48,27 @@ fi
 rollback() {
   cp -a "$backup_dir/docker-compose.yml" "$COMPOSE_FILE"
   cp -a "$backup_dir/.env" "$ENV_FILE"
+  if [ -n "$old_image_id" ]; then docker image tag "$rollback_tag" "$IMAGE"; fi
+  set -- new-api
+  available_services=$(docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null || true)
+  for service in "$NATIVE_SERVICE" "$LEGACY_NATIVE_SERVICE" "$LEGACY_COCKPIT_SERVICE"; do
+    if printf '%s\n' "$available_services" | grep -Fxq "$service"; then
+      set -- "$@" "$service"
+    fi
+  done
+  docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps "$@" || true
   cp -a "$backup_dir/mad.myddns.me" "$NGINX_CONFIG"
   nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
-  docker rm -f "$NATIVE_SERVICE" >/dev/null 2>&1 || true
-  if [ -n "$old_image_id" ]; then docker image tag "$rollback_tag" "$IMAGE"; fi
-  docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps "$LEGACY_NATIVE_SERVICE" "$LEGACY_COCKPIT_SERVICE" || true
 }
 
 install -d -m 0755 "$INSTALL_DIR"
 install -m 0755 "$work_dir/patch-cpa-codex-nginx.py" "$NGINX_PATCH"
 install -m 0755 "$work_dir/compose-cpa-codex.py" "$COMPOSE_RECONCILE"
+
+if ! grep -Eq '^MADAPI_CODEX_DISPATCH_TOKEN=.+$' "$ENV_FILE"; then
+  dispatch_token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+  printf '\nMADAPI_CODEX_DISPATCH_TOKEN=%s\n' "$dispatch_token" >> "$ENV_FILE"
+fi
 
 python3 "$COMPOSE_RECONCILE" "$COMPOSE_FILE"
 if ! docker compose -f "$COMPOSE_FILE" config >/dev/null; then
@@ -83,6 +95,24 @@ if [ "$healthy" -ne 1 ]; then
   exit 2
 fi
 
+if ! docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps new-api; then
+  rollback
+  exit 2
+fi
+
+new_api_healthy=0
+for _ in $(seq 1 60); do
+  if curl -fsS --max-time 3 "$NEW_API_HEALTH_URL" >/dev/null 2>&1; then
+    new_api_healthy=1
+    break
+  fi
+  sleep 2
+done
+if [ "$new_api_healthy" -ne 1 ]; then
+  rollback
+  exit 2
+fi
+
 if ! python3 "$NGINX_PATCH"; then
   rollback
   exit 2
@@ -98,5 +128,6 @@ if [ "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 -X POST \
 fi
 
 docker rm -f "$LEGACY_NATIVE_SERVICE" "$LEGACY_COCKPIT_SERVICE" >/dev/null 2>&1 || true
+docker image tag "$IMAGE" "mad-cpa-codex:stable-$release_sha"
 printf '%s\n' "$release_sha" > "$STATE_FILE"
-logger -t new-api-autoupdate "native CPA Codex gateway deployed successfully: $release_sha"
+logger -t new-api-autoupdate "NewAPI-first selected-channel CPA deployed successfully: $release_sha"

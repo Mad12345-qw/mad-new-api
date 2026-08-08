@@ -289,95 +289,16 @@ jobs:
           sh -n server/cpa-codex-native/autodeploy.sh
           sh -n server/disaster-recovery/install.sh
 
-      - name: Legacy CPA patch-chain verification (retired)
-        if: ${{ false }}
-        working-directory: cpa-source
-        run: |
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0001-madapi-native-codex-dispatch.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0002-madapi-passthrough-authorization.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0003-madapi-responses-session-replay.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-openai-chat-root-tool-schema.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex-full/patches/0004-openai-chat-root-tool-schema.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0005-madapi-native-provider-authorization.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0005-madapi-native-provider-authorization.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0006-openai-responses-string-input.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0006-openai-responses-string-input.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0007-claude-web-search-beta.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0007-claude-web-search-beta.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0008-claude-cloak-auth-attributes.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0008-claude-cloak-auth-attributes.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0009-claude-custom-tool-roundtrip.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0009-claude-custom-tool-roundtrip.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0010-claude-native-api-wire-mode.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0010-claude-native-api-wire-mode.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0011-claude-web-search-events.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0011-claude-web-search-events.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0012-claude-compaction-replay.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0012-claude-compaction-replay.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0013-madapi-first-event-failover.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0013-madapi-first-event-failover.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0014-madapi-protocol-routing.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0014-madapi-protocol-routing.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0015-madapi-production-hardening.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0015-madapi-production-hardening.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0016-openai-inline-thinking-normalization.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0016-openai-inline-thinking-normalization.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0017-madapi-session-replay-compact-contract.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0017-madapi-session-replay-compact-contract.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0018-madapi-native-image-generation.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0018-madapi-native-image-generation.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0019-madapi-codex-work-collapse.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0019-madapi-codex-work-collapse.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0020-madapi-native-image-build-fix.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0020-madapi-native-image-build-fix.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0021-madapi-image-work-contract.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0021-madapi-image-work-contract.patch"
-          git apply --check "$GITHUB_WORKSPACE/server/cpa-codex/patches/0022-madapi-cpa-event-parity.patch"
-          git apply "$GITHUB_WORKSPACE/server/cpa-codex/patches/0022-madapi-cpa-event-parity.patch"
-          gofmt -w \
-            internal/config/config_types.go \
-            internal/runtime/executor/openai_compat_executor.go \
-            internal/runtime/executor/openai_compat_executor_madapi_test.go \
-            internal/runtime/executor/codex_executor_request.go \
-            internal/runtime/executor/codex_executor_imagegen_test.go \
-            internal/runtime/executor/claude_executor_execute.go \
-            internal/runtime/executor/claude_executor_request.go \
-            internal/runtime/executor/claude_executor_stream.go \
-            internal/runtime/executor/claude_executor_test.go \
-            internal/runtime/executor/claude_executor_tokens.go \
-            internal/translator/claude/openai/responses/claude_openai-responses_request.go \
-            internal/translator/claude/openai/responses/claude_openai-responses_request_test.go \
-            internal/translator/claude/openai/responses/claude_openai-responses_response.go \
-            internal/translator/claude/openai/responses/claude_openai-responses_response_test.go \
-            internal/translator/openai/openai/responses/openai_openai-responses_request_test.go \
-            internal/translator/openai/openai/responses/openai_openai-responses_response.go \
-            internal/translator/openai/openai/responses/openai_openai-responses_response_test.go \
-            internal/translator/openai/openai/responses/openai_openai-responses_tools.go \
-            internal/watcher/synthesizer/config.go \
-            internal/watcher/synthesizer/config_test.go \
-            internal/api/madapi_native_codex.go \
-            internal/api/madapi_native_codex_test.go \
-            sdk/api/handlers/openai/madapi_responses_session.go \
-            sdk/api/handlers/openai/madapi_responses_session_test.go \
-            sdk/api/handlers/openai/openai_responses_handlers.go \
-            sdk/cliproxy/auth/conductor_execution.go \
-            sdk/cliproxy/auth/madapi_passthrough_test.go
-          GOMAXPROCS=1 go test -p 1 ./internal/api ./internal/translator/claude/openai/responses ./internal/translator/openai/openai/responses ./internal/watcher/synthesizer ./sdk/api/handlers/openai ./sdk/cliproxy/auth
-          GOMAXPROCS=1 go test -p 1 -run '^(TestApplyMadAPIPassthroughAuthorization|TestBuildClaudeCompactResponseUsesCompactionContract|TestEnsureImageGenerationTool_MadAPIPassthroughResponsesLiteInjectsTool)$' ./internal/runtime/executor
-
       - name: Build image
         run: docker build --pull --tag mad-new-api:latest source
 
       - name: Build native single-instance CPA image
         run: docker build --pull --file server/cpa-codex-native/Dockerfile --tag mad-cpa-codex:latest .
 
-      - name: Verify native CPA runtime contents
-        run: docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest -c 'test -x /CLIProxyAPI/CLIProxyAPI && test -s /app/plugins/madapi-dynamic.so'
+      - name: Verify selected-channel CPA runtime contents
+        run: docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
 
-      - name: Exercise native CPA image routing
+      - name: Exercise selected-channel CPA runtime
         run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:latest
 
       - name: Export image

@@ -36,12 +36,58 @@ def replace_service(lines: list[str], name: str, block: list[str]) -> list[str]:
     return lines
 
 
+def ensure_environment(lines: list[str], service: str, values: dict[str, str]) -> list[str]:
+    bounds = service_bounds(lines, service)
+    if bounds is None:
+        raise ValueError(f"missing Compose service: {service}")
+    start, end = bounds
+    environment = next(
+        (index for index in range(start + 1, end) if lines[index].rstrip("\r\n") == "    environment:"),
+        None,
+    )
+    if environment is None:
+        lines.insert(end, "    environment:\n")
+        environment = end
+        end += 1
+
+    env_end = environment + 1
+    while env_end < end:
+        stripped = lines[env_end].strip()
+        indent = len(lines[env_end]) - len(lines[env_end].lstrip(" "))
+        if stripped and indent <= 4:
+            break
+        env_end += 1
+
+    for key, value in values.items():
+        pattern = re.compile(rf"^      {re.escape(key)}:")
+        replacement = f"      {key}: {value}\n"
+        for index in range(environment + 1, env_end):
+            if pattern.match(lines[index]):
+                lines[index] = replacement
+                break
+        else:
+            lines.insert(env_end, replacement)
+            env_end += 1
+            end += 1
+    return lines
+
+
 def reconcile_compose(source: str) -> str:
     lines = source.splitlines(keepends=True)
     if not lines:
         raise ValueError("empty Compose file")
     if service_bounds(lines, "new-api") is None:
         raise ValueError("missing Compose service: new-api")
+
+    lines = ensure_environment(
+        lines,
+        "new-api",
+        {
+            "MADAPI_CODEX_DISPATCH_TOKEN": "${MADAPI_CODEX_DISPATCH_TOKEN}",
+            "MADAPI_CPA_DISPATCH_URL": "http://cpa-codex-native:8317/internal/madapi/codex/execute",
+            "MADAPI_CPA_IMAGE_DISPATCH_URL": "http://cpa-codex-native:8317/internal/madapi/codex/image",
+        },
+    )
 
     native_block = [
         "  cpa-codex-native:\n",
@@ -54,6 +100,8 @@ def reconcile_compose(source: str) -> str:
         '      - "127.0.0.1:8320:8317"\n',
         "    environment:\n",
         "      TZ: Asia/Shanghai\n",
+        "      MADAPI_CODEX_DISPATCH_TOKEN: ${MADAPI_CODEX_DISPATCH_TOKEN}\n",
+        "      MADAPI_CPA_MODE: selected-channel\n",
         "      MADAPI_INTERNAL_URL: http://new-api:3000\n",
         "\n",
     ]

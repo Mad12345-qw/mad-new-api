@@ -21,14 +21,15 @@ BASE = """server {
 
 
 class PatchNginxTests(unittest.TestCase):
-    def test_installs_one_authenticated_cpa_for_both_codex_routes(self):
+    def test_installs_newapi_first_routes_with_websocket_support(self):
         result = patch_nginx.reconcile_routes(BASE)
-        self.assertEqual(result.count("proxy_pass http://127.0.0.1:8320/v1/;"), 2)
-        self.assertEqual(result.count("auth_request /_madapi_cpa_auth;"), 2)
+        self.assertEqual(result.count("proxy_pass http://127.0.0.1:3001;"), 5)
+        self.assertNotIn("auth_request", result)
+        self.assertNotIn("proxy_pass http://127.0.0.1:8320", result)
         self.assertIn('proxy_set_header Authorization $http_authorization;', result)
         self.assertIn('proxy_set_header X-MadAPI-Codex-Cockpit "1";', result)
-        self.assertIn("location = /internal/codex/auth", result)
-        self.assertIn("internal;", result)
+        self.assertEqual(result.count("proxy_set_header Upgrade $http_upgrade;"), 2)
+        self.assertEqual(result.count('proxy_set_header Connection "upgrade";'), 2)
 
     def test_is_idempotent(self):
         first = patch_nginx.reconcile_routes(BASE)

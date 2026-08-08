@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the authenticated single-CPA Codex routes atomically."""
+"""Install NewAPI-first Codex routes atomically."""
 
 from __future__ import annotations
 
@@ -33,8 +33,7 @@ MODEL_PROXY = """        proxy_pass http://127.0.0.1:3001;
         proxy_send_timeout 60s;"""
 
 
-CPA_PROXY = """        auth_request /_madapi_cpa_auth;
-        proxy_pass http://127.0.0.1:8320/v1/;
+EXECUTION_PROXY = """        proxy_pass http://127.0.0.1:3001;
         client_max_body_size 64m;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -51,7 +50,7 @@ CPA_PROXY = """        auth_request /_madapi_cpa_auth;
         proxy_send_timeout 360s;"""
 
 
-COCKPIT_CPA_PROXY = CPA_PROXY.replace(
+COCKPIT_EXECUTION_PROXY = EXECUTION_PROXY.replace(
     '        proxy_set_header Authorization $http_authorization;\n',
     '        proxy_set_header Authorization $http_authorization;\n        proxy_set_header X-MadAPI-Codex-Cockpit "1";\n',
 )
@@ -59,21 +58,6 @@ COCKPIT_CPA_PROXY = CPA_PROXY.replace(
 
 def managed_block() -> str:
     return f"""    {BEGIN_MARKER}
-    location = /internal/codex/auth {{
-        return 404;
-    }}
-
-    location = /_madapi_cpa_auth {{
-        internal;
-        proxy_pass http://127.0.0.1:3001/internal/codex/auth;
-        proxy_pass_request_body off;
-        proxy_set_header Content-Length "";
-        proxy_set_header X-Original-URI $request_uri;
-        proxy_set_header Authorization $http_authorization;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }}
-
     location = /codex/v1/models {{
 {MODEL_PROXY}
     }}
@@ -83,11 +67,11 @@ def managed_block() -> str:
     }}
 
     location ^~ /codex/v1/ {{
-{CPA_PROXY}
+{EXECUTION_PROXY}
     }}
 
     location ^~ /codex/cockpit/v1/ {{
-{COCKPIT_CPA_PROXY}
+{COCKPIT_EXECUTION_PROXY}
     }}
     {END_MARKER}
 
@@ -178,5 +162,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:
-        print(f"Native CPA Codex Nginx route update failed: {error}", file=sys.stderr)
+        print(f"NewAPI-first Codex Nginx route update failed: {error}", file=sys.stderr)
         raise SystemExit(1)

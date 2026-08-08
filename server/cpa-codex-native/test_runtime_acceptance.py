@@ -1,205 +1,187 @@
 #!/usr/bin/env python3
-"""Exercise the built native CPA image through its public image endpoints."""
+"""Exercise the built CPA through its selected-channel internal endpoints."""
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import socket
+import struct
 import subprocess
 import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 
-class MockMadAPIHandler(BaseHTTPRequestHandler):
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII="
+)
+
+
+class MockSelectedChannelHandler(BaseHTTPRequestHandler):
     calls: list[dict[str, object]] = []
-    calls_lock = threading.Lock()
-    bootstrap_attempts = 0
+    lock = threading.Lock()
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length).decode("utf-8"))
-        with self.calls_lock:
+        path = urlsplit(self.path).path
+        with self.lock:
             self.calls.append(
                 {
-                    "path": self.path,
+                    "path": path,
                     "authorization": self.headers.get("Authorization", ""),
                     "body": body,
                 }
             )
 
-        if self.path == "/v1/responses":
-            serialized = json.dumps(body, ensure_ascii=True)
-            if "bootstrap retry" in serialized:
-                with self.calls_lock:
-                    type(self).bootstrap_attempts += 1
-                    attempt = type(self).bootstrap_attempts
-                if attempt == 1:
-                    payload = b""
-                else:
-                    payload = b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
-            elif any(tool.get("type") == "function" for tool in body.get("tools", [])):
-                payload = (
-                    b"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\"}}\n\n"
-                    b"event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"delta\":\"{}\"}\n\n"
-                    b"event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\"}\n\n"
-                    b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
-                )
-            elif "native image" in serialized:
-                payload = (
-                    b"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"image_generation_call\"}}\n\n"
-                    b"event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"image_generation_call\",\"result\":\"mock-image\"}}\n\n"
-                    b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
-                )
-            else:
-                payload = (
-                    b"event: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"native reasoning\"}\n\n"
-                    b"event: response.reasoning_summary_text.done\ndata: {\"type\":\"response.reasoning_summary_text.done\"}\n\n"
-                    b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"
-                    b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
-                )
-            content_type = "text/event-stream"
-        elif self.path == "/v1/chat/completions":
-            serialized = json.dumps(body, ensure_ascii=True)
-            if "bootstrap retry" in serialized:
-                with self.calls_lock:
-                    type(self).bootstrap_attempts += 1
-                    attempt = type(self).bootstrap_attempts
-                if attempt == 1:
-                    payload = b""
-                    content_type = "text/event-stream"
-                else:
-                    chunks = [
+        if path.endswith("/responses"):
+            self._json(
+                500,
+                {
+                    "error": {
+                        "type": "tools_not_supported",
+                        "message": "Tool/function calling is not supported by this proxy. Use chat completions without tools parameter.",
+                    }
+                },
+            )
+            return
+        if path.endswith("/images/generations"):
+            self._json(
+                200,
+                {
+                    "created": 1,
+                    "data": [
                         {
-                            "id": "mock-bootstrap",
-                            "object": "chat.completion.chunk",
-                            "created": 1,
-                            "model": "gpt-5.6-terra",
-                            "choices": [{"index": 0, "delta": {"content": "recovered"}, "finish_reason": "stop"}],
+                            "b64_json": base64.b64encode(PNG_1X1).decode("ascii"),
+                            "output_format": "png",
                         }
-                    ]
-                    payload = b"".join(
-                        b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
-                        for chunk in chunks
-                    ) + b"data: [DONE]\n\n"
-                    content_type = "text/event-stream"
-            elif "inline thinking" in serialized:
-                chunks = [
-                    {
-                        "id": "mock-inline-thinking",
-                        "object": "chat.completion.chunk",
-                        "created": 1,
-                        "model": "gpt-5.6-luna",
-                        "choices": [
-                            {"index": 0, "delta": {"role": "assistant", "content": "<think"}, "finish_reason": None}
-                        ],
-                    },
-                    {
-                        "id": "mock-inline-thinking",
-                        "object": "chat.completion.chunk",
-                        "created": 1,
-                        "model": "gpt-5.6-luna",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": "ing>private trace</thinking>public answer"},
-                                "finish_reason": "stop",
-                            }
-                        ],
-                    },
-                ]
-                payload = b"".join(
-                    b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
-                    for chunk in chunks
-                ) + b"data: [DONE]\n\n"
-                content_type = "text/event-stream"
-            elif body.get("tools"):
-                chunks = [
-                    {
-                        "id": "mock-tool",
-                        "object": "chat.completion.chunk",
-                        "created": 1,
-                        "model": "gpt-5.6-terra",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {
-                                    "role": "assistant",
-                                    "tool_calls": [
-                                        {
-                                            "index": 0,
-                                            "id": "call_lookup",
-                                            "type": "function",
-                                            "function": {"name": "lookup", "arguments": ""},
-                                        }
-                                    ],
-                                },
-                                "finish_reason": None,
-                            }
-                        ],
-                    },
-                    {
-                        "id": "mock-tool",
-                        "object": "chat.completion.chunk",
-                        "created": 1,
-                        "model": "gpt-5.6-terra",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]},
-                                "finish_reason": "tool_calls",
-                            }
-                        ],
-                    },
-                ]
-                payload = b"".join(
-                    b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
-                    for chunk in chunks
-                ) + b"data: [DONE]\n\n"
-                content_type = "text/event-stream"
-            else:
-                chunks = [
-                    {
-                        "id": "mock-chat",
-                        "object": "chat.completion.chunk",
-                        "created": 1,
-                        "model": "gpt-5.6-terra",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"role": "assistant", "reasoning_content": "mock reasoning"},
-                                "finish_reason": None,
-                            }
-                        ],
-                    },
-                    {
-                        "id": "mock-chat",
-                        "object": "chat.completion.chunk",
-                        "created": 1,
-                        "model": "gpt-5.6-terra",
-                        "choices": [
-                            {"index": 0, "delta": {"content": "OK"}, "finish_reason": "stop"}
-                        ],
-                    },
-                ]
-                payload = b"".join(
-                    b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
-                    for chunk in chunks
-                ) + b"data: [DONE]\n\n"
-                content_type = "text/event-stream"
-        elif body.get("stream"):
-            payload = b'data: {"type":"image_generation.partial_image","url":"https://example.invalid/partial.png"}\n\ndata: [DONE]\n\n'
-            content_type = "text/event-stream"
-        else:
-            payload = b'{"created":1,"data":[{"url":"https://example.invalid/image.png"}]}'
-            content_type = "application/json"
+                    ],
+                },
+            )
+            return
+        if not path.endswith("/chat/completions"):
+            self.send_error(404)
+            return
 
+        if not body.get("stream"):
+            self._json(
+                200,
+                {
+                    "id": "chatcmpl-nonstream",
+                    "object": "chat.completion",
+                    "created": 1,
+                    "model": body.get("model", "deepseek-v4-flash"),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": "<thinking>private trace</thinking>public answer",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+                },
+            )
+            return
+
+        has_tool_output = any(message.get("role") == "tool" for message in body.get("messages", []))
+        if body.get("tools") and not has_tool_output:
+            chunks = [
+                {
+                    "id": "chatcmpl-tools",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": body.get("model", "deepseek-v4-flash"),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_exact_failure",
+                                        "type": "function",
+                                        "function": {"name": "echo", "arguments": ""},
+                                    }
+                                ],
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                },
+                {
+                    "id": "chatcmpl-tools",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": body.get("model", "deepseek-v4-flash"),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {"arguments": '{"text":"exact-error-fixed"}'},
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                },
+            ]
+        else:
+            chunks = [
+                {
+                    "id": "chatcmpl-text",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": body.get("model", "deepseek-v4-flash"),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "content": "<thinking>private trace</thinking>public answer",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ]
+        chunks.append(
+            {
+                "id": "chatcmpl-usage",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": body.get("model", "deepseek-v4-flash"),
+                "choices": [],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+            }
+        )
+        payload = b"".join(
+            b"data: " + json.dumps(chunk, separators=(",", ":")).encode("utf-8") + b"\n\n"
+            for chunk in chunks
+        ) + b"data: [DONE]\n\n"
         self.send_response(200)
-        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _json(self, status: int, value: dict[str, object]) -> None:
+        payload = json.dumps(value, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
@@ -214,35 +196,57 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def request_bytes(url: str, body: dict[str, object]) -> bytes:
+def request_bytes(url: str, body: dict[str, object], headers: dict[str, str]) -> tuple[int, bytes]:
     request = Request(
         url,
-        data=json.dumps(body).encode("utf-8"),
+        data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
         method="POST",
-        headers={
-            "Authorization": "Bearer native-runtime-acceptance",
-            "Content-Type": "application/json",
-        },
+        headers={"Content-Type": "application/json", **headers},
     )
-    with urlopen(request, timeout=30) as response:  # nosec B310 - localhost test server
-        return response.read()
+    try:
+        with urlopen(request, timeout=30) as response:  # nosec B310 - localhost acceptance server
+            return response.status, response.read()
+    except HTTPError as error:
+        return error.code, error.read()
+
+
+def sse_events(payload: bytes) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for line in payload.decode("utf-8", errors="replace").splitlines():
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        events.append(json.loads(data))
+    return events
 
 
 def wait_for_health(port: int) -> None:
     deadline = time.monotonic() + 60
-    url = f"http://127.0.0.1:{port}/healthz"
     while time.monotonic() < deadline:
         try:
-            with urlopen(url, timeout=2) as response:  # nosec B310 - localhost test server
+            with urlopen(f"http://127.0.0.1:{port}/healthz", timeout=2) as response:  # nosec B310
                 if response.status == 200:
                     return
         except (OSError, URLError):
             time.sleep(0.5)
-    raise RuntimeError("native CPA container did not become healthy")
+    raise RuntimeError("selected-channel CPA container did not become healthy")
 
 
-def run(command: list[str]) -> None:
-    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+def dispatch_body(mock_port: int, body: dict[str, object], *, stream: bool = True) -> dict[str, object]:
+    return {
+        "channel_type": 43,
+        "channel_id": 91,
+        "wire_protocol": "openai_chat_completions",
+        "base_url": f"http://host.docker.internal:{mock_port}/v1",
+        "api_key": "selected-channel-secret",
+        "model": "deepseek-v4-flash",
+        "body": body,
+        "stream": stream,
+        "session_scope": "runtime-acceptance-scope",
+        "first_event_timeout_seconds": 30,
+    }
 
 
 def main() -> int:
@@ -250,17 +254,15 @@ def main() -> int:
     parser.add_argument("--image", required=True)
     args = parser.parse_args()
 
-    MockMadAPIHandler.calls = []
-    MockMadAPIHandler.bootstrap_attempts = 0
+    MockSelectedChannelHandler.calls = []
     mock_port = free_port()
     cpa_port = free_port()
-    server = ThreadingHTTPServer(("0.0.0.0", mock_port), MockMadAPIHandler)
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
-
-    container = f"native-cpa-runtime-{uuid.uuid4().hex[:12]}"
+    mock = ThreadingHTTPServer(("0.0.0.0", mock_port), MockSelectedChannelHandler)
+    threading.Thread(target=mock.serve_forever, daemon=True).start()
+    container = f"selected-channel-cpa-{uuid.uuid4().hex[:12]}"
+    dispatch_token = "runtime-dispatch-secret"
     try:
-        run(
+        subprocess.run(
             [
                 "docker",
                 "run",
@@ -273,115 +275,174 @@ def main() -> int:
                 "--publish",
                 f"127.0.0.1:{cpa_port}:8317",
                 "--env",
+                f"MADAPI_CODEX_DISPATCH_TOKEN={dispatch_token}",
+                "--env",
                 f"MADAPI_INTERNAL_URL=http://host.docker.internal:{mock_port}",
                 args.image,
-            ]
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
         )
         wait_for_health(cpa_port)
+        execute_url = f"http://127.0.0.1:{cpa_port}/internal/madapi/codex/execute"
+        internal_headers = {"X-MadAPI-Codex-Dispatch-Token": dispatch_token}
+        tool = {
+            "type": "function",
+            "name": "echo",
+            "description": "Echo text",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        }
 
-        image_url = f"http://127.0.0.1:{cpa_port}/v1/images/generations"
-        non_stream = request_bytes(image_url, {"model": "gpt-image-2", "prompt": "test image"})
-        stream = request_bytes(image_url, {"model": "gpt-image-2", "prompt": "test stream", "stream": True})
-        responses = request_bytes(
-            f"http://127.0.0.1:{cpa_port}/v1/responses",
-            {"model": "gpt-5.6-terra", "input": "test reasoning", "stream": True},
+        first_request = {
+            "model": "deepseek-v4-flash",
+            "input": "Call echo exactly once.",
+            "tools": [tool],
+            "tool_choice": "required",
+            "stream": True,
+        }
+        status, payload = request_bytes(
+            execute_url,
+            dispatch_body(mock_port, first_request),
+            internal_headers,
         )
-        inline_thinking = request_bytes(
-            f"http://127.0.0.1:{cpa_port}/v1/responses",
-            {"model": "gpt-5.6-luna", "input": "test inline thinking", "stream": True},
+        if status != 200:
+            raise RuntimeError(f"tool dispatch returned HTTP {status}: {payload[:300]!r}")
+        events = sse_events(payload)
+        event_types = [str(event.get("type")) for event in events]
+        arguments = "".join(
+            str(event.get("delta", ""))
+            for event in events
+            if event.get("type") == "response.function_call_arguments.delta"
         )
-        tools = request_bytes(
-            f"http://127.0.0.1:{cpa_port}/v1/responses",
+        if "response.completed" not in event_types or arguments != '{"text":"exact-error-fixed"}':
+            raise RuntimeError("selected-channel tool conversion failed")
+        completed = next(event for event in events if event.get("type") == "response.completed")
+        response_id = str((completed.get("response") or {}).get("id", ""))
+        if not response_id:
+            raise RuntimeError("tool response id is missing")
+
+        continuation = {
+            "model": "deepseek-v4-flash",
+            "previous_response_id": response_id,
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_exact_failure",
+                    "output": "ok",
+                }
+            ],
+            "tools": [tool],
+            "stream": True,
+        }
+        status, payload = request_bytes(
+            execute_url,
+            dispatch_body(mock_port, continuation),
+            internal_headers,
+        )
+        continued_events = sse_events(payload)
+        if status != 200 or not any(event.get("type") == "response.completed" for event in continued_events):
+            raise RuntimeError("string-input session replay failed")
+
+        thinking_request = {
+            "model": "deepseek-v4-flash",
+            "input": "Return the public answer.",
+            "stream": True,
+        }
+        status, payload = request_bytes(
+            execute_url,
+            dispatch_body(mock_port, thinking_request),
+            internal_headers,
+        )
+        thinking_text = payload.decode("utf-8", errors="replace")
+        thinking_events = sse_events(payload)
+        if status != 200 or "<thinking>" in thinking_text or "</thinking>" in thinking_text:
+            raise RuntimeError("inline thinking tags leaked")
+        if not any(event.get("type") == "response.reasoning_summary_text.delta" for event in thinking_events):
+            raise RuntimeError("reasoning events are missing")
+        public_text = "".join(
+            str(event.get("delta", ""))
+            for event in thinking_events
+            if event.get("type") == "response.output_text.delta"
+        )
+        if public_text != "public answer":
+            raise RuntimeError("public text was not preserved")
+
+        nonstream_request = {
+            "model": "deepseek-v4-flash",
+            "input": "Return the public answer.",
+            "stream": False,
+        }
+        status, payload = request_bytes(
+            execute_url,
+            dispatch_body(mock_port, nonstream_request, stream=False),
+            internal_headers,
+        )
+        nonstream = json.loads(payload)
+        if status != 200 or nonstream.get("object") != "response" or nonstream.get("status") != "completed":
+            raise RuntimeError("non-streaming Responses conversion failed")
+        if b"<thinking>" in payload or b"</thinking>" in payload:
+            raise RuntimeError("non-streaming thinking tags leaked")
+
+        image_url = f"http://127.0.0.1:{cpa_port}/internal/madapi/codex/image"
+        image_request = {
+            "model": "gpt-5.6-terra",
+            "input": "Generate one test pixel.",
+            "tools": [
+                {
+                    "type": "image_generation",
+                    "action": "generate",
+                    "model": "gpt-image-2",
+                }
+            ],
+            "tool_choice": {"type": "image_generation"},
+            "stream": False,
+        }
+        status, payload = request_bytes(
+            image_url,
+            image_request,
             {
-                "model": "gpt-5.6-terra",
-                "input": "test tool",
-                "stream": True,
-                "reasoning": {"effort": "medium"},
-                "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
+                **internal_headers,
+                "Authorization": "Bearer image-user-token",
             },
         )
-        native_image = request_bytes(
-            f"http://127.0.0.1:{cpa_port}/v1/responses",
-            {
-                "model": "gpt-5.6-luna",
-                "input": "test native image",
-                "stream": True,
-                "tools": [
-                    {
-                        "type": "image_generation",
-                        "action": "generate",
-                        "model": "gpt-image-2",
-                    }
-                ],
-            },
-        )
-        bootstrap = request_bytes(
-            f"http://127.0.0.1:{cpa_port}/v1/responses",
-            {"model": "gpt-5.6-terra", "input": "bootstrap retry", "stream": True},
-        )
+        image_response = json.loads(payload)
+        image_items = [item for item in image_response.get("output", []) if item.get("type") == "image_generation_call"]
+        if status != 200 or len(image_items) != 1:
+            raise RuntimeError("image_generation response item is missing")
+        image_bytes = base64.b64decode(image_items[0].get("result", ""), validate=True)
+        if image_bytes != PNG_1X1 or struct.unpack(">II", image_bytes[16:24]) != (1, 1):
+            raise RuntimeError("image_generation result is not the expected PNG")
 
-        if b'"url":"https://example.invalid/image.png"' not in non_stream:
-            raise RuntimeError("native image response was not relayed")
-        if b"data:" not in stream or b"[DONE]" not in stream:
-            raise RuntimeError("native image stream was not relayed")
-        for required_event in (
-            b"response.reasoning_summary_text.delta",
-            b"response.reasoning_summary_text.done",
-            b"response.output_text.delta",
-            b"response.completed",
-        ):
-            if required_event not in responses:
-                raise RuntimeError(f"missing native Responses event: {required_event.decode('ascii')}")
-        if b"[reasoning unavailable]" in responses:
-            raise RuntimeError("native Responses stream leaked a reasoning placeholder")
-        if b"<thinking>" in inline_thinking or b"</thinking>" in inline_thinking:
-            raise RuntimeError("inline thinking tags leaked into the native Responses stream")
-        for required_event in (
-            b"response.reasoning_summary_text.delta",
-            b"response.reasoning_summary_text.done",
-            b"response.output_text.delta",
-            b"response.completed",
-        ):
-            if required_event not in inline_thinking:
-                raise RuntimeError(f"missing inline-thinking Responses event: {required_event.decode('ascii')}")
-        for required_event in (
-            b"response.output_item.added",
-            b"response.function_call_arguments.delta",
-            b"response.function_call_arguments.done",
-            b"response.completed",
-        ):
-            if required_event not in tools:
-                raise RuntimeError(f"missing native tool event: {required_event.decode('ascii')}")
-        if b"image_generation_call" not in native_image or b"response.completed" not in native_image:
-            raise RuntimeError("native Responses image tool was not returned to Codex")
-        if b"response.completed" not in bootstrap:
-            raise RuntimeError("bootstrap retry did not finish the Responses stream")
-        if MockMadAPIHandler.bootstrap_attempts != 2:
-            raise RuntimeError(f"expected one pre-event bootstrap retry, got {MockMadAPIHandler.bootstrap_attempts} attempts")
-        if len(MockMadAPIHandler.calls) != 8:
-            raise RuntimeError(f"expected eight MadAPI calls, got {len(MockMadAPIHandler.calls)}")
-        for call in MockMadAPIHandler.calls:
-            if call["authorization"] != "Bearer native-runtime-acceptance":
-                raise RuntimeError("caller authorization was not preserved")
-        for call in MockMadAPIHandler.calls[:2]:
-            if call["path"] != "/v1/images/generations":
-                raise RuntimeError(f"wrong upstream path: {call['path']}")
-        for call in MockMadAPIHandler.calls[2:]:
-            if call["path"] != "/v1/responses":
-                raise RuntimeError(f"wrong Responses upstream path: {call['path']}")
-        if not any(
-            tool.get("type") == "image_generation"
-            for tool in MockMadAPIHandler.calls[5]["body"].get("tools", [])
-        ):
-            raise RuntimeError("explicit native image tool was not forwarded")
-        if MockMadAPIHandler.calls[1]["body"] != {"model": "gpt-image-2", "prompt": "test stream", "stream": True}:
-            raise RuntimeError("stream image request body changed unexpectedly")
+        paths = [str(call["path"]) for call in MockSelectedChannelHandler.calls]
+        if any(path.endswith("/responses") for path in paths):
+            raise RuntimeError("selected-channel execution called the rejected Responses endpoint")
+        if paths.count("/v1/chat/completions") != 4:
+            raise RuntimeError(f"unexpected chat call count: {paths}")
+        if paths.count("/v1/images/generations") != 1:
+            raise RuntimeError(f"unexpected image call count: {paths}")
+        chat_calls = [call for call in MockSelectedChannelHandler.calls if call["path"] == "/v1/chat/completions"]
+        if any(call["authorization"] != "Bearer selected-channel-secret" for call in chat_calls):
+            raise RuntimeError("selected channel credential was not used")
+        image_call = next(call for call in MockSelectedChannelHandler.calls if call["path"] == "/v1/images/generations")
+        if image_call["authorization"] != "Bearer image-user-token":
+            raise RuntimeError("image request user authorization was not preserved")
     finally:
-        subprocess.run(["docker", "rm", "--force", container], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        server.shutdown()
-        server.server_close()
+        subprocess.run(
+            ["docker", "rm", "--force", container],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        mock.shutdown()
+        mock.server_close()
 
-    print("native CPA runtime image acceptance passed")
+    print("selected-channel CPA runtime acceptance passed")
     return 0
 
 

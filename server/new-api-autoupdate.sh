@@ -18,7 +18,9 @@ IMAGE_GATEWAY_STATE_FILE=/opt/new-api/mad-image-gateway-sha256.txt
 IMAGE_GATEWAY_DIR=/opt/image-media-gateway
 IMAGE_GATEWAY_BIN=$IMAGE_GATEWAY_DIR/image-media-gateway
 IMAGE_GATEWAY_UNIT=/etc/systemd/system/image-media-gateway.service
-IMAGE_GATEWAY_HEALTH_URL=http://127.0.0.1:3012/health
+IMAGE_GATEWAY_DROPIN_DIR=/etc/systemd/system/image-media-gateway.service.d
+IMAGE_GATEWAY_DROPIN=$IMAGE_GATEWAY_DROPIN_DIR/10-listen-addresses.conf
+IMAGE_GATEWAY_HEALTH_URL=http://127.0.0.1:3013/health
 HOME_DIR=/opt/mad-home
 HOME_STATE_FILE=/opt/new-api/mad-home-sha256.txt
 SELF_SCRIPT=/usr/local/sbin/new-api-autoupdate.sh
@@ -180,6 +182,45 @@ image_gateway_sha=$(cat image-media-gateway.sha256 image-media-gateway.service.s
 running_compat_source_sha=$(curl -fsS --max-time 3 "$COMPAT_HEALTH_URL" 2>/dev/null \
   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_sha256", ""))' 2>/dev/null || true)
 
+detect_new_api_gateway() {
+  gateway_container=$(docker compose -f "$COMPOSE_DIR/docker-compose.yml" ps -q "$SERVICE" 2>/dev/null || true)
+  [ -n "$gateway_container" ] || return 1
+
+  compose_project=$(docker inspect "$gateway_container" \
+    --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)
+  if [ -n "$compose_project" ]; then
+    preferred_network=${compose_project}_default
+    gateway=$(docker network inspect "$preferred_network" \
+      --format '{{with (index .IPAM.Config 0)}}{{.Gateway}}{{end}}' 2>/dev/null || true)
+    if [ -n "$gateway" ]; then
+      printf '%s\n' "$gateway"
+      return 0
+    fi
+  fi
+
+  network_names=$(docker inspect "$gateway_container" \
+    --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' 2>/dev/null || true)
+  for network_name in $network_names; do
+    gateway=$(docker network inspect "$network_name" \
+      --format '{{with (index .IPAM.Config 0)}}{{.Gateway}}{{end}}' 2>/dev/null || true)
+    if [ -n "$gateway" ]; then
+      printf '%s\n' "$gateway"
+      return 0
+    fi
+  done
+  return 1
+}
+
+new_api_gateway=$(detect_new_api_gateway || true)
+case "$new_api_gateway" in
+  ''|*[!0-9.]*)
+    logger -t new-api-autoupdate "unable to detect the NewAPI Docker gateway; refusing image gateway changes"
+    exit 2
+    ;;
+esac
+gateway_listen_addrs="127.0.0.1:3013,$new_api_gateway:3013"
+expected_gateway_dropin=$(printf '[Service]\nEnvironment="LISTEN_ADDRS=%s"\n' "$gateway_listen_addrs")
+
 if [ ! -f "$COMPAT_STATE_FILE" ] \
   || [ "$(cat "$COMPAT_STATE_FILE")" != "$compat_sha" ] \
   || [ "$running_compat_source_sha" != "$expected_compat_source_sha" ]; then
@@ -222,6 +263,7 @@ fi
 gateway_backup_dir=''
 gateway_had_binary=0
 gateway_had_unit=0
+gateway_had_dropin=0
 
 rollback_image_gateway() {
   [ -n "$gateway_backup_dir" ] || return 0
@@ -235,6 +277,13 @@ rollback_image_gateway() {
   else
     rm -f "$IMAGE_GATEWAY_UNIT"
   fi
+  if [ "$gateway_had_dropin" -eq 1 ]; then
+    install -d -m 0755 "$IMAGE_GATEWAY_DROPIN_DIR"
+    cp -a "$gateway_backup_dir/10-listen-addresses.conf" "$IMAGE_GATEWAY_DROPIN"
+  else
+    rm -f "$IMAGE_GATEWAY_DROPIN"
+    rmdir "$IMAGE_GATEWAY_DROPIN_DIR" 2>/dev/null || true
+  fi
   systemctl daemon-reload
   if [ "$gateway_had_binary" -eq 1 ] && [ "$gateway_had_unit" -eq 1 ]; then
     systemctl restart image-media-gateway.service || true
@@ -244,16 +293,21 @@ rollback_image_gateway() {
 }
 
 running_gateway_sha=''
+running_gateway_dropin=''
 if [ -f "$IMAGE_GATEWAY_BIN" ] && [ -f "$IMAGE_GATEWAY_UNIT" ]; then
   gateway_binary_sha=$(sha256sum "$IMAGE_GATEWAY_BIN" | awk '{print $1}')
   gateway_unit_sha=$(sha256sum "$IMAGE_GATEWAY_UNIT" | awk '{print $1}')
   running_gateway_sha=$(printf '%s  image-media-gateway\n%s  image-media-gateway.service\n' \
     "$gateway_binary_sha" "$gateway_unit_sha" | sha256sum | awk '{print $1}')
 fi
+if [ -f "$IMAGE_GATEWAY_DROPIN" ]; then
+  running_gateway_dropin=$(cat "$IMAGE_GATEWAY_DROPIN")
+fi
 
 if [ ! -f "$IMAGE_GATEWAY_STATE_FILE" ] \
   || [ "$(cat "$IMAGE_GATEWAY_STATE_FILE")" != "$image_gateway_sha" ] \
-  || [ "$running_gateway_sha" != "$image_gateway_sha" ]; then
+  || [ "$running_gateway_sha" != "$image_gateway_sha" ] \
+  || [ "$running_gateway_dropin" != "$expected_gateway_dropin" ]; then
   gateway_backup_dir="$COMPOSE_DIR/backups/image-gateway-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$gateway_backup_dir"
   if [ -f "$IMAGE_GATEWAY_BIN" ]; then
@@ -264,6 +318,10 @@ if [ ! -f "$IMAGE_GATEWAY_STATE_FILE" ] \
     cp -a "$IMAGE_GATEWAY_UNIT" "$gateway_backup_dir/image-media-gateway.service"
     gateway_had_unit=1
   fi
+  if [ -f "$IMAGE_GATEWAY_DROPIN" ]; then
+    cp -a "$IMAGE_GATEWAY_DROPIN" "$gateway_backup_dir/10-listen-addresses.conf"
+    gateway_had_dropin=1
+  fi
 
   if ! id -u imagecompat >/dev/null 2>&1; then
     useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin --gid www-data imagecompat
@@ -272,6 +330,11 @@ if [ ! -f "$IMAGE_GATEWAY_STATE_FILE" ] \
   install -d -o imagecompat -g www-data -m 0750 "$IMAGE_GATEWAY_DIR/spool" /opt/image-url-cache
   install -m 0755 "$work_dir/image-media-gateway" "$IMAGE_GATEWAY_BIN"
   install -m 0644 "$work_dir/image-media-gateway.service" "$IMAGE_GATEWAY_UNIT"
+  install -d -m 0755 "$IMAGE_GATEWAY_DROPIN_DIR"
+  gateway_dropin_temp="$IMAGE_GATEWAY_DROPIN_DIR/.10-listen-addresses.conf.tmp.$$"
+  printf '%s\n' "$expected_gateway_dropin" > "$gateway_dropin_temp"
+  chmod 0644 "$gateway_dropin_temp"
+  mv "$gateway_dropin_temp" "$IMAGE_GATEWAY_DROPIN"
   systemctl daemon-reload
   systemctl enable image-media-gateway.service >/dev/null
   systemctl restart image-media-gateway.service

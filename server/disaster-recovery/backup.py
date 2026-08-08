@@ -59,6 +59,7 @@ OPTIONAL_PATHS = (
     Path("/opt/image-url-compat"),
     Path("/opt/image-media-gateway/image-media-gateway"),
     Path("/etc/systemd/system/image-media-gateway.service"),
+    Path("/etc/systemd/system/image-media-gateway.service.d/10-listen-addresses.conf"),
 )
 
 

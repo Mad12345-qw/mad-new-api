@@ -80,7 +80,7 @@ DUPLICATE_PREFIX_BLOCK = r"""    # mad-media-compat duplicate-prefix block
 def route_block(path, label, upstream_port=None):
     if upstream_port is None:
         if path in IMAGE_ROUTES:
-            upstream_port = 3012
+            upstream_port = 3013
         else:
             upstream_port = 3001 if path in DIRECT_NEW_API_ROUTES else 3010
     return f"""    # image-url-compat {label} block

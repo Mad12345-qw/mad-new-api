@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ func testGateway(t *testing.T) *gateway {
 	t.Helper()
 	root := t.TempDir()
 	cfg := config{
-		ListenAddr: "127.0.0.1:0", Upstream: "http://127.0.0.1:1",
+		ListenAddrs: []string{"127.0.0.1:0"}, Upstream: "http://127.0.0.1:1",
 		PublicBaseURL: "https://mad.test", CacheDir: filepath.Join(root, "cache"),
 		SpoolDir: filepath.Join(root, "spool"), MaxImageBytes: 64 << 20,
 		MaxRequestBytes: 96 << 20, MaxResponseBytes: 96 << 20,
@@ -32,6 +33,49 @@ func testGateway(t *testing.T) *gateway {
 		t.Fatal(err)
 	}
 	return gateway
+}
+
+func TestListenAddrsPrefersPluralAndDeduplicates(t *testing.T) {
+	t.Setenv("LISTEN_ADDRS", " 127.0.0.1:3013,172.22.0.1:3013,127.0.0.1:3013 ")
+	t.Setenv("LISTEN_ADDR", "0.0.0.0:3012")
+	got := listenAddrs()
+	want := []string{"127.0.0.1:3013", "172.22.0.1:3013"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("listen addresses = %v, want %v", got, want)
+	}
+}
+
+func TestListenAddrsFallsBackToSingular(t *testing.T) {
+	t.Setenv("LISTEN_ADDRS", "")
+	t.Setenv("LISTEN_ADDR", "127.0.0.1:4013")
+	got := listenAddrs()
+	if len(got) != 1 || got[0] != "127.0.0.1:4013" {
+		t.Fatalf("listen addresses = %v", got)
+	}
+}
+
+func TestListenAllClosesEarlierListenersOnFailure(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAddr := probe.Addr().String()
+	_ = probe.Close()
+
+	if _, err := listenAll([]string{firstAddr, occupied.Addr().String()}); err == nil {
+		t.Fatal("listenAll unexpectedly succeeded")
+	}
+	reopened, err := net.Listen("tcp", firstAddr)
+	if err != nil {
+		t.Fatalf("first listener was not closed: %v", err)
+	}
+	_ = reopened.Close()
 }
 
 func TestURLModelForcesUpstreamURL(t *testing.T) {

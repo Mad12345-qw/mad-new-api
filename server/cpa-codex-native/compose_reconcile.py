@@ -108,7 +108,7 @@ def reconcile_compose(source: str) -> str:
         "      MADAPI_CODEX_DISPATCH_TOKEN: ${MADAPI_CODEX_DISPATCH_TOKEN}\n",
         "      MADAPI_CPA_MODE: selected-channel\n",
         "      MADAPI_INTERNAL_URL: http://new-api:3000\n",
-        "      MADAPI_IMAGE_COMPAT_URL: http://host.docker.internal:3012\n",
+        "      MADAPI_IMAGE_COMPAT_URL: http://host.docker.internal:3013\n",
         "\n",
     ]
     lines = replace_service(lines, "cpa-codex-native", native_block)

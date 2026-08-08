@@ -33,7 +33,7 @@ jobs:
       - name: Resolve controlled CPA source commit
         id: upstream
         run: |
-          candidate=$(git ls-remote https://github.com/Mad12345-qw/CLIProxyAPI.git refs/heads/madapi/native-thinking-collapse | awk '{print $1}')
+          candidate=$(git ls-remote https://github.com/Mad12345-qw/CLIProxyAPI.git refs/heads/madapi/full-selected-channel-runtime | awk '{print $1}')
           pinned=$(tr -d '[:space:]' < guards/cpa-upstream-commit.txt)
           test ${#candidate} -eq 40
           test ${#pinned} -eq 40
@@ -68,14 +68,14 @@ jobs:
           python3 -m unittest server/cpa-codex-native/test_patch_nginx.py
           sh -n server/cpa-codex-native/entrypoint.sh
           sh -n server/cpa-codex-native/autodeploy.sh
-          cp -R server/cpa-madapi-dynamic-executor cpa-source/.madapi-dynamic-executor
-          cd cpa-source
-          go test ./.madapi-dynamic-executor
-          CGO_ENABLED=1 go build -buildmode=c-shared -o /tmp/madapi-dynamic.so ./.madapi-dynamic-executor
 
       - name: Build native CPA image
         if: steps.upstream.outputs.changed == 'true'
         run: docker build --pull --file server/cpa-codex-native/Dockerfile --tag mad-cpa-codex:latest .
+
+      - name: Verify integrated CPA image contents
+        if: steps.upstream.outputs.changed == 'true'
+        run: docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
 
       - name: Exercise native CPA runtime
         if: steps.upstream.outputs.changed == 'true'

@@ -39,7 +39,7 @@ class ComposeReconcileTests(unittest.TestCase):
         self.assertIn("MADAPI_CPA_MODE: selected-channel", result)
         self.assertIn("MADAPI_INTERNAL_URL: http://new-api:3000", result)
         self.assertIn('"host.docker.internal:host-gateway"', result)
-        self.assertIn("MADAPI_IMAGE_COMPAT_URL: http://host.docker.internal:3012", result)
+        self.assertIn("MADAPI_IMAGE_COMPAT_URL: http://host.docker.internal:3013", result)
         self.assertIn("MADAPI_GEMINI_IMAGE_CONCURRENCY: 1", result)
         self.assertIn("GOMEMLIMIT: 512MiB", result)
         self.assertIn("GOGC: 50", result)

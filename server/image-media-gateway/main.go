@@ -14,6 +14,7 @@ import (
 	"log"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -46,7 +47,7 @@ var modelCapabilities = map[string]string{
 }
 
 type config struct {
-	ListenAddr        string
+	ListenAddrs       []string
 	Upstream          string
 	PublicBaseURL     string
 	CacheDir          string
@@ -138,7 +139,7 @@ func envInt64(name string, fallback int64) int64 {
 
 func loadConfig() config {
 	return config{
-		ListenAddr:        env("LISTEN_ADDR", "127.0.0.1:3010"),
+		ListenAddrs:       listenAddrs(),
 		Upstream:          strings.TrimRight(env("UPSTREAM", "http://127.0.0.1:3001"), "/"),
 		PublicBaseURL:     strings.TrimRight(env("PUBLIC_BASE_URL", "http://127.0.0.1:3010"), "/"),
 		CacheDir:          env("CACHE_DIR", "/opt/image-url-cache"),
@@ -155,6 +156,45 @@ func loadConfig() config {
 		UpstreamTimeout:   time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS", 360)) * time.Second,
 		DownloadTimeout:   time.Duration(envInt("DOWNLOAD_TIMEOUT_SECONDS", 180)) * time.Second,
 	}
+}
+
+func listenAddrs() []string {
+	raw := strings.TrimSpace(os.Getenv("LISTEN_ADDRS"))
+	if raw == "" {
+		raw = env("LISTEN_ADDR", "127.0.0.1:3013")
+	}
+	seen := make(map[string]struct{})
+	addrs := make([]string, 0, 2)
+	for _, item := range strings.Split(raw, ",") {
+		addr := strings.TrimSpace(item)
+		if addr == "" {
+			continue
+		}
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		seen[addr] = struct{}{}
+		addrs = append(addrs, addr)
+	}
+	return addrs
+}
+
+func listenAll(addrs []string) ([]net.Listener, error) {
+	if len(addrs) == 0 {
+		return nil, errors.New("no listen addresses configured")
+	}
+	listeners := make([]net.Listener, 0, len(addrs))
+	for _, addr := range addrs {
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			for _, opened := range listeners {
+				_ = opened.Close()
+			}
+			return nil, fmt.Errorf("listen on %s: %w", addr, err)
+		}
+		listeners = append(listeners, listener)
+	}
+	return listeners, nil
 }
 
 func newGateway(cfg config) (*gateway, error) {
@@ -1247,7 +1287,22 @@ func main() {
 		}
 	}()
 	gateway.cleanupCache()
-	server := &http.Server{Addr: cfg.ListenAddr, Handler: gateway.handler(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 90 * time.Second}
-	log.Printf("image media gateway listening on %s", cfg.ListenAddr)
-	log.Fatal(server.ListenAndServe())
+	listeners, err := listenAll(cfg.ListenAddrs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	handler := gateway.handler()
+	serveErrors := make(chan error, len(listeners))
+	for _, listener := range listeners {
+		server := &http.Server{Handler: handler, ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 90 * time.Second}
+		log.Printf("image media gateway listening on %s", listener.Addr())
+		go func(server *http.Server, listener net.Listener) {
+			serveErrors <- server.Serve(listener)
+		}(server, listener)
+	}
+	err = <-serveErrors
+	for _, listener := range listeners {
+		_ = listener.Close()
+	}
+	log.Fatal(err)
 }

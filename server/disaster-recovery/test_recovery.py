@@ -18,6 +18,12 @@ restore = load_module("restore")
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_image_gateway_listener_dropin_is_backed_up(self):
+        self.assertIn(
+            Path("/etc/systemd/system/image-media-gateway.service.d/10-listen-addresses.conf"),
+            backup.OPTIONAL_PATHS,
+        )
+
     def test_file_retention_keeps_newest_names(self):
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

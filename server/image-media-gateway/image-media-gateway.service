@@ -9,7 +9,7 @@ User=imagecompat
 Group=www-data
 Environment=UPSTREAM=http://127.0.0.1:3001
 Environment=PUBLIC_BASE_URL=https://mad.myddns.me
-Environment=LISTEN_ADDR=0.0.0.0:3012
+Environment=LISTEN_ADDRS=127.0.0.1:3013
 Environment=CACHE_DIR=/opt/image-url-cache
 Environment=SPOOL_DIR=/opt/image-media-gateway/spool
 Environment=CACHE_TTL_SECONDS=1800

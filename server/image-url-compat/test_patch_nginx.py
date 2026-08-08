@@ -23,7 +23,7 @@ class PatchNginxTest(unittest.TestCase):
         for path in patch_nginx.IMAGE_ROUTES:
             block_start = updated.index(f"location = {path}")
             block_end = updated.index("\n    }", block_start)
-            self.assertIn("proxy_pass http://127.0.0.1:3012;", updated[block_start:block_end])
+            self.assertIn("proxy_pass http://127.0.0.1:3013;", updated[block_start:block_end])
 
     def test_is_idempotent(self):
         original = (
@@ -72,7 +72,7 @@ class PatchNginxTest(unittest.TestCase):
         updated, changed = patch_nginx.patched_config(original)
         self.assertTrue(changed)
         self.assertEqual(updated.count("location = /v1/images/generations"), 1)
-        self.assertIn("proxy_pass http://127.0.0.1:3012;", updated)
+        self.assertIn("proxy_pass http://127.0.0.1:3013;", updated)
         self.assertNotIn("X-Legacy", updated)
 
     def test_keeps_video_routes_on_python_service(self):

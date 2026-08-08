@@ -20,6 +20,10 @@ class PatchNginxTest(unittest.TestCase):
         self.assertIn(patch_nginx.DUPLICATE_PREFIX_MARKER.strip(), updated)
         self.assertIn("rewrite ^/v1/v1beta/", updated)
         self.assertIn("client_max_body_size 64m", updated)
+        for path in patch_nginx.IMAGE_ROUTES:
+            block_start = updated.index(f"location = {path}")
+            block_end = updated.index("\n    }", block_start)
+            self.assertIn("proxy_pass http://127.0.0.1:3012;", updated[block_start:block_end])
 
     def test_is_idempotent(self):
         original = (
@@ -55,6 +59,31 @@ class PatchNginxTest(unittest.TestCase):
         self.assertNotIn(
             patch_nginx.route_block(path, label, upstream_port=3010), updated
         )
+
+    def test_migrates_existing_image_blocks_without_matching_old_comment(self):
+        original = """server {
+    # image-url-compat managed block
+    location = /v1/images/generations {
+        proxy_pass http://127.0.0.1:3010;
+        proxy_set_header X-Legacy yes;
+    }
+}
+"""
+        updated, changed = patch_nginx.patched_config(original)
+        self.assertTrue(changed)
+        self.assertEqual(updated.count("location = /v1/images/generations"), 1)
+        self.assertIn("proxy_pass http://127.0.0.1:3012;", updated)
+        self.assertNotIn("X-Legacy", updated)
+
+    def test_keeps_video_routes_on_python_service(self):
+        original = "server {\n" + patch_nginx.INSERT_BEFORE + "}\n"
+        updated, _ = patch_nginx.patched_config(original)
+        for path, _label in patch_nginx.ROUTES:
+            if path in patch_nginx.IMAGE_ROUTES or path in patch_nginx.DIRECT_NEW_API_ROUTES:
+                continue
+            block_start = updated.index(f"location = {path}")
+            block_end = updated.index("\n    }", block_start)
+            self.assertIn("proxy_pass http://127.0.0.1:3010;", updated[block_start:block_end])
 
     def test_adds_edit_routes_to_existing_playground_config(self):
         original = (

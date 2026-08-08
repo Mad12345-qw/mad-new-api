@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,7 @@ DEFAULT_SITE = Path("/etc/nginx/sites-enabled/mad.myddns.me")
 DEFAULT_BACKUP_DIR = Path("/opt/new-api/backups/nginx")
 INSERT_BEFORE = "    # image-url-compat managed block\n"
 ROUTES = (
+    ("/v1/images/generations", "external-generation"),
     ("/pg/images/generations", "playground-generation"),
     ("/v1/images/edits", "external-edits"),
     ("/pg/images/edits", "playground-edits"),
@@ -33,6 +35,18 @@ ROUTES = (
     ("/ark/api/v3/contents/generations/tasks", "video-create-ark-v3"),
 )
 DIRECT_NEW_API_ROUTES = {"/v1/videos/generations"}
+IMAGE_ROUTES = {
+    "/v1/images/generations",
+    "/pg/images/generations",
+    "/v1/images/edits",
+    "/pg/images/edits",
+    "/images/generations",
+    "/images/edits",
+    "/v1/edits",
+    "/edits",
+    "/images/variations",
+    "/v1/images/variations",
+}
 VIDEO_STATUS_MARKER = "    # mad-media-compat video-status block\n"
 VIDEO_STATUS_BLOCK = r"""    # mad-media-compat video-status block
     location ~ ^/(?:pg/videos|(?:v1/)?(?:videos/generations|video/generations|contents/generations/tasks)|volc/v1/contents/generations/tasks|api/v3/contents/generations/tasks|v3/contents/generations/tasks|ark/api/v3/contents/generations/tasks|(?:v1/)?tasks)/[^/]+$ {
@@ -65,7 +79,10 @@ DUPLICATE_PREFIX_BLOCK = r"""    # mad-media-compat duplicate-prefix block
 
 def route_block(path, label, upstream_port=None):
     if upstream_port is None:
-        upstream_port = 3001 if path in DIRECT_NEW_API_ROUTES else 3010
+        if path in IMAGE_ROUTES:
+            upstream_port = 3012
+        else:
+            upstream_port = 3001 if path in DIRECT_NEW_API_ROUTES else 3010
     return f"""    # image-url-compat {label} block
     location = {path} {{
         client_max_body_size 64m;
@@ -88,6 +105,22 @@ def route_block(path, label, upstream_port=None):
 PLAYGROUND_BLOCK = route_block(*ROUTES[0])
 
 
+def replace_exact_location(content, path, replacement):
+    lines = content.splitlines(keepends=True)
+    pattern = re.compile(rf"^\s*location\s*=\s*{re.escape(path)}\s*\{{\s*$")
+    for start, line in enumerate(lines):
+        if not pattern.match(line.rstrip("\r\n")):
+            continue
+        depth = 0
+        for end in range(start, len(lines)):
+            depth += lines[end].count("{") - lines[end].count("}")
+            if depth == 0:
+                lines[start : end + 1] = [replacement]
+                return "".join(lines), True
+        raise RuntimeError(f"unterminated nginx location for {path}")
+    return content, False
+
+
 def patched_config(content):
     if INSERT_BEFORE not in content:
         raise RuntimeError("image compatibility marker not found")
@@ -98,13 +131,11 @@ def patched_config(content):
         expected = route_block(path, label)
         if expected in updated:
             continue
-        legacy = route_block(path, label, upstream_port=3010)
-        if path in DIRECT_NEW_API_ROUTES and legacy in updated:
-            updated = updated.replace(legacy, expected, 1)
+        updated, replaced = replace_exact_location(updated, path, expected)
+        if replaced:
             changed = True
             continue
-        if f"location = {path}" not in updated:
-            missing.append(expected)
+        missing.append(expected)
     if VIDEO_STATUS_MARKER not in updated:
         missing.append(VIDEO_STATUS_BLOCK)
     if DUPLICATE_PREFIX_MARKER not in updated:

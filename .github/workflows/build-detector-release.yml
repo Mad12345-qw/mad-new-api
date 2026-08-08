@@ -71,6 +71,10 @@ jobs:
               printf 'Skipping CPA-dependent Codex image patch: %s\n' "$name"
               continue
             fi
+            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-pro-model-aliases.patch" ]; then
+              printf 'Skipping full-production Codex model alias patch: %s\n' "$name"
+              continue
+            fi
             if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-cpa-native-executor.patch" ]; then
               printf 'Skipping CPA-only patch: %s\n' "$name"
               continue

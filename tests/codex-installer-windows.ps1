@@ -236,7 +236,7 @@ base_url = "https://mad.myddns.me/codex/cockpit/v1"
 requires_openai_auth = false
 experimental_bearer_token = "sk-refresh-key"
 '@
-    Write-Utf8 $refreshFixture '{"models":[{"slug":"gpt-5.6-sol","display_name":"gpt-5.6-sol"}]}'
+    Write-Utf8 $refreshFixture '{"models":[{"slug":"gpt-5.6-sol-pro","display_name":"GPT 5.6 Sol Pro"},{"slug":"gpt-5.6-terra-pro","display_name":"GPT 5.6 Terra Pro"}]}'
     Write-OAuth $refreshAuth
     $oldHome, $oldFixture = $env:CODEX_HOME, $env:MADAPI_REFRESH_RESPONSE_FILE
     try {
@@ -244,13 +244,17 @@ experimental_bearer_token = "sk-refresh-key"
         $env:MADAPI_REFRESH_RESPONSE_FILE = $refreshFixture
         & (Join-Path (Split-Path -Parent $InstallerPath) 'refresh-model-catalog.ps1')
         $oauthRefreshConfig = [IO.File]::ReadAllText($refreshConfig)
+        $oauthRefreshCatalog = [IO.File]::ReadAllText((Join-Path $refreshHome 'madapi-cockpit-model-catalog.json'))
         Assert-True ($oauthRefreshConfig.Contains('base_url = "https://mad.myddns.me/codex/v1"')) 'OAuth refresh did not select the native route.'
         Assert-True ($oauthRefreshConfig.Contains('requires_openai_auth = true')) 'OAuth refresh did not enable the auth gate.'
+        Assert-True ($oauthRefreshCatalog.Contains('gpt-5.6-sol-pro') -and $oauthRefreshCatalog.Contains('gpt-5.6-terra-pro')) 'OAuth refresh did not retain both Pro models.'
         Write-Utf8 $refreshAuth '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-local","tokens":null}'
         & (Join-Path (Split-Path -Parent $InstallerPath) 'refresh-model-catalog.ps1')
         $apiRefreshConfig = [IO.File]::ReadAllText($refreshConfig)
+        $apiRefreshCatalog = [IO.File]::ReadAllText((Join-Path $refreshHome 'madapi-cockpit-model-catalog.json'))
         Assert-True ($apiRefreshConfig.Contains('base_url = "https://mad.myddns.me/codex/cockpit/v1"')) 'API refresh did not select the mapped route.'
         Assert-True ($apiRefreshConfig.Contains('requires_openai_auth = false')) 'API refresh did not disable the OAuth gate.'
+        Assert-True ($apiRefreshCatalog.Contains('gpt-5.6-sol-pro') -and $apiRefreshCatalog.Contains('gpt-5.6-terra-pro')) 'API refresh did not retain both Pro models.'
     } finally {
         $env:CODEX_HOME, $env:MADAPI_REFRESH_RESPONSE_FILE = $oldHome, $oldFixture
     }

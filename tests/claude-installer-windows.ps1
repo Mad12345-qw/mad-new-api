@@ -66,7 +66,9 @@ $environmentNames = @(
     'MADAPI_CLAUDE_FORCE_PORTABLE_NODE',
     'MADAPI_CLAUDE_NODE_RUNTIME_PATH',
     'MADAPI_FORCE_POSTWRITE_FAILURE',
-    'MADAPI_CLAUDE_SKIP_LANGUAGE'
+    'MADAPI_CLAUDE_SKIP_LANGUAGE',
+    'MADAPI_CLAUDE_INSTALL_LANGUAGE',
+    'MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH'
 )
 foreach ($name in $environmentNames) {
     $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -80,8 +82,6 @@ try {
     $env:MADAPI_CLAUDE_THREEP_DIR = $threep
     $env:MADAPI_CLAUDE_TOOL_DIR = $tool
     $env:MADAPI_CLAUDE_IMAGE_SOURCE_DIR = $ImageToolPath
-    $env:MADAPI_CLAUDE_SKIP_LANGUAGE = '1'
-
     & $InstallerPath | Out-Host
     & $InstallerPath | Out-Host
 
@@ -105,6 +105,21 @@ try {
     Assert-True (($actualModels -join '|') -eq ($expectedModels -join '|')) 'Gateway model list is incorrect.'
     Assert-True (@($metaResult.entries | Where-Object { $_.name -eq 'MadAPI' }).Count -eq 1) 'Repeated install created duplicate MadAPI entries.'
     Assert-True (@($metaResult.entries | Where-Object { $_.name -eq 'Existing' }).Count -eq 1) 'Existing config library entry was lost.'
+
+    $languageFailure = Join-Path $root 'language-failure.ps1'
+    [IO.File]::WriteAllText(
+        $languageFailure,
+        "throw 'Optional language fixture failed.'",
+        (New-Object Text.UTF8Encoding($false))
+    )
+    $env:MADAPI_CLAUDE_INSTALL_LANGUAGE = '1'
+    $env:MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH = $languageFailure
+    & $InstallerPath | Out-Host
+    Remove-Item Env:MADAPI_CLAUDE_INSTALL_LANGUAGE -ErrorAction SilentlyContinue
+    Remove-Item Env:MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH -ErrorAction SilentlyContinue
+    $languageFailureResult = Get-Content -LiteralPath $normalConfig -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($languageFailureResult.oauthAccount -eq 'keep-account') 'Optional language failure rolled back OAuth data.'
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$languageFailureResult.mcpServers.'madapi-image'.command)) 'Optional language failure removed the image tool.'
 
     $env:MADAPI_CLAUDE_FORCE_PORTABLE_NODE = '1'
     $env:MADAPI_CLAUDE_NODE_RUNTIME_PATH = (Get-Command node.exe -ErrorAction Stop).Source

@@ -247,31 +247,8 @@ try {
         throw 'Gateway model verification failed.'
     }
 
-    if (-not $testMode -and [string]$env:MADAPI_CLAUDE_SKIP_LANGUAGE -ne '1') {
-        $languageInstaller = [string]$env:MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH
-        if ([string]::IsNullOrWhiteSpace($languageInstaller)) {
-            $languageInstaller = Join-Path $stageRoot 'install-language.ps1'
-            Invoke-WebRequest -UseBasicParsing -Uri 'https://mad.myddns.me/mad-claude/install-language.ps1' -OutFile $languageInstaller -TimeoutSec 60
-        }
-        & $languageInstaller
-    }
-
     Write-Host 'Claude Desktop MadAPI setup completed.'
     Write-Host ('BACKUP=' + $backupRoot)
-    if (-not $testMode) {
-        try { Start-Process 'shell:AppsFolder\Claude_pzs8sxrjxfjjc!Claude' }
-        catch {
-            $candidates = @(
-                (Join-Path $env:LOCALAPPDATA 'AnthropicClaude\claude.exe'),
-                (Join-Path $env:LOCALAPPDATA 'Programs\Claude\Claude.exe'),
-                (Join-Path $env:LOCALAPPDATA 'Claude\Claude.exe'),
-                (Join-Path $env:ProgramFiles 'Claude\Claude.exe')
-            )
-            $claudeExe = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-            if ($claudeExe) { Start-Process -FilePath $claudeExe }
-            else { Write-Host 'Start Claude Desktop manually.' }
-        }
-    }
 } catch {
     Restore-File $normalConfig $normalBackup $hadNormal
     Restore-File $threePConfig $threePBackup $hadThreeP
@@ -285,4 +262,34 @@ try {
     exit 1
 } finally {
     if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
+}
+
+if ([string]$env:MADAPI_CLAUDE_INSTALL_LANGUAGE -eq '1' -and
+    [string]$env:MADAPI_CLAUDE_SKIP_LANGUAGE -ne '1') {
+    try {
+        $languageInstallerPath = [string]$env:MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH
+        $languageSource = if ([string]::IsNullOrWhiteSpace($languageInstallerPath)) {
+            [string](Invoke-RestMethod -UseBasicParsing -Uri 'https://mad.myddns.me/mad-claude/install-language.ps1' -TimeoutSec 60)
+        } else {
+            [IO.File]::ReadAllText($languageInstallerPath, [Text.Encoding]::UTF8)
+        }
+        & ([ScriptBlock]::Create($languageSource))
+    } catch {
+        Write-Warning ('Optional Claude Chinese interface installation failed. MadAPI models and image tools remain installed. ' + $_.Exception.Message)
+    }
+}
+
+if (-not $testMode) {
+    try { Start-Process 'shell:AppsFolder\Claude_pzs8sxrjxfjjc!Claude' }
+    catch {
+        $candidates = @(
+            (Join-Path $env:LOCALAPPDATA 'AnthropicClaude\claude.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Programs\Claude\Claude.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Claude\Claude.exe'),
+            (Join-Path $env:ProgramFiles 'Claude\Claude.exe')
+        )
+        $claudeExe = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+        if ($claudeExe) { Start-Process -FilePath $claudeExe }
+        else { Write-Host 'Start Claude Desktop manually.' }
+    }
 }

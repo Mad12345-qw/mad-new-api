@@ -20,8 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  codex-installer-acceptance:
-    name: Codex installer acceptance (${{ matrix.os }})
+  agent-installer-acceptance:
+    name: Agent installer acceptance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -43,14 +43,31 @@ jobs:
             -File "$env:GITHUB_WORKSPACE\tests\codex-installer-windows.ps1" `
             -InstallerPath "$env:GITHUB_WORKSPACE\assets\mad-codex\install.ps1"
 
+          powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File "$env:GITHUB_WORKSPACE\tests\claude-installer-windows.ps1" `
+            -InstallerPath "$env:GITHUB_WORKSPACE\assets\mad-claude\install.ps1" `
+            -ImageToolPath "$env:GITHUB_WORKSPACE\assets\mad-claude\image-tool"
+
+          $env:MADAPI_CLAUDE_LANGUAGE_DRY_RUN = '1'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File "$env:GITHUB_WORKSPACE\assets\mad-claude\install-language.ps1"
+
       - name: Run macOS acceptance
         if: runner.os == 'macOS'
         shell: bash
         run: |
           /bin/sh tests/codex-installer-macos.sh assets/mad-codex/install.sh
+          /bin/sh tests/claude-installer-macos.sh assets/mad-claude/install.sh assets/mad-claude/image-tool
+          MADAPI_CLAUDE_LANGUAGE_DRY_RUN=1 /bin/sh assets/mad-claude/install-language.sh
+
+      - name: Run Claude image MCP acceptance
+        shell: bash
+        run: |
+          node tests/claude-image-mcp.mjs assets/mad-claude/image-tool/server.mjs
+          node tests/claude-image-cache-restart.mjs assets/mad-claude/image-tool
 
   build:
-    needs: codex-installer-acceptance
+    needs: agent-installer-acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -89,55 +106,39 @@ jobs:
       - name: Apply Mad API patches
         run: |
           for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
-            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover.patch" ]; then
-              continue
-            fi
-            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch" ]; then
-              continue
-            fi
-            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch" ]; then
-              continue
-            fi
-            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch" ]; then
-              continue
-            fi
-            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-session-replay-contract.patch" ]; then
-              continue
-            fi
-            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch" ]; then
-              continue
-            fi
-            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-pro-model-aliases.patch" ]; then
-              continue
-            fi
-            if [ "$(basename "$patch")" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-image-media-channel-matrix.patch" ]; then
-              continue
-            fi
-            if [[ "$(basename "$patch")" == *"-codex-auth-gate.patch" ]]; then
-              continue
-            fi
+            case "$(basename "$patch")" in
+              *-codex-first-event-failover.patch|\
+              *-codex-protocol-routing.patch|\
+              *-codex-production-hardening.patch|\
+              *-codex-capability-contract.patch|\
+              *-codex-session-replay-contract.patch|\
+              *-codex-native-image-generation.patch|\
+              *-codex-pro-model-aliases.patch|\
+              *-image-media-channel-matrix.patch|\
+              *-codex-auth-gate.patch)
+                continue
+                ;;
+            esac
             git -C source apply --check "$patch"
             git -C source apply "$patch"
           done
-          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover.patch"
-          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover.patch"
-          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch"
-          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch"
-          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch"
-          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch"
-          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch"
-          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch"
-          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-session-replay-contract.patch"
-          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-session-replay-contract.patch"
 
-          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
-          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch"
-
-          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-pro-model-aliases.patch"
-          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-pro-model-aliases.patch"
-
-          git -C source apply --check "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-image-media-channel-matrix.patch"
-          git -C source apply "$GITHUB_WORKSPACE/patches/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-image-media-channel-matrix.patch"
+          apply_deferred_patch() {
+            suffix=$1
+            matches=("$GITHUB_WORKSPACE"/patches/*-"$suffix".patch)
+            test ${#matches[@]} -eq 1
+            test -f "${matches[0]}"
+            git -C source apply --check "${matches[0]}"
+            git -C source apply "${matches[0]}"
+          }
+          apply_deferred_patch codex-first-event-failover
+          apply_deferred_patch codex-protocol-routing
+          apply_deferred_patch codex-production-hardening
+          apply_deferred_patch codex-capability-contract
+          apply_deferred_patch codex-session-replay-contract
+          apply_deferred_patch codex-native-image-generation
+          apply_deferred_patch codex-pro-model-aliases
+          apply_deferred_patch image-media-channel-matrix
 
       - name: Apply CPA gateway auth endpoint
         run: |
@@ -279,7 +280,7 @@ jobs:
       - name: Verify playground frontend
         working-directory: source/web/default
         run: |
-          bun test tests/codex-config.test.ts
+          bun test tests/codex-config.test.ts tests/claude-config.test.ts
           bun run typecheck
           ../node_modules/.bin/oxlint -c .oxlintrc.json src/features/playground
           bun run build

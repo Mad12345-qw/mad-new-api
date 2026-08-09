@@ -7,6 +7,8 @@ on:
       - 'server/cpa-codex-native/**'
       - 'assets/mad-codex/**'
       - 'tests/codex-installer-*'
+      - 'assets/mad-claude/**'
+      - 'tests/claude-*'
       - 'guards/cpa-upstream-commit.txt'
       - '.github/workflows/cpa-native-single-instance.yml'
   push:
@@ -16,6 +18,8 @@ on:
       - 'server/cpa-codex-native/**'
       - 'assets/mad-codex/**'
       - 'tests/codex-installer-*'
+      - 'assets/mad-claude/**'
+      - 'tests/claude-*'
       - 'guards/cpa-upstream-commit.txt'
       - '.github/workflows/cpa-native-single-instance.yml'
 
@@ -38,9 +42,25 @@ jobs:
           powershell.exe -NoProfile -ExecutionPolicy Bypass `
             -File "$env:GITHUB_WORKSPACE\tests\codex-installer-windows.ps1" `
             -InstallerPath "$env:GITHUB_WORKSPACE\assets\mad-codex\install.ps1"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File "$env:GITHUB_WORKSPACE\tests\claude-installer-windows.ps1" `
+            -InstallerPath "$env:GITHUB_WORKSPACE\assets\mad-claude\install.ps1" `
+            -ImageToolPath "$env:GITHUB_WORKSPACE\assets\mad-claude\image-tool"
+
+          $env:MADAPI_CLAUDE_LANGUAGE_DRY_RUN = '1'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File "$env:GITHUB_WORKSPACE\assets\mad-claude\install-language.ps1"
       - if: runner.os == 'macOS'
         shell: bash
-        run: /bin/sh tests/codex-installer-macos.sh assets/mad-codex/install.sh
+        run: |
+          /bin/sh tests/codex-installer-macos.sh assets/mad-codex/install.sh
+          /bin/sh tests/claude-installer-macos.sh assets/mad-claude/install.sh assets/mad-claude/image-tool
+          MADAPI_CLAUDE_LANGUAGE_DRY_RUN=1 /bin/sh assets/mad-claude/install-language.sh
+      - name: Run Claude image MCP acceptance
+        shell: bash
+        run: |
+          node tests/claude-image-mcp.mjs assets/mad-claude/image-tool/server.mjs
+          node tests/claude-image-cache-restart.mjs assets/mad-claude/image-tool
 
   native-cpa:
     name: Native CPA image

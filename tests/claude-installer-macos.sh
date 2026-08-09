@@ -27,6 +27,8 @@ run_installer() {
   MADAPI_CLAUDE_IMAGE_SOURCE_DIR="$image_tool" \
   MADAPI_CLAUDE_FORCE_PORTABLE_NODE="${MADAPI_CLAUDE_FORCE_PORTABLE_NODE:-0}" \
   MADAPI_CLAUDE_NODE_RUNTIME_PATH="${MADAPI_CLAUDE_NODE_RUNTIME_PATH:-}" \
+  MADAPI_CLAUDE_INSTALL_LANGUAGE="${MADAPI_CLAUDE_INSTALL_LANGUAGE:-0}" \
+  MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH="${MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH:-}" \
   /bin/sh "$installer"
 }
 
@@ -63,6 +65,14 @@ JXA
 
 [ -f "$tool/server.mjs" ]
 [ -f "$tool/widget.html" ]
+[ -f "$tool/cache/keep-image.png" ]
+
+printf '%s\n' '#!/bin/sh' 'exit 9' > "$root/language-failure.sh"
+chmod 700 "$root/language-failure.sh"
+MADAPI_CLAUDE_INSTALL_LANGUAGE=1 \
+MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH="$root/language-failure.sh" \
+run_installer
+[ -f "$tool/server.mjs" ]
 [ -f "$tool/cache/keep-image.png" ]
 
 MADAPI_CLAUDE_FORCE_PORTABLE_NODE=1 \

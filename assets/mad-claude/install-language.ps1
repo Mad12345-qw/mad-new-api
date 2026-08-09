@@ -69,19 +69,50 @@ try {
         throw ('Claude Chinese safe-mode install failed with exit code ' + $exitCode + '.')
     }
 
-    Get-Process -Name Claude -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    Start-Process 'shell:AppsFolder\Claude_pzs8sxrjxfjjc!Claude'
-
-    $package = Get-AppxPackage -Name Claude -ErrorAction Stop
-    $resourcePath = Join-Path $package.InstallLocation 'app\resources\ion-dist\i18n\zh-CN.json'
-    $configPath = Join-Path $env:LOCALAPPDATA 'Claude-3p\config.json'
-    if (-not (Test-Path -LiteralPath $resourcePath -PathType Leaf)) {
+    $resourcePaths = @()
+    $package = Get-AppxPackage -Name Claude -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $package) {
+        $resourcePaths += Join-Path $package.InstallLocation 'app\resources\ion-dist\i18n\zh-CN.json'
+    }
+    $unpackagedRoot = Join-Path $env:LOCALAPPDATA 'AnthropicClaude'
+    if (Test-Path -LiteralPath $unpackagedRoot -PathType Container) {
+        $resourcePaths += @(
+            Get-ChildItem -LiteralPath $unpackagedRoot -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            ForEach-Object { Join-Path $_.FullName 'resources\ion-dist\i18n\zh-CN.json' }
+        )
+    }
+    if (-not ($resourcePaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1)) {
         throw 'Claude Chinese resource verification failed.'
     }
-    $locale = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json).locale
-    if ([string]$locale -ne 'zh-CN') { throw 'Claude Chinese locale verification failed.' }
+
+    $configPaths = @(
+        (Join-Path $env:APPDATA 'Claude\config.json'),
+        (Join-Path $env:APPDATA 'Claude-3p\config.json'),
+        (Join-Path $env:LOCALAPPDATA 'Claude-3p\config.json')
+    )
+    $localeVerified = $false
+    foreach ($configPath in $configPaths) {
+        if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { continue }
+        try {
+            $locale = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json).locale
+            if ([string]$locale -eq 'zh-CN') { $localeVerified = $true; break }
+        } catch { }
+    }
+    if (-not $localeVerified) { throw 'Claude Chinese locale verification failed.' }
     Write-Host 'Claude Chinese interface installed in safe mode.'
+} catch {
+    $logRoot = Join-Path $env:LOCALAPPDATA 'MadAPI\claude-language-logs'
+    New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+    $logStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $copiedLogs = @()
+    foreach ($sourceLog in @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File -Filter '*.log' -ErrorAction SilentlyContinue)) {
+        $targetLog = Join-Path $logRoot ($logStamp + '-' + $sourceLog.Name)
+        Copy-Item -LiteralPath $sourceLog.FullName -Destination $targetLog -Force
+        $copiedLogs += $targetLog
+    }
+    foreach ($copiedLog in $copiedLogs) { Write-Host ('LANGUAGE_LOG=' + $copiedLog) }
+    throw
 } finally {
     Remove-Item Env:CLAUDE_ZH_SKIP_UPDATE_CHECK -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }

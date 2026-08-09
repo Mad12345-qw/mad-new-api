@@ -139,10 +139,10 @@ index f42ce9db..86416ca6 100644
          <TooltipTrigger
 diff --git a/web/default/src/features/keys/components/dialogs/claude-setup-dialog.tsx b/web/default/src/features/keys/components/dialogs/claude-setup-dialog.tsx
 new file mode 100644
-index 00000000..45624286
+index 00000000..d6aa81dc
 --- /dev/null
 +++ b/web/default/src/features/keys/components/dialogs/claude-setup-dialog.tsx
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,245 @@
 +/*
 +Copyright (C) 2023-2026 QuantumNous
 +
@@ -170,12 +170,13 @@ index 00000000..45624286
 +  Languages,
 +  Monitor,
 +  ShieldCheck,
-+} from 'lucide-react'
-+import { useEffect, useMemo, useRef, useState } from 'react'
-+import { useTranslation } from 'react-i18next'
-+import { toast } from 'sonner'
++} from "lucide-react";
++import { useEffect, useMemo, useRef, useState } from "react";
++import { useTranslation } from "react-i18next";
++import { toast } from "sonner";
 +
-+import { Button } from '@/components/ui/button'
++import { Button } from "@/components/ui/button";
++import { Checkbox } from "@/components/ui/checkbox";
 +import {
 +  Dialog,
 +  DialogContent,
@@ -183,27 +184,27 @@ index 00000000..45624286
 +  DialogFooter,
 +  DialogHeader,
 +  DialogTitle,
-+} from '@/components/ui/dialog'
-+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-+import { copyToClipboard } from '@/lib/copy-to-clipboard'
++} from "@/components/ui/dialog";
++import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
++import { copyToClipboard } from "@/lib/copy-to-clipboard";
 +
 +import {
 +  buildClaudeInstallCommand,
 +  CLAUDE_MODELS,
 +  detectClaudePlatform,
 +  type ClaudePlatform,
-+} from '../../lib/claude-config'
++} from "../../lib/claude-config";
 +
 +type ClaudeSetupDialogProps = {
-+  open: boolean
-+  onOpenChange: (open: boolean) => void
-+  tokenKey: string
-+  tokenName?: string
-+}
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  tokenKey: string;
++  tokenName?: string;
++};
 +
 +function getInitialPlatform(): ClaudePlatform {
-+  if (typeof navigator === 'undefined') return 'windows'
-+  return detectClaudePlatform(navigator.userAgent)
++  if (typeof navigator === "undefined") return "windows";
++  return detectClaudePlatform(navigator.userAgent);
 +}
 +
 +export function ClaudeSetupDialog({
@@ -212,156 +213,187 @@ index 00000000..45624286
 +  tokenKey,
 +  tokenName,
 +}: ClaudeSetupDialogProps) {
-+  const { t } = useTranslation()
-+  const [platform, setPlatform] = useState<ClaudePlatform>(getInitialPlatform)
-+  const [copied, setCopied] = useState(false)
-+  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
++  const { t } = useTranslation();
++  const [platform, setPlatform] = useState<ClaudePlatform>(getInitialPlatform);
++  const [installLanguage, setInstallLanguage] = useState(false);
++  const [copied, setCopied] = useState(false);
++  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 +
 +  useEffect(() => {
-+    if (!open) return
-+    setPlatform(getInitialPlatform())
-+    setCopied(false)
-+  }, [open])
++    if (!open) return;
++    setPlatform(getInitialPlatform());
++    setInstallLanguage(false);
++    setCopied(false);
++  }, [open]);
 +
-+  useEffect(() => () => clearTimeout(copiedTimer.current), [])
++  useEffect(() => () => clearTimeout(copiedTimer.current), []);
 +
 +  const installCommand = useMemo(
-+    () => buildClaudeInstallCommand({ apiKey: tokenKey, platform }),
-+    [platform, tokenKey]
-+  )
++    () =>
++      buildClaudeInstallCommand({
++        apiKey: tokenKey,
++        platform,
++        installLanguage,
++      }),
++    [installLanguage, platform, tokenKey],
++  );
 +
 +  const handleCopy = async () => {
-+    const success = await copyToClipboard(installCommand)
++    const success = await copyToClipboard(installCommand);
 +    if (!success) {
-+      toast.error(t('Failed to copy configuration'))
-+      return
++      toast.error(t("Failed to copy configuration"));
++      return;
 +    }
-+    setCopied(true)
-+    toast.success(t('Claude configuration copied'))
-+    clearTimeout(copiedTimer.current)
-+    copiedTimer.current = setTimeout(() => setCopied(false), 2000)
-+  }
++    setCopied(true);
++    toast.success(t("Claude configuration copied"));
++    clearTimeout(copiedTimer.current);
++    copiedTimer.current = setTimeout(() => setCopied(false), 2000);
++  };
 +
 +  return (
 +    <Dialog open={open} onOpenChange={onOpenChange}>
-+      <DialogContent className='max-h-[min(90vh,760px)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden p-0 sm:max-w-2xl'>
-+        <DialogHeader className='px-4 pt-4 pr-12 sm:px-5 sm:pt-5 sm:pr-12'>
-+          <div className='flex items-center gap-2.5'>
-+            <div className='border-border bg-muted/50 flex size-8 shrink-0 items-center justify-center rounded-lg border'>
-+              <Bot className='size-4' />
++      <DialogContent className="max-h-[min(90vh,760px)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden p-0 sm:max-w-2xl">
++        <DialogHeader className="px-4 pt-4 pr-12 sm:px-5 sm:pt-5 sm:pr-12">
++          <div className="flex items-center gap-2.5">
++            <div className="border-border bg-muted/50 flex size-8 shrink-0 items-center justify-center rounded-lg border">
++              <Bot className="size-4" />
 +            </div>
-+            <div className='min-w-0'>
-+              <DialogTitle>{t('Claude Setup')}</DialogTitle>
-+              <DialogDescription className='mt-1 truncate text-xs'>
-+                {t('API key')}: {tokenName || t('Current key')}
++            <div className="min-w-0">
++              <DialogTitle>{t("Claude Setup")}</DialogTitle>
++              <DialogDescription className="mt-1 truncate text-xs">
++                {t("API key")}: {tokenName || t("Current key")}
 +              </DialogDescription>
 +            </div>
 +          </div>
 +        </DialogHeader>
 +
-+        <div className='min-h-0 space-y-4 overflow-y-auto px-4 pb-1 sm:px-5'>
-+          <div className='space-y-1.5'>
-+            <div className='text-muted-foreground flex items-center gap-1.5 text-xs font-medium'>
-+              <Monitor className='size-3.5' />
-+              {t('Computer system detected automatically')}
++        <div className="min-h-0 space-y-4 overflow-y-auto px-4 pb-1 sm:px-5">
++          <div className="space-y-1.5">
++            <div className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
++              <Monitor className="size-3.5" />
++              {t("Computer system detected automatically")}
 +            </div>
 +            <Tabs
 +              value={platform}
 +              onValueChange={(value) => setPlatform(value as ClaudePlatform)}
 +            >
-+              <TabsList className='grid w-full grid-cols-2 sm:w-72'>
-+                <TabsTrigger value='windows'>
++              <TabsList className="grid w-full grid-cols-2 sm:w-72">
++                <TabsTrigger value="windows">
 +                  <Monitor /> Windows
 +                </TabsTrigger>
-+                <TabsTrigger value='macos'>
++                <TabsTrigger value="macos">
 +                  <Apple /> macOS
 +                </TabsTrigger>
 +              </TabsList>
 +            </Tabs>
 +          </div>
 +
-+          <div className='bg-muted/35 rounded-lg border'>
-+            <div className='border-border flex items-center justify-between gap-3 border-b px-3 py-2'>
-+              <span className='text-muted-foreground text-xs font-medium'>
-+                {platform === 'windows'
-+                  ? t('PowerShell command')
-+                  : t('Terminal command')}
++          <div className="bg-muted/35 rounded-lg border">
++            <div className="border-border flex items-center justify-between gap-3 border-b px-3 py-2">
++              <span className="text-muted-foreground text-xs font-medium">
++                {platform === "windows"
++                  ? t("PowerShell command")
++                  : t("Terminal command")}
 +              </span>
-+              <span className='text-muted-foreground shrink-0 text-[10px] uppercase'>
-+                {platform === 'windows' ? 'PowerShell' : 'Shell'}
++              <span className="text-muted-foreground shrink-0 text-[10px] uppercase">
++                {platform === "windows" ? "PowerShell" : "Shell"}
 +              </span>
 +            </div>
-+            <pre className='text-foreground max-h-36 overflow-auto p-3 font-mono text-[11px] leading-5 break-all whitespace-pre-wrap sm:text-xs'>
++            <pre className="text-foreground max-h-36 overflow-auto p-3 font-mono text-[11px] leading-5 break-all whitespace-pre-wrap sm:text-xs">
 +              {installCommand}
 +            </pre>
 +          </div>
 +
-+          <div className='grid grid-cols-1 gap-2 text-xs sm:grid-cols-2'>
-+            <div className='flex items-center gap-1.5'>
-+              <ShieldCheck className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
-+              <span>{t('Keeps Claude account and history')}</span>
++          <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
++            <div className="flex items-center gap-1.5">
++              <ShieldCheck className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
++              <span>{t("Keeps Claude account and history")}</span>
 +            </div>
-+            <div className='flex items-center gap-1.5'>
-+              <Bot className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
-+              <span>{t('Installs five Claude models')}</span>
++            <div className="flex items-center gap-1.5">
++              <Bot className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
++              <span>{t("Installs five Claude models")}</span>
 +            </div>
-+            <div className='flex items-center gap-1.5'>
-+              <Image className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
-+              <span>{t('Installs the image generation tool')}</span>
-+            </div>
-+            <div className='flex items-center gap-1.5'>
-+              <Languages className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
-+              <span>{t('Installs the Simplified Chinese interface')}</span>
++            <div className="flex items-center gap-1.5">
++              <Image className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
++              <span>{t("Installs the image generation tool")}</span>
 +            </div>
 +          </div>
 +
-+          <div className='flex flex-wrap gap-1.5'>
++          <label className="border-border flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5">
++            <Checkbox
++              className="mt-0.5"
++              checked={installLanguage}
++              onCheckedChange={(checked) => {
++                setInstallLanguage(checked === true);
++                setCopied(false);
++              }}
++            />
++            <Languages className="mt-0.5 size-4 shrink-0 text-sky-600 dark:text-sky-400" />
++            <span className="min-w-0">
++              <span className="block text-sm font-medium">
++                {t("Install Simplified Chinese interface (optional)")}
++              </span>
++              <span className="text-muted-foreground mt-0.5 block text-xs">
++                {t(
++                  "Language installation is separate and cannot roll back Claude access",
++                )}
++              </span>
++            </span>
++          </label>
++
++          <div className="flex flex-wrap gap-1.5">
 +            {CLAUDE_MODELS.map((model) => (
 +              <span
 +                key={model}
-+                className='bg-muted rounded px-2 py-1 font-mono text-[10px]'
++                className="bg-muted rounded px-2 py-1 font-mono text-[10px]"
 +              >
 +                {model}
 +              </span>
 +            ))}
 +          </div>
 +
-+          <div className='space-y-2 text-xs'>
-+            <div className='flex gap-2'>
-+              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>1</span>
-+              <span>{t('Copy the one-command setup below')}</span>
++          <div className="space-y-2 text-xs">
++            <div className="flex gap-2">
++              <span className="bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold">
++                1
++              </span>
++              <span>{t("Copy the one-command setup below")}</span>
 +            </div>
-+            <div className='flex gap-2'>
-+              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>2</span>
++            <div className="flex gap-2">
++              <span className="bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold">
++                2
++              </span>
 +              <span>
-+                {platform === 'windows'
-+                  ? t('Open PowerShell, paste the command, and press Enter')
-+                  : t('Open Terminal, paste the command, and press Enter')}
++                {platform === "windows"
++                  ? t("Open PowerShell, paste the command, and press Enter")
++                  : t("Open Terminal, paste the command, and press Enter")}
 +              </span>
 +            </div>
-+            <div className='flex gap-2'>
-+              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>3</span>
-+              <span>{t('Restart Claude and choose an available model')}</span>
++            <div className="flex gap-2">
++              <span className="bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold">
++                3
++              </span>
++              <span>{t("Restart Claude and choose an available model")}</span>
 +            </div>
 +          </div>
 +        </div>
 +
-+        <DialogFooter className='m-0 px-4 py-3 sm:px-5'>
-+          <Button className='w-full sm:w-auto sm:min-w-40' onClick={handleCopy}>
++        <DialogFooter className="m-0 px-4 py-3 sm:px-5">
++          <Button className="w-full sm:w-auto sm:min-w-40" onClick={handleCopy}>
 +            {copied ? <Check /> : <Copy />}
-+            {copied ? t('Copied!') : t('Copy one-command setup')}
++            {copied ? t("Copied!") : t("Copy one-command setup")}
 +          </Button>
 +        </DialogFooter>
 +      </DialogContent>
 +    </Dialog>
-+  )
++  );
 +}
 diff --git a/web/default/src/features/keys/lib/claude-config.ts b/web/default/src/features/keys/lib/claude-config.ts
 new file mode 100644
-index 00000000..99904048
+index 00000000..fec39e55
 --- /dev/null
 +++ b/web/default/src/features/keys/lib/claude-config.ts
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,63 @@
 +/*
 +Copyright (C) 2023-2026 QuantumNous
 +
@@ -381,43 +413,49 @@ index 00000000..99904048
 +For commercial licensing, please contact support@quantumnous.com
 +*/
 +
-+export type ClaudePlatform = 'windows' | 'macos'
++export type ClaudePlatform = "windows" | "macos";
 +
 +export const CLAUDE_MODELS = [
-+  'claude-fable-5',
-+  'claude-opus-4-8',
-+  'claude-opus-5',
-+  'claude-sonnet-5',
-+  'claude-haiku-4-5',
-+] as const
++  "claude-fable-5",
++  "claude-opus-4-8",
++  "claude-opus-5",
++  "claude-sonnet-5",
++  "claude-haiku-4-5",
++] as const;
 +
-+const WINDOWS_INSTALLER_URL =
-+  'https://mad.myddns.me/mad-claude/install.ps1'
-+const MACOS_INSTALLER_URL = 'https://mad.myddns.me/mad-claude/install.sh'
++const WINDOWS_INSTALLER_URL = "https://mad.myddns.me/mad-claude/install.ps1";
++const MACOS_INSTALLER_URL = "https://mad.myddns.me/mad-claude/install.sh";
 +
 +function escapePowerShellSingleQuoted(value: string): string {
-+  return value.replaceAll("'", "''")
++  return value.replaceAll("'", "''");
 +}
 +
 +function escapeShellSingleQuoted(value: string): string {
-+  return value.replaceAll("'", "'\"'\"'")
++  return value.replaceAll("'", "'\"'\"'");
 +}
 +
 +export function buildClaudeInstallCommand(options: {
-+  apiKey: string
-+  platform: ClaudePlatform
++  apiKey: string;
++  platform: ClaudePlatform;
++  installLanguage?: boolean;
 +}): string {
-+  if (options.platform === 'macos') {
-+    return `p=$(mktemp) && trap 'rm -f "$p"' EXIT && curl -fsSL '${MACOS_INSTALLER_URL}' -o "$p" && MADAPI_KEY='${escapeShellSingleQuoted(options.apiKey)}' /bin/sh "$p"`
++  if (options.platform === "macos") {
++    const languageEnvironment = options.installLanguage
++      ? "MADAPI_CLAUDE_INSTALL_LANGUAGE='1' "
++      : "";
++    return `p=$(mktemp) && trap 'rm -f "$p"' EXIT && curl -fsSL '${MACOS_INSTALLER_URL}' -o "$p" && ${languageEnvironment}MADAPI_KEY='${escapeShellSingleQuoted(options.apiKey)}' /bin/sh "$p"`;
 +  }
 +
-+  return `$env:MADAPI_KEY='${escapePowerShellSingleQuoted(options.apiKey)}'; try { & ([ScriptBlock]::Create((irm '${WINDOWS_INSTALLER_URL}'))) } finally { Remove-Item Env:MADAPI_KEY -ErrorAction SilentlyContinue }`
++  const languageEnvironment = options.installLanguage
++    ? "$env:MADAPI_CLAUDE_INSTALL_LANGUAGE='1'; "
++    : "";
++  return `$env:MADAPI_KEY='${escapePowerShellSingleQuoted(options.apiKey)}'; ${languageEnvironment}try { & ([ScriptBlock]::Create((irm '${WINDOWS_INSTALLER_URL}'))) } finally { Remove-Item Env:MADAPI_KEY -ErrorAction SilentlyContinue; Remove-Item Env:MADAPI_CLAUDE_INSTALL_LANGUAGE -ErrorAction SilentlyContinue }`;
 +}
 +
 +export function detectClaudePlatform(userAgent: string): ClaudePlatform {
 +  return /Macintosh|Mac OS X|iPhone|iPad|iPod/i.test(userAgent)
-+    ? 'macos'
-+    : 'windows'
++    ? "macos"
++    : "windows";
 +}
 diff --git a/web/default/src/features/keys/types.ts b/web/default/src/features/keys/types.ts
 index f1ec12cb..c1d42f4a 100644
@@ -429,10 +467,10 @@ index f1ec12cb..c1d42f4a 100644
    | 'codex-setup'
 +  | 'claude-setup'
 diff --git a/web/default/src/i18n/locales/en.json b/web/default/src/i18n/locales/en.json
-index 0d2bde1b..f97fc745 100644
+index 0d2bde1b..fd39ef01 100644
 --- a/web/default/src/i18n/locales/en.json
 +++ b/web/default/src/i18n/locales/en.json
-@@ -5189,6 +5189,14 @@
+@@ -5189,6 +5189,16 @@
      "Login mode": "Login mode",
      "OAuth login": "OAuth login",
      "API Key login": "API Key login",
@@ -445,14 +483,16 @@ index 0d2bde1b..f97fc745 100644
 +    "Installs five Claude models": "Installs five Claude models",
 +    "Installs the image generation tool": "Installs the image generation tool",
 +    "Restart Claude and choose an available model": "Restart Claude and choose an available model",
-+    "Installs the Simplified Chinese interface": "Installs the Simplified Chinese interface"
++    "Installs the Simplified Chinese interface": "Installs the Simplified Chinese interface",
++    "Install Simplified Chinese interface (optional)": "Install Simplified Chinese interface (optional)",
++    "Language installation is separate and cannot roll back Claude access": "Language installation is separate and cannot roll back Claude access"
    }
  }
 diff --git a/web/default/src/i18n/locales/zh.json b/web/default/src/i18n/locales/zh.json
-index fc0f8744..a564554d 100644
+index fc0f8744..27606b56 100644
 --- a/web/default/src/i18n/locales/zh.json
 +++ b/web/default/src/i18n/locales/zh.json
-@@ -5220,6 +5220,14 @@
+@@ -5220,6 +5220,16 @@
      "Login mode": "登录方式",
      "OAuth login": "OAuth登录（有GPT账号）",
      "API Key login": "API Key（无GPT账号）",
@@ -465,15 +505,17 @@ index fc0f8744..a564554d 100644
 +    "Installs five Claude models": "配置 5 个 Claude 模型",
 +    "Installs the image generation tool": "安装默认生图工具",
 +    "Restart Claude and choose an available model": "重启 Claude 后选择可用模型",
-+    "Installs the Simplified Chinese interface": "安装简体中文界面"
++    "Installs the Simplified Chinese interface": "安装简体中文界面",
++    "Install Simplified Chinese interface (optional)": "安装简体中文界面（可选）",
++    "Language installation is separate and cannot roll back Claude access": "中文安装独立执行，失败不会回退 Claude 接入"
    }
  }
 diff --git a/web/default/tests/claude-config.test.ts b/web/default/tests/claude-config.test.ts
 new file mode 100644
-index 00000000..935dc164
+index 00000000..122684fc
 --- /dev/null
 +++ b/web/default/tests/claude-config.test.ts
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,81 @@
 +/*
 +Copyright (C) 2023-2026 QuantumNous
 +
@@ -492,40 +534,66 @@ index 00000000..935dc164
 +
 +For commercial licensing, please contact support@quantumnous.com
 +*/
-+import { describe, expect, test } from 'bun:test'
++import { describe, expect, test } from "bun:test";
 +
 +import {
 +  buildClaudeInstallCommand,
 +  CLAUDE_MODELS,
 +  detectClaudePlatform,
-+} from '../src/features/keys/lib/claude-config'
++} from "../src/features/keys/lib/claude-config";
 +
-+describe('Claude setup command generation', () => {
-+  test('keeps the exact five-model contract', () => {
++describe("Claude setup command generation", () => {
++  test("keeps the exact five-model contract", () => {
 +    expect([...CLAUDE_MODELS]).toEqual([
-+      'claude-fable-5',
-+      'claude-opus-4-8',
-+      'claude-opus-5',
-+      'claude-sonnet-5',
-+      'claude-haiku-4-5',
-+    ])
-+  })
++      "claude-fable-5",
++      "claude-opus-4-8",
++      "claude-opus-5",
++      "claude-sonnet-5",
++      "claude-haiku-4-5",
++    ]);
++  });
 +
-+  test('builds token-scoped Windows and macOS commands', () => {
-+    const key = "sk-test'quoted"
-+    const windows = buildClaudeInstallCommand({ apiKey: key, platform: 'windows' })
-+    const macos = buildClaudeInstallCommand({ apiKey: key, platform: 'macos' })
++  test("builds token-scoped Windows and macOS commands", () => {
++    const key = "sk-test'quoted";
++    const windows = buildClaudeInstallCommand({
++      apiKey: key,
++      platform: "windows",
++    });
++    const macos = buildClaudeInstallCommand({ apiKey: key, platform: "macos" });
 +
-+    expect(windows).toContain("$env:MADAPI_KEY='sk-test''quoted'")
-+    expect(windows).toContain('/mad-claude/install.ps1')
-+    expect(windows).toContain('finally {')
-+    expect(macos).toContain("MADAPI_KEY='sk-test'\"'\"'quoted'")
-+    expect(macos).toContain('/mad-claude/install.sh')
-+    expect(macos).toContain('mktemp')
-+  })
++    expect(windows).toContain("$env:MADAPI_KEY='sk-test''quoted'");
++    expect(windows).toContain("/mad-claude/install.ps1");
++    expect(windows).toContain("finally {");
++    expect(windows).not.toContain("MADAPI_CLAUDE_INSTALL_LANGUAGE='1'");
++    expect(macos).toContain("MADAPI_KEY='sk-test'\"'\"'quoted'");
++    expect(macos).toContain("/mad-claude/install.sh");
++    expect(macos).toContain("mktemp");
++    expect(macos).not.toContain("MADAPI_CLAUDE_INSTALL_LANGUAGE='1'");
++  });
 +
-+  test('detects Windows and Apple clients', () => {
-+    expect(detectClaudePlatform('Mozilla/5.0 (Macintosh; Intel Mac OS X)')).toBe('macos')
-+    expect(detectClaudePlatform('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe('windows')
-+  })
-+})
++  test("adds the independent language option only when selected", () => {
++    const windows = buildClaudeInstallCommand({
++      apiKey: "sk-test",
++      platform: "windows",
++      installLanguage: true,
++    });
++    const macos = buildClaudeInstallCommand({
++      apiKey: "sk-test",
++      platform: "macos",
++      installLanguage: true,
++    });
++
++    expect(windows).toContain("$env:MADAPI_CLAUDE_INSTALL_LANGUAGE='1'");
++    expect(windows).toContain("Remove-Item Env:MADAPI_CLAUDE_INSTALL_LANGUAGE");
++    expect(macos).toContain("MADAPI_CLAUDE_INSTALL_LANGUAGE='1'");
++  });
++
++  test("detects Windows and Apple clients", () => {
++    expect(
++      detectClaudePlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X)"),
++    ).toBe("macos");
++    expect(
++      detectClaudePlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)"),
++    ).toBe("windows");
++  });
++});

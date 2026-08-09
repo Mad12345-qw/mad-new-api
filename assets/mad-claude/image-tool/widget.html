@@ -1,149 +1,322 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    :root { color-scheme: light dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; width: 100%; background: transparent; }
-    body { color: var(--color-text-primary, currentColor); }
-    .viewer { position: relative; width: min(100%, 760px); min-height: 220px; overflow: hidden; border: 1px solid var(--color-border-secondary, rgba(127,127,127,.25)); border-radius: 8px; background: var(--color-background-secondary, rgba(127,127,127,.08)); }
-    .status { display: grid; min-height: 220px; place-items: center; padding: 24px; color: var(--color-text-secondary, #666); font-size: 14px; text-align: center; }
-    .status.error { color: var(--color-text-danger, #b42318); }
-    .status[hidden] { display: none; }
-    img { display: none; width: 100%; height: auto; max-height: 720px; object-fit: contain; background: #fff; }
-    img.ready { display: block; }
-    .toolbar { display: none; position: absolute; right: 10px; bottom: 10px; gap: 8px; }
-    .toolbar.ready { display: flex; }
-    button { border: 1px solid rgba(255,255,255,.45); border-radius: 6px; padding: 7px 11px; color: #fff; background: rgba(20,20,20,.72); font: inherit; cursor: pointer; backdrop-filter: blur(8px); }
-    button:hover { background: rgba(20,20,20,.88); }
-  </style>
-</head>
-<body>
-  <main class="viewer" aria-live="polite">
-    <div id="status" class="status">Preparing image...</div>
-    <img id="image" alt="Generated image">
-    <div id="toolbar" class="toolbar"><button id="download" type="button">Download</button></div>
-  </main>
-  <script>
-    (() => {
-      const implementation = { name: "madapi-image-viewer", version: "2.0.0" };
-      const pending = new Map();
-      let nextId = 1;
-      let initialized = false;
-      let queuedArguments = null;
-      let queuedResult = null;
-      let currentDataUrl = "";
-      let currentTitle = "Generated image";
-      const status = document.getElementById("status");
-      const image = document.getElementById("image");
-      const toolbar = document.getElementById("toolbar");
-      const download = document.getElementById("download");
-      function sendRequest(method, params) {
-        const id = nextId++;
-        window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
-        return new Promise((resolve, reject) => {
-          pending.set(id, { resolve, reject });
-          setTimeout(() => { if (pending.delete(id)) reject(new Error(method + " timed out")); }, 10000);
-        });
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
       }
-      function sendNotification(method, params) { window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*"); }
-      function delay(milliseconds) { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
-      function resize() {
-        const rect = document.body.getBoundingClientRect();
-        sendNotification("ui/notifications/size-changed", { width: Math.ceil(rect.width), height: Math.ceil(rect.height) });
+      * {
+        box-sizing: border-box;
       }
-      async function readImage(imageId) {
-        let lastError = null;
-        for (let attempt = 0; attempt < 24; attempt += 1) {
-          try {
-            const result = await sendRequest("resources/read", { uri: "image://madapi/" + imageId });
-            const item = result && result.contents && result.contents[0];
-            if (!item || !item.blob || !item.mimeType) throw new Error("Image resource is incomplete");
-            return "data:" + item.mimeType + ";base64," + item.blob;
-          } catch (error) { lastError = error; await delay(400); }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        background: transparent;
+      }
+      body {
+        color: var(--color-text-primary, currentColor);
+      }
+      .viewer {
+        position: relative;
+        width: min(100%, 760px);
+        min-height: 220px;
+        overflow: hidden;
+        border: 1px solid
+          var(--color-border-secondary, rgba(127, 127, 127, 0.25));
+        border-radius: 8px;
+        background: var(
+          --color-background-secondary,
+          rgba(127, 127, 127, 0.08)
+        );
+      }
+      .status {
+        display: grid;
+        min-height: 220px;
+        place-items: center;
+        padding: 24px;
+        color: var(--color-text-secondary, #666);
+        font-size: 14px;
+        text-align: center;
+      }
+      .status.error {
+        color: var(--color-text-danger, #b42318);
+      }
+      .status[hidden] {
+        display: none;
+      }
+      img {
+        display: none;
+        width: 100%;
+        height: auto;
+        max-height: 720px;
+        object-fit: contain;
+        background: #fff;
+      }
+      img.ready {
+        display: block;
+      }
+      .toolbar {
+        display: none;
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        gap: 8px;
+      }
+      .toolbar.ready {
+        display: flex;
+      }
+      button {
+        border: 1px solid rgba(255, 255, 255, 0.45);
+        border-radius: 6px;
+        padding: 7px 11px;
+        color: #fff;
+        background: rgba(20, 20, 20, 0.72);
+        font: inherit;
+        cursor: pointer;
+        backdrop-filter: blur(8px);
+      }
+      button:hover {
+        background: rgba(20, 20, 20, 0.88);
+      }
+      button:disabled {
+        cursor: wait;
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="viewer" aria-live="polite">
+      <div id="status" class="status">Preparing image...</div>
+      <img id="image" alt="Generated image" />
+      <div id="toolbar" class="toolbar">
+        <button id="save" type="button">Save to Pictures</button>
+      </div>
+    </main>
+    <script>
+      (() => {
+        const implementation = {
+          name: "madapi-image-viewer",
+          version: "2.1.0",
+        };
+        const pending = new Map();
+        let nextId = 1;
+        let initialized = false;
+        let queuedArguments = null;
+        let queuedResult = null;
+        let currentDataUrl = "";
+        let currentImageId = "";
+        let currentTitle = "Generated image";
+        const status = document.getElementById("status");
+        const image = document.getElementById("image");
+        const toolbar = document.getElementById("toolbar");
+        const save = document.getElementById("save");
+        function sendRequest(method, params) {
+          const id = nextId++;
+          window.parent.postMessage(
+            { jsonrpc: "2.0", id, method, params },
+            "*",
+          );
+          return new Promise((resolve, reject) => {
+            pending.set(id, { resolve, reject });
+            setTimeout(() => {
+              if (pending.delete(id)) reject(new Error(method + " timed out"));
+            }, 10000);
+          });
         }
-        throw lastError || new Error("Image resource is unavailable");
-      }
-      async function imageIdForRequest(prompt, size) {
-        const bytes = new TextEncoder().encode(prompt + "\0" + size);
-        const digest = await crypto.subtle.digest("SHA-256", bytes);
-        return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
-      }
-      function imageIdFrom(value, depth = 0) {
-        if (depth > 8 || value == null) return "";
-        if (typeof value === "string") {
-          if (/^[0-9a-f]{64}$/.test(value)) return value;
-          if (value.length < 4096 && value.trim().startsWith("{")) {
-            try { return imageIdFrom(JSON.parse(value), depth + 1); } catch (_) { return ""; }
+        function sendNotification(method, params) {
+          window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+        }
+        function delay(milliseconds) {
+          return new Promise((resolve) => setTimeout(resolve, milliseconds));
+        }
+        function resize() {
+          const rect = document.body.getBoundingClientRect();
+          sendNotification("ui/notifications/size-changed", {
+            width: Math.ceil(rect.width),
+            height: Math.ceil(rect.height),
+          });
+        }
+        async function readImage(imageId) {
+          let lastError = null;
+          for (let attempt = 0; attempt < 24; attempt += 1) {
+            try {
+              const result = await sendRequest("resources/read", {
+                uri: "image://madapi/" + imageId,
+              });
+              const item = result && result.contents && result.contents[0];
+              if (!item || !item.blob || !item.mimeType)
+                throw new Error("Image resource is incomplete");
+              return "data:" + item.mimeType + ";base64," + item.blob;
+            } catch (error) {
+              lastError = error;
+              await delay(400);
+            }
+          }
+          throw lastError || new Error("Image resource is unavailable");
+        }
+        async function imageIdForRequest(prompt, size) {
+          const bytes = new TextEncoder().encode(prompt + "\0" + size);
+          const digest = await crypto.subtle.digest("SHA-256", bytes);
+          return Array.from(new Uint8Array(digest))
+            .map((value) => value.toString(16).padStart(2, "0"))
+            .join("");
+        }
+        function imageIdFrom(value, depth = 0) {
+          if (depth > 8 || value == null) return "";
+          if (typeof value === "string") {
+            if (/^[0-9a-f]{64}$/.test(value)) return value;
+            if (value.length < 4096 && value.trim().startsWith("{")) {
+              try {
+                return imageIdFrom(JSON.parse(value), depth + 1);
+              } catch (_) {
+                return "";
+              }
+            }
+            return "";
+          }
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              const found = imageIdFrom(item, depth + 1);
+              if (found) return found;
+            }
+            return "";
+          }
+          if (typeof value === "object") {
+            if (
+              typeof value.image_id === "string" &&
+              /^[0-9a-f]{64}$/.test(value.image_id)
+            )
+              return value.image_id;
+            for (const item of Object.values(value)) {
+              const found = imageIdFrom(item, depth + 1);
+              if (found) return found;
+            }
           }
           return "";
         }
-        if (Array.isArray(value)) {
-          for (const item of value) { const found = imageIdFrom(item, depth + 1); if (found) return found; }
-          return "";
+        async function render(argumentsValue, resultValue) {
+          const prompt = String(
+            (argumentsValue && argumentsValue.prompt) || "",
+          ).trim();
+          const size = String(
+            (argumentsValue && argumentsValue.size) || "1024x1024",
+          ).trim();
+          currentTitle = prompt.slice(0, 80) || "Generated image";
+          if (!prompt) {
+            status.textContent = "The image prompt is missing.";
+            status.classList.add("error");
+            resize();
+            return;
+          }
+          status.hidden = false;
+          status.textContent = "Loading generated image...";
+          status.classList.remove("error");
+          image.classList.remove("ready");
+          toolbar.classList.remove("ready");
+          resize();
+          try {
+            await delay(300);
+            const returnedImageId = imageIdFrom(resultValue);
+            const imageId =
+              returnedImageId || (await imageIdForRequest(prompt, size));
+            currentImageId = imageId;
+            currentDataUrl = await readImage(imageId);
+            image.alt = currentTitle;
+            image.onload = () => {
+              status.hidden = true;
+              image.classList.add("ready");
+              toolbar.classList.add("ready");
+              resize();
+            };
+            image.onerror = () => {
+              status.hidden = false;
+              status.textContent =
+                "The generated image could not be displayed.";
+              status.classList.add("error");
+              resize();
+            };
+            image.src = currentDataUrl;
+          } catch (error) {
+            status.hidden = false;
+            status.textContent = "The generated image could not be loaded.";
+            status.classList.add("error");
+            resize();
+          }
         }
-        if (typeof value === "object") {
-          if (typeof value.image_id === "string" && /^[0-9a-f]{64}$/.test(value.image_id)) return value.image_id;
-          for (const item of Object.values(value)) { const found = imageIdFrom(item, depth + 1); if (found) return found; }
-        }
-        return "";
-      }
-      async function render(argumentsValue, resultValue) {
-        const prompt = String(argumentsValue && argumentsValue.prompt || "").trim();
-        const size = String(argumentsValue && argumentsValue.size || "1024x1024").trim();
-        currentTitle = prompt.slice(0, 80) || "Generated image";
-        if (!prompt) { status.textContent = "The image prompt is missing."; status.classList.add("error"); resize(); return; }
-        status.hidden = false;
-        status.textContent = "Loading generated image...";
-        status.classList.remove("error");
-        image.classList.remove("ready");
-        toolbar.classList.remove("ready");
-        resize();
-        try {
-          await delay(300);
-          const returnedImageId = imageIdFrom(resultValue);
-          const imageId = returnedImageId || await imageIdForRequest(prompt, size);
-          currentDataUrl = await readImage(imageId);
-          image.alt = currentTitle;
-          image.onload = () => { status.hidden = true; image.classList.add("ready"); toolbar.classList.add("ready"); resize(); };
-          image.onerror = () => { status.hidden = false; status.textContent = "The generated image could not be displayed."; status.classList.add("error"); resize(); };
-          image.src = currentDataUrl;
-        } catch (error) { status.hidden = false; status.textContent = "The generated image could not be loaded."; status.classList.add("error"); resize(); }
-      }
-      window.addEventListener("message", (event) => {
-        const data = event.data;
-        if (data && data.id && pending.has(data.id)) {
-          const operation = pending.get(data.id);
-          pending.delete(data.id);
-          if (data.error) operation.reject(new Error(data.error.message || "Request failed")); else operation.resolve(data.result);
-          return;
-        }
-        if (data && data.method === "ui/notifications/tool-input") {
-          queuedArguments = data.params && data.params.arguments || {};
-          if (initialized) void render(queuedArguments, queuedResult);
-          return;
-        }
-        if (data && data.method === "ui/notifications/tool-result") {
-          queuedResult = data.params || {};
-          if (initialized && queuedArguments) void render(queuedArguments, queuedResult);
-        }
-      });
-      download.addEventListener("click", () => {
-        if (!currentDataUrl) return;
-        const link = document.createElement("a");
-        link.href = currentDataUrl;
-        link.download = (currentTitle || "generated-image").replace(/[\\/:*?"<>|]+/g, "-") + ".png";
-        link.click();
-      });
-      new ResizeObserver(resize).observe(document.body);
-      sendRequest("ui/initialize", { protocolVersion: "2025-11-21", appInfo: implementation, appCapabilities: {} }).then(() => {
-        initialized = true;
-        sendNotification("ui/notifications/initialized", {});
-        if (queuedArguments) void render(queuedArguments, queuedResult);
-      }).catch(() => { status.textContent = "The image viewer could not connect to Claude."; status.classList.add("error"); resize(); });
-    })();
-  </script>
-</body>
+        window.addEventListener("message", (event) => {
+          const data = event.data;
+          if (data && data.id && pending.has(data.id)) {
+            const operation = pending.get(data.id);
+            pending.delete(data.id);
+            if (data.error)
+              operation.reject(
+                new Error(data.error.message || "Request failed"),
+              );
+            else operation.resolve(data.result);
+            return;
+          }
+          if (data && data.method === "ui/notifications/tool-input") {
+            queuedArguments = (data.params && data.params.arguments) || {};
+            if (initialized) void render(queuedArguments, queuedResult);
+            return;
+          }
+          if (data && data.method === "ui/notifications/tool-result") {
+            queuedResult = data.params || {};
+            if (initialized && queuedArguments)
+              void render(queuedArguments, queuedResult);
+          }
+        });
+        save.addEventListener("click", async () => {
+          if (!currentImageId || save.disabled) return;
+          save.disabled = true;
+          save.textContent = "Saving...";
+          try {
+            const result = await sendRequest("tools/call", {
+              name: "save_image",
+              arguments: { image_id: currentImageId, title: currentTitle },
+            });
+            const savedPath =
+              result &&
+              result.structuredContent &&
+              result.structuredContent.saved_path;
+            save.textContent = "Saved";
+            if (savedPath) save.title = savedPath;
+          } catch (_) {
+            save.textContent = "Save failed";
+          } finally {
+            setTimeout(() => {
+              save.disabled = false;
+              save.textContent = "Save to Pictures";
+            }, 2200);
+          }
+        });
+        new ResizeObserver(resize).observe(document.body);
+        sendRequest("ui/initialize", {
+          protocolVersion: "2025-11-21",
+          appInfo: implementation,
+          appCapabilities: {},
+        })
+          .then(() => {
+            initialized = true;
+            sendNotification("ui/notifications/initialized", {});
+            if (queuedArguments) void render(queuedArguments, queuedResult);
+          })
+          .catch(() => {
+            status.textContent =
+              "The image viewer could not connect to Claude.";
+            status.classList.add("error");
+            resize();
+          });
+      })();
+    </script>
+  </body>
 </html>

@@ -9,6 +9,7 @@ const serverPath = path.resolve(process.argv[2])
 const widgetPath = path.join(path.dirname(serverPath), 'widget.html')
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'madapi-image-mcp-'))
 const cache = path.join(root, 'cache')
+const saved = path.join(root, 'Pictures')
 const imagePath = path.join(root, 'fixture.png')
 const responsePath = path.join(root, 'response.json')
 fs.writeFileSync(
@@ -21,6 +22,7 @@ const child = spawn(process.execPath, [serverPath], {
   env: {
     ...process.env,
     MADAPI_IMAGE_CACHE_DIR: cache,
+    MADAPI_IMAGE_SAVE_DIR: saved,
     MADAPI_IMAGE_TEST_FILE: imagePath,
     MADAPI_IMAGE_TEST_RESPONSE_JSON: responsePath,
   },
@@ -55,8 +57,10 @@ try {
   const initialized = await request('initialize', { protocolVersion: '2025-03-26' })
   assert.equal(initialized.serverInfo.name, 'madapi-image')
   const tools = await request('tools/list')
-  assert.equal(tools.tools.length, 1)
+  assert.equal(tools.tools.length, 2)
   assert.equal(tools.tools[0].name, 'generate_image')
+  assert.equal(tools.tools[1].name, 'save_image')
+  assert.deepEqual(tools.tools[1]._meta.ui.visibility, ['app'])
   assert.equal(tools.tools[0]._meta.ui.resourceUri, 'ui://madapi-image/image-viewer.html')
   assert.match(tools.tools[0].description, /Always use this tool/)
 
@@ -67,6 +71,9 @@ try {
   assert.match(widget.contents[0].text, /\.status\[hidden\]\s*\{\s*display:\s*none/)
   assert.match(widget.contents[0].text, /ui\/notifications\/tool-result/)
   assert.match(widget.contents[0].text, /image_id/)
+  assert.match(widget.contents[0].text, /tools\/call/)
+  assert.match(widget.contents[0].text, /save_image/)
+  assert.doesNotMatch(widget.contents[0].text, /link\.download/)
   assert.doesNotMatch(widget.contents[0].text, /!\[[^\]]*\]\(https?:/)
 
   const prompt = 'MCP protocol acceptance image'
@@ -82,6 +89,20 @@ try {
   assert.equal(image.contents[0].mimeType, 'image/png')
   assert.ok(Buffer.from(image.contents[0].blob, 'base64').length > 0)
   assert.ok(fs.readdirSync(cache).some((name) => name.endsWith('.png')))
+  const savedImage = await request('tools/call', {
+    name: 'save_image',
+    arguments: {
+      image_id: generated.structuredContent.image_id,
+      title: 'MCP protocol acceptance image',
+    },
+  })
+  assert.equal(savedImage.isError, false)
+  assert.equal(path.dirname(savedImage.structuredContent.saved_path), saved)
+  assert.ok(fs.existsSync(savedImage.structuredContent.saved_path))
+  assert.deepEqual(
+    fs.readFileSync(savedImage.structuredContent.saved_path),
+    fs.readFileSync(imagePath)
+  )
   console.log('Claude image MCP acceptance passed.')
 } finally {
   child.kill()

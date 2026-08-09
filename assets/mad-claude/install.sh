@@ -221,17 +221,21 @@ then
   exit 1
 fi
 
-if [ "$test_mode" != 1 ] && [ "${MADAPI_CLAUDE_SKIP_LANGUAGE:-0}" != 1 ]; then
+printf '%s\n' 'Claude Desktop MadAPI setup completed.'
+printf 'BACKUP=%s\n' "$backup_root"
+
+if [ "${MADAPI_CLAUDE_INSTALL_LANGUAGE:-0}" = 1 ] &&
+  [ "${MADAPI_CLAUDE_SKIP_LANGUAGE:-0}" != 1 ]; then
   language_installer=${MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH:-}
   if [ -z "$language_installer" ]; then
     language_installer="$stage_root/install-language.sh"
     curl -fsS --max-time 60 'https://mad.myddns.me/mad-claude/install-language.sh' -o "$language_installer"
   fi
-  /bin/sh "$language_installer"
+  if ! /bin/sh "$language_installer"; then
+    printf '%s\n' 'Optional Claude Chinese interface installation failed. MadAPI models and image tools remain installed.' >&2
+  fi
 fi
 
-printf '%s\n' 'Claude Desktop MadAPI setup completed.'
-printf 'BACKUP=%s\n' "$backup_root"
 if [ "$test_mode" != 1 ]; then
   /usr/bin/open -a Claude >/dev/null 2>&1 || printf '%s\n' 'Start Claude Desktop manually.'
 fi

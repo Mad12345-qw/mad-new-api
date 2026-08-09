@@ -26,9 +26,12 @@
         color: var(--color-text-primary, currentColor);
       }
       .viewer {
-        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
         width: min(100%, 760px);
-        min-height: 220px;
+        min-height: 58px;
         overflow: hidden;
         border: 1px solid
           var(--color-border-secondary, rgba(127, 127, 127, 0.25));
@@ -39,13 +42,11 @@
         );
       }
       .status {
-        display: grid;
-        min-height: 220px;
-        place-items: center;
-        padding: 24px;
+        min-width: 0;
+        padding: 14px 16px;
         color: var(--color-text-secondary, #666);
         font-size: 14px;
-        text-align: center;
+        text-align: left;
       }
       .status.error {
         color: var(--color-text-danger, #b42318);
@@ -53,23 +54,11 @@
       .status[hidden] {
         display: none;
       }
-      img {
-        display: none;
-        width: 100%;
-        height: auto;
-        max-height: 720px;
-        object-fit: contain;
-        background: #fff;
-      }
-      img.ready {
-        display: block;
-      }
       .toolbar {
         display: none;
-        position: absolute;
-        right: 10px;
-        bottom: 10px;
+        flex: 0 0 auto;
         gap: 8px;
+        padding: 10px 12px 10px 0;
       }
       .toolbar.ready {
         display: flex;
@@ -96,7 +85,6 @@
   <body>
     <main class="viewer" aria-live="polite">
       <div id="status" class="status">Preparing image...</div>
-      <img id="image" alt="Generated image" />
       <div id="toolbar" class="toolbar">
         <button id="save" type="button">Save to Pictures</button>
       </div>
@@ -105,18 +93,16 @@
       (() => {
         const implementation = {
           name: "madapi-image-viewer",
-          version: "2.1.0",
+          version: "2.2.0",
         };
         const pending = new Map();
         let nextId = 1;
         let initialized = false;
         let queuedArguments = null;
         let queuedResult = null;
-        let currentDataUrl = "";
         let currentImageId = "";
         let currentTitle = "Generated image";
         const status = document.getElementById("status");
-        const image = document.getElementById("image");
         const toolbar = document.getElementById("toolbar");
         const save = document.getElementById("save");
         function sendRequest(method, params) {
@@ -135,33 +121,12 @@
         function sendNotification(method, params) {
           window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
         }
-        function delay(milliseconds) {
-          return new Promise((resolve) => setTimeout(resolve, milliseconds));
-        }
         function resize() {
           const rect = document.body.getBoundingClientRect();
           sendNotification("ui/notifications/size-changed", {
             width: Math.ceil(rect.width),
             height: Math.ceil(rect.height),
           });
-        }
-        async function readImage(imageId) {
-          let lastError = null;
-          for (let attempt = 0; attempt < 24; attempt += 1) {
-            try {
-              const result = await sendRequest("resources/read", {
-                uri: "image://madapi/" + imageId,
-              });
-              const item = result && result.contents && result.contents[0];
-              if (!item || !item.blob || !item.mimeType)
-                throw new Error("Image resource is incomplete");
-              return "data:" + item.mimeType + ";base64," + item.blob;
-            } catch (error) {
-              lastError = error;
-              await delay(400);
-            }
-          }
-          throw lastError || new Error("Image resource is unavailable");
         }
         async function imageIdForRequest(prompt, size) {
           const bytes = new TextEncoder().encode(prompt + "\0" + size);
@@ -220,34 +185,19 @@
           status.hidden = false;
           status.textContent = "Loading generated image...";
           status.classList.remove("error");
-          image.classList.remove("ready");
           toolbar.classList.remove("ready");
           resize();
           try {
-            await delay(300);
             const returnedImageId = imageIdFrom(resultValue);
             const imageId =
               returnedImageId || (await imageIdForRequest(prompt, size));
             currentImageId = imageId;
-            currentDataUrl = await readImage(imageId);
-            image.alt = currentTitle;
-            image.onload = () => {
-              status.hidden = true;
-              image.classList.add("ready");
-              toolbar.classList.add("ready");
-              resize();
-            };
-            image.onerror = () => {
-              status.hidden = false;
-              status.textContent =
-                "The generated image could not be displayed.";
-              status.classList.add("error");
-              resize();
-            };
-            image.src = currentDataUrl;
+            status.textContent = "Image attached to the tool result.";
+            toolbar.classList.add("ready");
+            resize();
           } catch (error) {
             status.hidden = false;
-            status.textContent = "The generated image could not be loaded.";
+            status.textContent = "The image save action is unavailable.";
             status.classList.add("error");
             resize();
           }

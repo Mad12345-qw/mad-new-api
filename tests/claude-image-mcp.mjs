@@ -73,6 +73,7 @@ try {
   assert.match(widget.contents[0].text, /image_id/)
   assert.match(widget.contents[0].text, /tools\/call/)
   assert.match(widget.contents[0].text, /save_image/)
+  assert.doesNotMatch(widget.contents[0].text, /resources\/read/)
   assert.doesNotMatch(widget.contents[0].text, /link\.download/)
   assert.doesNotMatch(widget.contents[0].text, /!\[[^\]]*\]\(https?:/)
 
@@ -83,6 +84,9 @@ try {
   })
   assert.equal(generated.isError, false)
   assert.equal(generated.structuredContent.model, 'gpt-image-2')
+  const generatedImage = generated.content.find((item) => item.type === 'image')
+  assert.equal(generatedImage.mimeType, 'image/png')
+  assert.deepEqual(Buffer.from(generatedImage.data, 'base64'), fs.readFileSync(imagePath))
   const image = await request('resources/read', {
     uri: `image://madapi/${generated.structuredContent.image_id}`,
   })

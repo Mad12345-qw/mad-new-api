@@ -65,6 +65,7 @@ jobs:
         run: |
           node tests/claude-image-mcp.mjs assets/mad-claude/image-tool/server.mjs
           node tests/claude-image-cache-restart.mjs assets/mad-claude/image-tool
+          node tests/mad-home-default-theme.mjs site/mad-home/default-theme.js
 
   build:
     needs: agent-installer-acceptance

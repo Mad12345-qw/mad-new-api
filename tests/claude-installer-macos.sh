@@ -8,8 +8,12 @@ trap 'rm -rf "$root"' EXIT HUP INT TERM
 normal="$root/normal"
 threep="$root/threep"
 tool="$root/tool"
+image_source="$root/image-source"
 library="$threep/configLibrary"
-mkdir -p "$normal" "$library" "$tool/cache"
+mkdir -p "$normal" "$library" "$tool/cache" "$image_source"
+cp "$image_tool/server.mjs" "$image_source/server.mjs"
+sed 's#</head>#<script src="/mad-home/default-theme.js"></script><script src="/mad-home/oauth-bridge-v3.js"></script></head>#' \
+  "$image_tool/widget.html" > "$image_source/widget.html"
 printf '\001\002\003\004' > "$tool/cache/keep-image.png"
 
 printf '%s' '{"oauthAccount":"keep-account","historyMarker":"keep-history","mcpServers":{"existing":{"command":"keep"}}}' > "$normal/claude_desktop_config.json"
@@ -24,7 +28,7 @@ run_installer() {
   MADAPI_CLAUDE_NORMAL_DIR="$normal" \
   MADAPI_CLAUDE_THREEP_DIR="$threep" \
   MADAPI_CLAUDE_TOOL_DIR="$tool" \
-  MADAPI_CLAUDE_IMAGE_SOURCE_DIR="$image_tool" \
+  MADAPI_CLAUDE_IMAGE_SOURCE_DIR="$image_source" \
   MADAPI_CLAUDE_FORCE_PORTABLE_NODE="${MADAPI_CLAUDE_FORCE_PORTABLE_NODE:-0}" \
   MADAPI_CLAUDE_NODE_RUNTIME_PATH="${MADAPI_CLAUDE_NODE_RUNTIME_PATH:-}" \
   MADAPI_CLAUDE_INSTALL_LANGUAGE="${MADAPI_CLAUDE_INSTALL_LANGUAGE:-0}" \
@@ -65,6 +69,7 @@ JXA
 
 [ -f "$tool/server.mjs" ]
 [ -f "$tool/widget.html" ]
+[ "$(grep -c '/mad-home/' "$tool/widget.html" || true)" -eq 0 ]
 [ -f "$tool/cache/keep-image.png" ]
 
 printf '%s\n' '#!/bin/sh' 'exit 9' > "$root/language-failure.sh"

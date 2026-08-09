@@ -5,7 +5,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 const SERVER_NAME = "madapi-image";
-const SERVER_VERSION = "2.1.0";
+const SERVER_VERSION = "2.2.0";
 const MODEL = "gpt-image-2";
 const UI_URI = "ui://madapi-image/image-viewer.html";
 const IMAGE_URI_PREFIX = "image://madapi/";
@@ -361,8 +361,13 @@ async function generateImage(argumentsValue) {
         {
           type: "text",
           text:
-            "Image generation completed and the result is shown in the inline viewer." +
+            "Image generation completed. The image is attached directly to this tool result." +
             (revisedPrompt ? `\nRevised prompt: ${revisedPrompt}` : ""),
+        },
+        {
+          type: "image",
+          data: data.toString("base64"),
+          mimeType,
         },
       ],
       structuredContent: { model: MODEL, image_id: imageId, size, mimeType },
@@ -379,7 +384,7 @@ function toolDefinition() {
     name: "generate_image",
     title: "Generate image",
     description:
-      "Default image generation tool. Always use this tool when the user asks to generate, create, draw, design, render, or make an image. It calls MadAPI gpt-image-2 and renders the result directly in its inline viewer.",
+      "Default image generation tool. Always use this tool when the user asks to generate, create, draw, design, render, or make an image. It calls MadAPI gpt-image-2 and attaches the generated image directly to the tool result.",
     inputSchema: {
       type: "object",
       properties: {

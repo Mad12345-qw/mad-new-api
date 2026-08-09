@@ -26,86 +26,158 @@
         color: var(--color-text-primary, currentColor);
       }
       .viewer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
         width: min(100%, 760px);
-        min-height: 58px;
         overflow: hidden;
         border: 1px solid
           var(--color-border-secondary, rgba(127, 127, 127, 0.25));
         border-radius: 8px;
-        background: var(
-          --color-background-secondary,
-          rgba(127, 127, 127, 0.08)
-        );
+        background: var(--color-background-primary, transparent);
+      }
+      .preview {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 180px;
+        max-height: 560px;
+        overflow: hidden;
+        background: rgba(127, 127, 127, 0.08);
+      }
+      .preview[hidden] {
+        display: none;
+      }
+      .preview img {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        max-height: 560px;
+        object-fit: contain;
+      }
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 58px;
+        padding: 10px 12px 10px 16px;
+      }
+      .message {
+        min-width: 0;
       }
       .status {
-        min-width: 0;
-        padding: 14px 16px;
         color: var(--color-text-secondary, #666);
         font-size: 14px;
-        text-align: left;
       }
       .status.error {
         color: var(--color-text-danger, #b42318);
       }
-      .status[hidden] {
+      .path {
+        margin-top: 3px;
+        overflow-wrap: anywhere;
+        color: var(--color-text-tertiary, #777);
+        font-size: 12px;
+      }
+      .path[hidden],
+      .toolbar[hidden] {
         display: none;
       }
       .toolbar {
-        display: none;
-        flex: 0 0 auto;
-        gap: 8px;
-        padding: 10px 12px 10px 0;
-      }
-      .toolbar.ready {
         display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 8px;
       }
-      button {
-        border: 1px solid rgba(255, 255, 255, 0.45);
+      .action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 34px;
+        border: 1px solid rgba(127, 127, 127, 0.4);
         border-radius: 6px;
         padding: 7px 11px;
-        color: #fff;
-        background: rgba(20, 20, 20, 0.72);
+        color: var(--color-text-primary, currentColor);
+        background: var(--color-background-secondary, rgba(127, 127, 127, 0.1));
         font: inherit;
+        text-decoration: none;
         cursor: pointer;
-        backdrop-filter: blur(8px);
       }
-      button:hover {
-        background: rgba(20, 20, 20, 0.88);
+      .action:hover {
+        background: var(--color-background-tertiary, rgba(127, 127, 127, 0.18));
       }
-      button:disabled {
+      .action.primary {
+        border-color: #333;
+        color: #fff;
+        background: #333;
+      }
+      .action.primary:hover {
+        background: #111;
+      }
+      .action:disabled {
         cursor: wait;
         opacity: 0.7;
+      }
+      @media (max-width: 560px) {
+        .footer {
+          align-items: stretch;
+          flex-direction: column;
+        }
+        .toolbar {
+          width: 100%;
+        }
+        .action {
+          flex: 1 1 0;
+        }
       }
     </style>
   </head>
   <body>
     <main class="viewer" aria-live="polite">
-      <div id="status" class="status">Preparing image...</div>
-      <div id="toolbar" class="toolbar">
-        <button id="save" type="button">Save to Pictures</button>
+      <div id="preview" class="preview" hidden>
+        <img id="image" alt="Generated image" />
+      </div>
+      <div class="footer">
+        <div class="message">
+          <div id="status" class="status">Preparing image...</div>
+          <div id="path" class="path" hidden></div>
+        </div>
+        <div id="toolbar" class="toolbar" hidden>
+          <a id="open" class="action" href="#" target="_blank" rel="noopener">
+            Open original
+          </a>
+          <button id="download" class="action primary" type="button">
+            Download
+          </button>
+        </div>
       </div>
     </main>
     <script>
       (() => {
         const implementation = {
           name: "madapi-image-viewer",
-          version: "2.2.0",
+          version: "2.3.0",
         };
+        const allowedMimeTypes = new Set([
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+        ]);
         const pending = new Map();
         let nextId = 1;
         let initialized = false;
+        let hostCapabilities = {};
         let queuedArguments = null;
         let queuedResult = null;
-        let currentImageId = "";
-        let currentTitle = "Generated image";
+        let current = null;
+        const preview = document.getElementById("preview");
+        const image = document.getElementById("image");
         const status = document.getElementById("status");
+        const savedPath = document.getElementById("path");
         const toolbar = document.getElementById("toolbar");
-        const save = document.getElementById("save");
-        function sendRequest(method, params) {
+        const open = document.getElementById("open");
+        const download = document.getElementById("download");
+
+        function sendRequest(method, params, timeoutMs = 5000) {
           const id = nextId++;
           window.parent.postMessage(
             { jsonrpc: "2.0", id, method, params },
@@ -115,12 +187,14 @@
             pending.set(id, { resolve, reject });
             setTimeout(() => {
               if (pending.delete(id)) reject(new Error(method + " timed out"));
-            }, 10000);
+            }, timeoutMs);
           });
         }
+
         function sendNotification(method, params) {
           window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
         }
+
         function resize() {
           const rect = document.body.getBoundingClientRect();
           sendNotification("ui/notifications/size-changed", {
@@ -128,141 +202,167 @@
             height: Math.ceil(rect.height),
           });
         }
-        async function imageIdForRequest(prompt, size) {
-          const bytes = new TextEncoder().encode(prompt + "\0" + size);
-          const digest = await crypto.subtle.digest("SHA-256", bytes);
-          return Array.from(new Uint8Array(digest))
-            .map((value) => value.toString(16).padStart(2, "0"))
-            .join("");
+
+        function toolResult(value) {
+          if (!value || typeof value !== "object") return {};
+          if (value.structuredContent) return value;
+          if (value.result && typeof value.result === "object") return value.result;
+          return value;
         }
-        function imageIdFrom(value, depth = 0) {
-          if (depth > 8 || value == null) return "";
-          if (typeof value === "string") {
-            if (/^[0-9a-f]{64}$/.test(value)) return value;
-            if (value.length < 4096 && value.trim().startsWith("{")) {
-              try {
-                return imageIdFrom(JSON.parse(value), depth + 1);
-              } catch (_) {
-                return "";
-              }
-            }
-            return "";
-          }
-          if (Array.isArray(value)) {
-            for (const item of value) {
-              const found = imageIdFrom(item, depth + 1);
-              if (found) return found;
-            }
-            return "";
-          }
-          if (typeof value === "object") {
-            if (
-              typeof value.image_id === "string" &&
-              /^[0-9a-f]{64}$/.test(value.image_id)
-            )
-              return value.image_id;
-            for (const item of Object.values(value)) {
-              const found = imageIdFrom(item, depth + 1);
-              if (found) return found;
-            }
-          }
-          return "";
+
+        function httpUrl(value) {
+          const candidate = String(value || "").trim();
+          return /^https?:\/\//i.test(candidate) ? candidate : "";
         }
-        async function render(argumentsValue, resultValue) {
-          const prompt = String(
-            (argumentsValue && argumentsValue.prompt) || "",
-          ).trim();
-          const size = String(
-            (argumentsValue && argumentsValue.size) || "1024x1024",
-          ).trim();
-          currentTitle = prompt.slice(0, 80) || "Generated image";
-          if (!prompt) {
-            status.textContent = "The image prompt is missing.";
+
+        function render(argumentsValue, resultValue) {
+          const result = toolResult(resultValue);
+          const data = result.structuredContent || {};
+          const imageData = String(data.image_data || "").trim();
+          const mimeType = String(data.mime_type || "").trim().toLowerCase();
+          const sourceUrl = httpUrl(data.source_url);
+          const filename = String(data.filename || "MadAPI-image.png").trim();
+          const pathValue = String(data.saved_path || "").trim();
+          const saveError = String(data.save_error || "").trim();
+
+          preview.hidden = true;
+          toolbar.hidden = true;
+          savedPath.hidden = true;
+          status.classList.remove("error");
+
+          if (
+            !imageData ||
+            imageData.length > 30 * 1024 * 1024 ||
+            !allowedMimeTypes.has(mimeType)
+          ) {
+            status.textContent = "The generated image data is unavailable.";
             status.classList.add("error");
             resize();
             return;
           }
-          status.hidden = false;
-          status.textContent = "Loading generated image...";
-          status.classList.remove("error");
-          toolbar.classList.remove("ready");
-          resize();
-          try {
-            const returnedImageId = imageIdFrom(resultValue);
-            const imageId =
-              returnedImageId || (await imageIdForRequest(prompt, size));
-            currentImageId = imageId;
-            status.textContent = "Image attached to the tool result.";
-            toolbar.classList.add("ready");
-            resize();
-          } catch (error) {
-            status.hidden = false;
-            status.textContent = "The image save action is unavailable.";
-            status.classList.add("error");
-            resize();
+
+          current = {
+            data: imageData,
+            mimeType,
+            sourceUrl,
+            filename: filename || "MadAPI-image.png",
+          };
+          image.src = `data:${mimeType};base64,${imageData}`;
+          preview.hidden = false;
+          toolbar.hidden = false;
+          open.hidden = !sourceUrl;
+          open.href = sourceUrl || "#";
+
+          if (pathValue) {
+            status.textContent = "Image ready and saved automatically.";
+            savedPath.textContent = pathValue;
+            savedPath.hidden = false;
+          } else if (saveError) {
+            status.textContent =
+              "Image ready. Automatic saving was unavailable; use Download or Open original.";
+          } else {
+            status.textContent = "Image ready.";
           }
+          resize();
         }
+
+        function directDownload() {
+          if (!current) return;
+          const link = document.createElement("a");
+          link.href = `data:${current.mimeType};base64,${current.data}`;
+          link.download = current.filename;
+          link.hidden = true;
+          document.body.appendChild(link);
+          link.click();
+          setTimeout(() => link.remove(), 0);
+        }
+
+        open.addEventListener("click", (event) => {
+          if (!current || !current.sourceUrl) return;
+          if (hostCapabilities.openLinks) {
+            event.preventDefault();
+            void sendRequest("ui/open-link", { url: current.sourceUrl }).catch(() => {
+              window.open(current.sourceUrl, "_blank", "noopener");
+            });
+          }
+        });
+
+        download.addEventListener("click", async () => {
+          if (!current || download.disabled) return;
+          download.disabled = true;
+          download.textContent = "Downloading...";
+          try {
+            if (hostCapabilities.downloadFile) {
+              await sendRequest("ui/download-file", {
+                contents: [
+                  {
+                    type: "resource",
+                    resource: {
+                      uri: `image://madapi/${encodeURIComponent(current.filename)}`,
+                      mimeType: current.mimeType,
+                      blob: current.data,
+                    },
+                  },
+                ],
+              });
+            } else {
+              directDownload();
+            }
+            download.textContent = "Downloaded";
+          } catch (_) {
+            directDownload();
+            download.textContent = "Download requested";
+          } finally {
+            setTimeout(() => {
+              download.disabled = false;
+              download.textContent = "Download";
+            }, 2200);
+          }
+        });
+
+        image.addEventListener("load", resize);
+        image.addEventListener("error", () => {
+          status.textContent = "The generated image could not be displayed.";
+          status.classList.add("error");
+          resize();
+        });
         window.addEventListener("message", (event) => {
           const data = event.data;
           if (data && data.id && pending.has(data.id)) {
             const operation = pending.get(data.id);
             pending.delete(data.id);
-            if (data.error)
-              operation.reject(
-                new Error(data.error.message || "Request failed"),
-              );
-            else operation.resolve(data.result);
+            if (data.error) {
+              operation.reject(new Error(data.error.message || "Request failed"));
+            } else {
+              operation.resolve(data.result);
+            }
             return;
           }
           if (data && data.method === "ui/notifications/tool-input") {
             queuedArguments = (data.params && data.params.arguments) || {};
-            if (initialized) void render(queuedArguments, queuedResult);
+            if (initialized && queuedResult) render(queuedArguments, queuedResult);
             return;
           }
           if (data && data.method === "ui/notifications/tool-result") {
             queuedResult = data.params || {};
-            if (initialized && queuedArguments)
-              void render(queuedArguments, queuedResult);
+            if (initialized) render(queuedArguments || {}, queuedResult);
           }
         });
-        save.addEventListener("click", async () => {
-          if (!currentImageId || save.disabled) return;
-          save.disabled = true;
-          save.textContent = "Saving...";
-          try {
-            const result = await sendRequest("tools/call", {
-              name: "save_image",
-              arguments: { image_id: currentImageId, title: currentTitle },
-            });
-            const savedPath =
-              result &&
-              result.structuredContent &&
-              result.structuredContent.saved_path;
-            save.textContent = "Saved";
-            if (savedPath) save.title = savedPath;
-          } catch (_) {
-            save.textContent = "Save failed";
-          } finally {
-            setTimeout(() => {
-              save.disabled = false;
-              save.textContent = "Save to Pictures";
-            }, 2200);
-          }
-        });
+
         new ResizeObserver(resize).observe(document.body);
         sendRequest("ui/initialize", {
-          protocolVersion: "2025-11-21",
+          protocolVersion: "2026-01-26",
           appInfo: implementation,
           appCapabilities: {},
         })
-          .then(() => {
+          .then((result) => {
             initialized = true;
+            hostCapabilities = (result && result.hostCapabilities) || {};
             sendNotification("ui/notifications/initialized", {});
-            if (queuedArguments) void render(queuedArguments, queuedResult);
+            if (queuedResult) render(queuedArguments || {}, queuedResult);
           })
           .catch(() => {
-            status.textContent =
-              "The image viewer could not connect to Claude.";
+            status.textContent = "The image viewer could not connect to Claude.";
             status.classList.add("error");
             resize();
           });

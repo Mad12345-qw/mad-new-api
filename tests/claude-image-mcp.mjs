@@ -68,13 +68,15 @@ try {
   assert.equal(resources.resources[0].mimeType, 'text/html;profile=mcp-app')
   const widget = await request('resources/read', { uri: resources.resources[0].uri })
   assert.equal(widget.contents[0].mimeType, 'text/html;profile=mcp-app')
-  assert.match(widget.contents[0].text, /\.status\[hidden\]\s*\{\s*display:\s*none/)
+  assert.match(widget.contents[0].text, /id="preview"/)
   assert.match(widget.contents[0].text, /ui\/notifications\/tool-result/)
-  assert.match(widget.contents[0].text, /image_id/)
-  assert.match(widget.contents[0].text, /tools\/call/)
-  assert.match(widget.contents[0].text, /save_image/)
+  assert.match(widget.contents[0].text, /image_data/)
+  assert.match(widget.contents[0].text, /ui\/open-link/)
+  assert.match(widget.contents[0].text, /ui\/download-file/)
+  assert.match(widget.contents[0].text, /link\.download/)
   assert.doesNotMatch(widget.contents[0].text, /resources\/read/)
-  assert.doesNotMatch(widget.contents[0].text, /link\.download/)
+  assert.doesNotMatch(widget.contents[0].text, /tools\/call/)
+  assert.doesNotMatch(widget.contents[0].text, /save_image/)
   assert.doesNotMatch(widget.contents[0].text, /!\[[^\]]*\]\(https?:/)
 
   const prompt = 'MCP protocol acceptance image'
@@ -84,9 +86,19 @@ try {
   })
   assert.equal(generated.isError, false)
   assert.equal(generated.structuredContent.model, 'gpt-image-2')
-  const generatedImage = generated.content.find((item) => item.type === 'image')
-  assert.equal(generatedImage.mimeType, 'image/png')
-  assert.deepEqual(Buffer.from(generatedImage.data, 'base64'), fs.readFileSync(imagePath))
+  assert.equal(generated.content.some((item) => item.type === 'image'), false)
+  assert.equal(generated.structuredContent.mime_type, 'image/png')
+  assert.deepEqual(
+    Buffer.from(generated.structuredContent.image_data, 'base64'),
+    fs.readFileSync(imagePath)
+  )
+  assert.equal(generated.structuredContent.source_url, 'fixture://image')
+  assert.equal(path.dirname(generated.structuredContent.saved_path), saved)
+  assert.ok(fs.existsSync(generated.structuredContent.saved_path))
+  assert.deepEqual(
+    fs.readFileSync(generated.structuredContent.saved_path),
+    fs.readFileSync(imagePath)
+  )
   const image = await request('resources/read', {
     uri: `image://madapi/${generated.structuredContent.image_id}`,
   })

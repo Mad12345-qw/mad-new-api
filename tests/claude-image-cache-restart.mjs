@@ -9,6 +9,7 @@ const sourceDirectory = path.resolve(process.argv[2])
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'madapi-image-restart-'))
 const installedDirectory = path.join(root, 'installed')
 const cacheDirectory = path.join(installedDirectory, 'cache')
+const saveDirectory = path.join(root, 'Pictures')
 const imagePath = path.join(root, 'fixture.png')
 const responsePath = path.join(root, 'response.json')
 const serverPath = path.join(installedDirectory, 'server.mjs')
@@ -35,6 +36,7 @@ function startServer() {
     env: {
       ...process.env,
       MADAPI_IMAGE_CACHE_DIR: cacheDirectory,
+      MADAPI_IMAGE_SAVE_DIR: saveDirectory,
       MADAPI_IMAGE_TEST_FILE: imagePath,
       MADAPI_IMAGE_TEST_RESPONSE_JSON: responsePath,
     },

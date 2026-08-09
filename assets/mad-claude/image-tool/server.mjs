@@ -5,7 +5,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 const SERVER_NAME = "madapi-image";
-const SERVER_VERSION = "2.2.0";
+const SERVER_VERSION = "2.3.0";
 const MODEL = "gpt-image-2";
 const UI_URI = "ui://madapi-image/image-viewer.html";
 const IMAGE_URI_PREFIX = "image://madapi/";
@@ -356,21 +356,39 @@ async function generateImage(argumentsValue) {
     const { mimeType, data } = await downloadImage(imageUrl);
     cacheImage(imageId, mimeType, data);
     const revisedPrompt = String(first.revised_prompt || "").trim();
+    let savedPath = "";
+    let saveError = "";
+    try {
+      savedPath = saveImage({ image_id: imageId, title: prompt })
+        .structuredContent.saved_path;
+    } catch (error) {
+      saveError = error instanceof Error ? error.message : String(error);
+    }
+    const filename =
+      path.basename(savedPath) ||
+      `${safeFileStem(prompt)}-${imageId.slice(0, 8)}${extensionFor(mimeType)}`;
     return {
       content: [
         {
           type: "text",
           text:
-            "Image generation completed. The image is attached directly to this tool result." +
+            "Image generation completed. Use the image viewer to preview or download the original." +
+            (savedPath ? `\nSaved automatically to: ${savedPath}` : "") +
+            `\nOpen original: ${imageUrl}` +
             (revisedPrompt ? `\nRevised prompt: ${revisedPrompt}` : ""),
         },
-        {
-          type: "image",
-          data: data.toString("base64"),
-          mimeType,
-        },
       ],
-      structuredContent: { model: MODEL, image_id: imageId, size, mimeType },
+      structuredContent: {
+        model: MODEL,
+        image_id: imageId,
+        size,
+        mime_type: mimeType,
+        image_data: data.toString("base64"),
+        source_url: imageUrl,
+        filename,
+        saved_path: savedPath,
+        save_error: saveError,
+      },
       isError: false,
     };
   } catch (error) {
@@ -384,7 +402,7 @@ function toolDefinition() {
     name: "generate_image",
     title: "Generate image",
     description:
-      "Default image generation tool. Always use this tool when the user asks to generate, create, draw, design, render, or make an image. It calls MadAPI gpt-image-2 and attaches the generated image directly to the tool result.",
+      "Default image generation tool. Always use this tool when the user asks to generate, create, draw, design, render, or make an image. It calls MadAPI gpt-image-2, previews the result, and saves the original to Pictures when permitted.",
     inputSchema: {
       type: "object",
       properties: {

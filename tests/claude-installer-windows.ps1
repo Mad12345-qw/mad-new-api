@@ -32,6 +32,15 @@ $normalConfig = Join-Path $normal 'claude_desktop_config.json'
 $threePConfig = Join-Path $threep 'claude_desktop_config.json'
 $metaPath = Join-Path $library '_meta.json'
 $modelsPath = Join-Path $root 'models.json'
+$imageSource = Join-Path $root 'image-source'
+New-Item -ItemType Directory -Path $imageSource -Force | Out-Null
+[IO.File]::Copy((Join-Path $ImageToolPath 'server.mjs'), (Join-Path $imageSource 'server.mjs'), $true)
+$injectedWidget = [IO.File]::ReadAllText((Join-Path $ImageToolPath 'widget.html'), [Text.Encoding]::UTF8)
+$injectedWidget = $injectedWidget.Replace(
+    '</head>',
+    '<script src="/mad-home/default-theme.js"></script><script src="/mad-home/oauth-bridge-v3.js"></script></head>'
+)
+[IO.File]::WriteAllText((Join-Path $imageSource 'widget.html'), $injectedWidget, (New-Object Text.UTF8Encoding($false)))
 
 Write-Utf8Json $normalConfig ([pscustomobject]@{
     oauthAccount = 'keep-account'
@@ -81,7 +90,7 @@ try {
     $env:MADAPI_CLAUDE_NORMAL_DIR = $normal
     $env:MADAPI_CLAUDE_THREEP_DIR = $threep
     $env:MADAPI_CLAUDE_TOOL_DIR = $tool
-    $env:MADAPI_CLAUDE_IMAGE_SOURCE_DIR = $ImageToolPath
+    $env:MADAPI_CLAUDE_IMAGE_SOURCE_DIR = $imageSource
     & $InstallerPath | Out-Host
     & $InstallerPath | Out-Host
 
@@ -100,6 +109,7 @@ try {
     Assert-True ($threePResult.deploymentMode -eq '3p') '3p config is not in gateway mode.'
     Assert-True (Test-Path -LiteralPath (Join-Path $tool 'server.mjs')) 'Image MCP server was not installed.'
     Assert-True (Test-Path -LiteralPath (Join-Path $tool 'widget.html')) 'Image MCP widget was not installed.'
+    Assert-True (-not ([IO.File]::ReadAllText((Join-Path $tool 'widget.html')).Contains('/mad-home/'))) 'Injected site scripts were not removed from the image widget.'
     Assert-True (Test-Path -LiteralPath $cacheSentinel) 'Repeated install deleted the image cache.'
     $actualModels = @($gateway.inferenceModels | ForEach-Object { [string]$_.name })
     Assert-True (($actualModels -join '|') -eq ($expectedModels -join '|')) 'Gateway model list is incorrect.'

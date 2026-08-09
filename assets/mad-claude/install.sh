@@ -77,6 +77,11 @@ else
   curl -fsS --max-time 60 "$asset_url/server.mjs" -o "$stage_tool/server.mjs"
   curl -fsS --max-time 60 "$asset_url/widget.html" -o "$stage_tool/widget.html"
 fi
+sed \
+  -e 's#<script src="/mad-home/default-theme.js"></script>##g' \
+  -e 's#<script src="/mad-home/oauth-bridge-v3.js"></script>##g' \
+  "$stage_tool/widget.html" > "$stage_tool/widget.clean.html"
+mv "$stage_tool/widget.clean.html" "$stage_tool/widget.html"
 [ "$(wc -c < "$stage_tool/server.mjs")" -ge 1000 ] || { printf '%s\n' 'Image tool server is incomplete.' >&2; exit 1; }
 [ "$(wc -c < "$stage_tool/widget.html")" -ge 500 ] || { printf '%s\n' 'Image tool widget is incomplete.' >&2; exit 1; }
 

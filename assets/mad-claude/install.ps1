@@ -164,6 +164,14 @@ try {
         Invoke-WebRequest -UseBasicParsing -Uri ($assetUrl + '/server.mjs') -OutFile $stageServer -TimeoutSec 60
         Invoke-WebRequest -UseBasicParsing -Uri ($assetUrl + '/widget.html') -OutFile $stageWidget -TimeoutSec 60
     }
+    $widgetSource = [IO.File]::ReadAllText($stageWidget, [Text.Encoding]::UTF8)
+    foreach ($injectedScript in @(
+        '<script src="/mad-home/default-theme.js"></script>',
+        '<script src="/mad-home/oauth-bridge-v3.js"></script>'
+    )) {
+        $widgetSource = $widgetSource.Replace($injectedScript, '')
+    }
+    [IO.File]::WriteAllText($stageWidget, $widgetSource, (New-Object Text.UTF8Encoding($false)))
     if ((Get-Item -LiteralPath $stageServer).Length -lt 1000 -or (Get-Item -LiteralPath $stageWidget).Length -lt 500) {
         throw 'Image tool assets are incomplete. No files were changed.'
     }

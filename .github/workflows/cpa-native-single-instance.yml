@@ -85,6 +85,9 @@ jobs:
         with:
           go-version-file: cpa-source/go.mod
           cache-dependency-path: cpa-source/go.sum
+      - name: Build image media gateway
+        working-directory: server/image-media-gateway
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/image-media-gateway" .
       - name: Test deployment reconciliation
         run: |
           python3 -m unittest server/cpa-codex-native/test_compose_reconcile.py
@@ -98,4 +101,4 @@ jobs:
         run: |
           docker run --rm --entrypoint /bin/sh mad-cpa-codex:native-acceptance -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
       - name: Exercise native image routing
-        run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:native-acceptance
+        run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:native-acceptance --image-gateway "$GITHUB_WORKSPACE/image-media-gateway"

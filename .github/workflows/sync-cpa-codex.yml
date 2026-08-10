@@ -61,6 +61,11 @@ jobs:
           go-version-file: cpa-source/go.mod
           cache-dependency-path: cpa-source/go.sum
 
+      - name: Build image media gateway
+        if: steps.upstream.outputs.changed == 'true'
+        working-directory: server/image-media-gateway
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/image-media-gateway" .
+
       - name: Test native CPA packaging and deployment assets
         if: steps.upstream.outputs.changed == 'true'
         run: |
@@ -79,7 +84,7 @@ jobs:
 
       - name: Exercise native CPA runtime
         if: steps.upstream.outputs.changed == 'true'
-        run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:latest
+        run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:latest --image-gateway "$GITHUB_WORKSPACE/image-media-gateway"
 
       - name: Export CPA-only release assets
         if: steps.upstream.outputs.changed == 'true'

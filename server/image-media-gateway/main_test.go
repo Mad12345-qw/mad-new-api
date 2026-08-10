@@ -149,19 +149,23 @@ func TestGeminiAliasPreservesImageRouteForChannelSelection(t *testing.T) {
 
 func TestAdaptiveGeminiMultipartEditConvertsToReplayableChat(t *testing.T) {
 	models := map[string]string{
-		"gemini-3.1-flash-image-preview": "1K",
-		"gemini-3-pro-image-preview":     "1K",
+		"gemini-3.1-flash-image-preview":    "1K",
+		"gemini-3.1-flash-image-preview-4K": "4K",
+		"gemini-3-pro-image-preview":        "1K",
+		"gemini-3-pro-image-preview-4K":     "4K",
 	}
+	prompt := "preserve every reference detail"
+	reference := []byte("reference-image-exact-bytes")
 	for model, expectedSize := range models {
 		t.Run(model, func(t *testing.T) {
 			g := testGateway(t)
 			var body bytes.Buffer
 			writer := multipart.NewWriter(&body)
 			_ = writer.WriteField("model", model)
-			_ = writer.WriteField("prompt", "edit this image")
+			_ = writer.WriteField("prompt", prompt)
 			_ = writer.WriteField("response_format", "b64_json")
 			part, _ := writer.CreateFormFile("image[]", "input.png")
-			_, _ = part.Write([]byte("reference-image"))
+			_, _ = part.Write(reference)
 			_ = writer.Close()
 
 			req, _ := http.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
@@ -174,19 +178,42 @@ func TestAdaptiveGeminiMultipartEditConvertsToReplayableChat(t *testing.T) {
 			if prepared.UpstreamPath != "/v1/chat/completions" {
 				t.Fatalf("path = %q", prepared.UpstreamPath)
 			}
-			if prepared.ContentType != "application/json" || prepared.Capability != modelAdaptive {
+			if prepared.ContentType != "application/json" || (prepared.Capability != modelAdaptive && prepared.Capability != modelAdaptiveURL) {
 				t.Fatalf("content type = %q, capability = %q", prepared.ContentType, prepared.Capability)
 			}
 			raw, _ := io.ReadAll(prepared.Body)
-			var payload map[string]any
+			var payload struct {
+				Model    string `json:"model"`
+				Messages []struct {
+					Content []struct {
+						Type     string `json:"type"`
+						Text     string `json:"text"`
+						ImageURL struct {
+							URL string `json:"url"`
+						} `json:"image_url"`
+					} `json:"content"`
+				} `json:"messages"`
+			}
 			if err := json.Unmarshal(raw, &payload); err != nil {
 				t.Fatalf("invalid upstream JSON: %v: %s", err, raw)
 			}
-			if payload["model"] != model {
-				t.Fatalf("model = %v", payload["model"])
+			if payload.Model != model {
+				t.Fatalf("model = %v", payload.Model)
 			}
-			if !bytes.Contains(raw, []byte(`"type":"image_url"`)) || !bytes.Contains(raw, []byte("data:application/octet-stream;base64,")) {
+			if len(payload.Messages) != 1 || len(payload.Messages[0].Content) != 2 {
+				t.Fatalf("unexpected message content: %s", raw)
+			}
+			if payload.Messages[0].Content[0].Type != "text" || payload.Messages[0].Content[0].Text != prompt {
+				t.Fatalf("prompt was not preserved: %s", raw)
+			}
+			imageURL := payload.Messages[0].Content[1].ImageURL.URL
+			const prefix = "data:application/octet-stream;base64,"
+			if payload.Messages[0].Content[1].Type != "image_url" || !strings.HasPrefix(imageURL, prefix) {
 				t.Fatalf("reference image was not converted: %s", raw)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(imageURL, prefix))
+			if err != nil || !bytes.Equal(decoded, reference) {
+				t.Fatalf("reference image bytes changed: decode=%v got=%q", err, decoded)
 			}
 			if !bytes.Contains(raw, []byte(`"image_size":"`+expectedSize+`"`)) {
 				t.Fatalf("image size was not preserved: %s", raw)
@@ -195,7 +222,7 @@ func TestAdaptiveGeminiMultipartEditConvertsToReplayableChat(t *testing.T) {
 	}
 }
 
-func TestGemini4KMultipartEditPreservesWorkingChannelRoute(t *testing.T) {
+func TestGemini4KMultipartEditUsesReferenceSafeRoute(t *testing.T) {
 	for _, model := range []string{
 		"gemini-3.1-flash-image-preview-4K",
 		"gemini-3-pro-image-preview-4K",
@@ -218,18 +245,18 @@ func TestGemini4KMultipartEditPreservesWorkingChannelRoute(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer prepared.Cleanup()
-			if prepared.UpstreamPath != "/v1/images/edits" {
-				t.Fatalf("4K alias route changed to %q", prepared.UpstreamPath)
+			if prepared.UpstreamPath != "/v1/chat/completions" {
+				t.Fatalf("4K alias did not use the reference-safe route: %q", prepared.UpstreamPath)
 			}
-			if prepared.ContentType == "application/json" || prepared.Capability != modelAdaptiveURL {
-				t.Fatalf("4K alias was converted unexpectedly: content type = %q, capability = %q", prepared.ContentType, prepared.Capability)
+			if prepared.ContentType != "application/json" || prepared.Capability != modelAdaptiveURL {
+				t.Fatalf("4K alias conversion is invalid: content type = %q, capability = %q", prepared.ContentType, prepared.Capability)
 			}
 			upstream, _ := io.ReadAll(prepared.Body)
-			if !bytes.Contains(upstream, []byte(model)) || !bytes.Contains(upstream, []byte("reference-image")) {
-				t.Fatalf("4K multipart request was not preserved")
+			if !bytes.Contains(upstream, []byte(model)) || !bytes.Contains(upstream, []byte(`"image_size":"4K"`)) {
+				t.Fatalf("4K request metadata was not preserved: %s", upstream)
 			}
-			if !bytes.Contains(upstream, []byte("url")) || bytes.Contains(upstream, []byte("b64_json")) {
-				t.Fatalf("4K alias did not force an upstream URL response")
+			if !bytes.Contains(upstream, []byte(base64.StdEncoding.EncodeToString([]byte("reference-image")))) {
+				t.Fatalf("4K reference image was not preserved: %s", upstream)
 			}
 		})
 	}
@@ -239,11 +266,15 @@ func TestGemini4KPaidSuccessWithInlineImageReturnsURL(t *testing.T) {
 	rawImage := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, bytes.Repeat([]byte{4}, 1024)...)
 	encoded := base64.StdEncoding.EncodeToString(rawImage)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/images/edits" {
+		if r.URL.Path != "/v1/chat/completions" {
 			t.Fatalf("upstream path = %q", r.URL.Path)
 		}
+		body, _ := io.ReadAll(r.Body)
+		if !bytes.Contains(body, []byte(`"text":"edit this image"`)) || !bytes.Contains(body, []byte(base64.StdEncoding.EncodeToString([]byte("reference-image")))) {
+			t.Fatalf("upstream request lost prompt or reference image: %s", body)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"created":1,"data":[{"b64_json":%q}]}`, encoded)
+		_, _ = fmt.Fprintf(w, `{"choices":[{"message":{"content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,%s"}}]}}]}`, encoded)
 	}))
 	defer upstream.Close()
 
@@ -442,7 +473,7 @@ func TestImageModelMatrixConcurrentRouting(t *testing.T) {
 	}
 	cases := []routeCase{
 		{model: "gemini-3.1-flash-image-preview", path: "/v1/images/edits", multipart: true, wantPath: "/v1/chat/completions", capability: modelAdaptive},
-		{model: "gemini-3-pro-image-preview-4K", path: "/v1/images/edits", multipart: true, wantPath: "/v1/images/edits", capability: modelAdaptiveURL},
+		{model: "gemini-3-pro-image-preview-4K", path: "/v1/images/edits", multipart: true, wantPath: "/v1/chat/completions", capability: modelAdaptiveURL},
 		{model: "gpt-image-2-4k", path: "/v1/images/generations", wantPath: "/v1/images/generations", capability: modelURL},
 		{model: "grok-imagine-image-quality", path: "/v1/images/generations", wantPath: "/v1/images/generations", capability: modelURL},
 	}

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -29,6 +30,7 @@ func testGateway(t *testing.T) *gateway {
 		CacheTTL: 30 * time.Minute, CacheMaxBytes: 5 << 30,
 		GlobalConcurrency: 64, URLConcurrency: 48, InlineConcurrency: 12,
 		QueueTimeout: time.Second, UpstreamTimeout: time.Second, DownloadTimeout: time.Second,
+		IdempotencyTTL: 30 * time.Minute, IdempotencyMax: 1000, FallbackDedupTTL: 3 * time.Minute,
 	}
 	gateway, err := newGateway(cfg)
 	if err != nil {
@@ -269,6 +271,163 @@ func TestGemini4KPaidSuccessWithInlineImageReturnsURL(t *testing.T) {
 	}
 	if len(response.Data) != 1 || !strings.HasPrefix(response.Data[0].URL, "https://mad.test/image-cache/") {
 		t.Fatalf("response = %s", recorder.Body.String())
+	}
+}
+
+func TestIdempotencyStopsCrossEndpointRetryAfterUpstreamStarted(t *testing.T) {
+	var upstreamCalls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"not-an-image"}]}`))
+	}))
+	defer upstream.Close()
+
+	g := testGateway(t)
+	g.cfg.Upstream = upstream.URL
+	body := `{"model":"gemini-3-pro-image-preview-4K","prompt":"one paid task","response_format":"url"}`
+
+	first := httptest.NewRequest(http.MethodPost, "/v1/images/edits", strings.NewReader(body))
+	first.Header.Set("Content-Type", "application/json")
+	first.Header.Set("Authorization", "Bearer user-token")
+	firstRecorder := httptest.NewRecorder()
+	g.handleImage(firstRecorder, first)
+	if firstRecorder.Code != http.StatusBadGateway {
+		t.Fatalf("first status = %d, body = %s", firstRecorder.Code, firstRecorder.Body.String())
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+	second.Header.Set("Content-Type", "application/json")
+	second.Header.Set("Authorization", "Bearer user-token")
+	secondRecorder := httptest.NewRecorder()
+	g.handleImage(secondRecorder, second)
+	if secondRecorder.Code != http.StatusBadGateway {
+		t.Fatalf("replay status = %d, body = %s", secondRecorder.Code, secondRecorder.Body.String())
+	}
+	if secondRecorder.Header().Get("X-MadAPI-Idempotent-Replay") != "true" {
+		t.Fatal("cross-endpoint retry was not marked as an idempotent replay")
+	}
+	if upstreamCalls.Load() != 1 {
+		t.Fatalf("upstream calls = %d, want 1", upstreamCalls.Load())
+	}
+}
+
+func TestAutomaticFallbackGuardAllowsSeparateSameEndpointRequests(t *testing.T) {
+	var upstreamCalls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"not-an-image"}]}`))
+	}))
+	defer upstream.Close()
+
+	g := testGateway(t)
+	g.cfg.Upstream = upstream.URL
+	body := `{"model":"gemini-3-pro-image-preview-4K","prompt":"intentional repeat","response_format":"url"}`
+	for index := 0; index < 2; index++ {
+		request := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer user-token")
+		recorder := httptest.NewRecorder()
+		g.handleImage(recorder, request)
+		if recorder.Code != http.StatusBadGateway {
+			t.Fatalf("request %d status = %d, body = %s", index, recorder.Code, recorder.Body.String())
+		}
+	}
+	if upstreamCalls.Load() != 2 {
+		t.Fatalf("same-endpoint upstream calls = %d, want 2", upstreamCalls.Load())
+	}
+}
+
+func TestIdempotencyCoalescesConcurrentPaidImageRequests(t *testing.T) {
+	rawImage := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, bytes.Repeat([]byte{7}, 1024)...)
+	encoded := base64.StdEncoding.EncodeToString(rawImage)
+	var upstreamCalls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"data":[{"b64_json":%q}]}`, encoded)
+	}))
+	defer upstream.Close()
+
+	g := testGateway(t)
+	g.cfg.Upstream = upstream.URL
+	gatewayServer := httptest.NewServer(g.handler())
+	defer gatewayServer.Close()
+	body := `{"model":"gemini-3-pro-image-preview-4K","prompt":"one concurrent task","response_format":"url"}`
+	const requestCount = 160
+	var wait sync.WaitGroup
+	var replayed atomic.Int64
+	errors := make(chan error, requestCount)
+	for index := 0; index < requestCount; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			request, _ := http.NewRequest(http.MethodPost, gatewayServer.URL+"/v1/images/generations", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer user-token")
+			request.Header.Set("Idempotency-Key", "task-concurrent")
+			response, err := gatewayServer.Client().Do(request)
+			if err != nil {
+				errors <- err
+				return
+			}
+			responseBody, _ := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				errors <- fmt.Errorf("status = %d, body = %s", response.StatusCode, responseBody)
+				return
+			}
+			if response.Header.Get("X-MadAPI-Idempotent-Replay") == "true" {
+				replayed.Add(1)
+			}
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+	if upstreamCalls.Load() != 1 {
+		t.Fatalf("upstream calls = %d, want 1", upstreamCalls.Load())
+	}
+	if replayed.Load() != requestCount-1 {
+		t.Fatalf("replayed responses = %d, want %d", replayed.Load(), requestCount-1)
+	}
+}
+
+func TestIdempotencyRejectsBodyDriftWithoutCallingUpstreamAgain(t *testing.T) {
+	rawImage := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, bytes.Repeat([]byte{8}, 128)...)
+	encoded := base64.StdEncoding.EncodeToString(rawImage)
+	var upstreamCalls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"data":[{"b64_json":%q}]}`, encoded)
+	}))
+	defer upstream.Close()
+
+	g := testGateway(t)
+	g.cfg.Upstream = upstream.URL
+	request := func(prompt string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"model":"gemini-3-pro-image-preview-4K","prompt":%q,"response_format":"url"}`, prompt)
+		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer user-token")
+		req.Header.Set("Idempotency-Key", "task-conflict")
+		recorder := httptest.NewRecorder()
+		g.handleImage(recorder, req)
+		return recorder
+	}
+	if first := request("first prompt"); first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
+	}
+	if second := request("different prompt"); second.Code != http.StatusConflict {
+		t.Fatalf("conflict status = %d, body = %s", second.Code, second.Body.String())
+	}
+	if upstreamCalls.Load() != 1 {
+		t.Fatalf("upstream calls = %d, want 1", upstreamCalls.Load())
 	}
 }
 

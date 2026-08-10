@@ -10,7 +10,7 @@ index 9a20c997..8608b46a 100644
  	madAPICodexImageResponseMaxBytes = 48 << 20
  )
  
-@@ -118,26 +119,42 @@ func (s *Server) madAPINativeCodexImage(c *gin.Context) {
+@@ -118,26 +119,47 @@ func (s *Server) madAPINativeCodexImage(c *gin.Context) {
  		writeMadAPINativeError(c, http.StatusUnauthorized, errors.New("MadAPI bearer token is required for image generation"))
  		return
  	}
@@ -33,6 +33,10 @@ index 9a20c997..8608b46a 100644
 -	if err != nil {
 -		writeMadAPINativeError(c, http.StatusBadGateway, fmt.Errorf("MadAPI image request failed: %w", err))
 -		return
++	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
++	if idempotencyKey == "" {
++		idempotencyKey = fmt.Sprintf("codex-image-%d", time.Now().UnixNano())
++	}
 +
 +	var resp *http.Response
 +	var body []byte
@@ -44,6 +48,7 @@ index 9a20c997..8608b46a 100644
 +		}
 +		req.Header.Set("Authorization", authorization)
 +		req.Header.Set("Content-Type", "application/json")
++		req.Header.Set("Idempotency-Key", idempotencyKey)
 +		resp, err = madAPIInternalHTTPClient.Do(req)
 +		if err != nil {
 +			writeMadAPINativeError(c, http.StatusBadGateway, fmt.Errorf("MadAPI image request failed: %w", err))
@@ -73,7 +78,7 @@ diff --git a/internal/api/madapi_native_codex_test.go b/internal/api/madapi_nati
 index 0f3e7c47..8074e600 100644
 --- a/internal/api/madapi_native_codex_test.go
 +++ b/internal/api/madapi_native_codex_test.go
-@@ -238,6 +238,41 @@ func TestMadAPINativeCodexImageUsesMadAPIImageRouteAndEmitsResponsesOutput(t *te
+@@ -238,6 +238,46 @@ func TestMadAPINativeCodexImageUsesMadAPIImageRouteAndEmitsResponsesOutput(t *te
  	}
  }
  
@@ -81,8 +86,10 @@ index 0f3e7c47..8074e600 100644
 +	gin.SetMode(gin.TestMode)
 +	t.Setenv(madAPICodexDispatchTokenEnv, "dispatch-secret")
 +	paths := make([]string, 0, 2)
++	idempotencyKeys := make([]string, 0, 2)
 +	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 +		paths = append(paths, r.URL.Path)
++		idempotencyKeys = append(idempotencyKeys, r.Header.Get("Idempotency-Key"))
 +		w.Header().Set("Content-Type", "application/json")
 +		if r.URL.Path == "/v1/images/generations" {
 +			w.WriteHeader(http.StatusBadGateway)
@@ -109,6 +116,9 @@ index 0f3e7c47..8074e600 100644
 +	}
 +	if got := strings.Join(paths, ","); got != "/v1/images/generations,/v1/images/edits" {
 +		t.Fatalf("image endpoints = %q", got)
++	}
++	if idempotencyKeys[0] == "" || idempotencyKeys[0] != idempotencyKeys[1] {
++		t.Fatalf("fallback idempotency keys = %#v", idempotencyKeys)
 +	}
 +}
 +

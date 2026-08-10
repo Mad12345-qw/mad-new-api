@@ -788,7 +788,9 @@ func (g *gateway) buildGeminiMultipart(spooled *spooledMultipart) (*os.File, int
 	}
 	if imageSize != "1K" && imageSize != "2K" && imageSize != "4K" {
 		quality := strings.ToUpper(field("quality"))
-		if strings.HasSuffix(strings.ToLower(model), "-2k") || quality == "HD" || quality == "HIGH" {
+		if strings.HasSuffix(strings.ToLower(model), "-4k") {
+			imageSize = "4K"
+		} else if strings.HasSuffix(strings.ToLower(model), "-2k") || quality == "HD" || quality == "HIGH" {
 			imageSize = "2K"
 		} else {
 			imageSize = "1K"
@@ -872,7 +874,7 @@ func (g *gateway) prepareMultipart(r *http.Request, contentType string) (*prepar
 	var size int64
 	upstreamType := ""
 	upstreamPath := canonicalImagePath(r.URL.Path)
-	if capability == modelInline || (capability == modelAdaptive && isImageEditPath(r.URL.Path)) {
+	if capability == modelInline || ((capability == modelAdaptive || capability == modelAdaptiveURL) && isImageEditPath(r.URL.Path)) {
 		body, size, err = g.buildGeminiMultipart(spooled)
 		upstreamType = "application/json"
 		upstreamPath = chatPath(r.URL.Path)
@@ -1415,6 +1417,7 @@ func (g *gateway) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		g.failed.Add(1)
+		log.Printf("image response normalization failed: model=%q upstream_path=%q error=%v", prepared.Model, prepared.UpstreamPath, err)
 		reservationResult = &imageReservationResult{status: http.StatusBadGateway}
 		http.Error(w, "upstream image response is invalid", http.StatusBadGateway)
 		return

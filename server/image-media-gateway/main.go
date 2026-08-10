@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"mime"
@@ -66,21 +68,47 @@ type config struct {
 	QueueTimeout      time.Duration
 	UpstreamTimeout   time.Duration
 	DownloadTimeout   time.Duration
+	IdempotencyTTL    time.Duration
+	IdempotencyMax    int
+	FallbackDedupTTL  time.Duration
 }
 
 type gateway struct {
-	cfg         config
-	client      *http.Client
-	download    *http.Client
-	globalSlots chan struct{}
-	urlSlots    chan struct{}
-	inlineSlots chan struct{}
-	active      atomic.Int64
-	served      atomic.Int64
-	failed      atomic.Int64
-	cacheBytes  atomic.Int64
-	cleanupRun  atomic.Bool
-	cleanupMu   sync.Mutex
+	cfg           config
+	client        *http.Client
+	download      *http.Client
+	globalSlots   chan struct{}
+	urlSlots      chan struct{}
+	inlineSlots   chan struct{}
+	active        atomic.Int64
+	served        atomic.Int64
+	failed        atomic.Int64
+	cacheBytes    atomic.Int64
+	cleanupRun    atomic.Bool
+	cleanupMu     sync.Mutex
+	idempotencyMu sync.Mutex
+	idempotency   map[string]*imageReservation
+}
+
+type imageReservation struct {
+	fingerprint string
+	done        chan struct{}
+	createdAt   time.Time
+	expiresAt   time.Time
+	result      *imageReservationResult
+	path        string
+	automatic   bool
+}
+
+type imageReservationResult struct {
+	status       int
+	publicURL    string
+	clientFormat string
+}
+
+type hashingReadCloser struct {
+	io.Reader
+	io.Closer
 }
 
 type preparedRequest struct {
@@ -158,6 +186,9 @@ func loadConfig() config {
 		QueueTimeout:      time.Duration(envInt("QUEUE_TIMEOUT_SECONDS", 300)) * time.Second,
 		UpstreamTimeout:   time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS", 360)) * time.Second,
 		DownloadTimeout:   time.Duration(envInt("DOWNLOAD_TIMEOUT_SECONDS", 180)) * time.Second,
+		IdempotencyTTL:    time.Duration(envInt("IDEMPOTENCY_TTL_SECONDS", 1800)) * time.Second,
+		IdempotencyMax:    envInt("IDEMPOTENCY_MAX_ENTRIES", 10000),
+		FallbackDedupTTL:  time.Duration(envInt("FALLBACK_DEDUP_TTL_SECONDS", 180)) * time.Second,
 	}
 }
 
@@ -220,7 +251,153 @@ func newGateway(cfg config) (*gateway, error) {
 		globalSlots: make(chan struct{}, cfg.GlobalConcurrency),
 		urlSlots:    make(chan struct{}, cfg.URLConcurrency),
 		inlineSlots: make(chan struct{}, cfg.InlineConcurrency),
+		idempotency: make(map[string]*imageReservation),
 	}, nil
+}
+
+func requestCredentialScope(r *http.Request) string {
+	credential := strings.TrimSpace(r.Header.Get("Authorization")) + "\x00" + strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if credential == "\x00" {
+		return ""
+	}
+	scope := sha256.Sum256([]byte(credential))
+	return hex.EncodeToString(scope[:16])
+}
+
+func idempotencyKey(r *http.Request) (string, error) {
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" {
+		return "", nil
+	}
+	if len(key) > 255 {
+		return "", errors.New("Idempotency-Key must be at most 255 characters")
+	}
+	for _, value := range []byte(key) {
+		if value < 0x21 || value > 0x7e {
+			return "", errors.New("Idempotency-Key must contain visible ASCII characters only")
+		}
+	}
+	return requestCredentialScope(r) + ":" + key, nil
+}
+
+func automaticFallbackScope(r *http.Request, fingerprint string) string {
+	scope := requestCredentialScope(r)
+	if scope == "" {
+		return ""
+	}
+	switch canonicalImagePath(r.URL.Path) {
+	case "/v1/images/generations", "/pg/images/generations", "/v1/images/edits", "/pg/images/edits":
+		return scope + ":fallback:" + fingerprint
+	default:
+		return ""
+	}
+}
+
+func (g *gateway) cleanupIdempotencyLocked(now time.Time) {
+	for key, reservation := range g.idempotency {
+		if reservation.result != nil && !reservation.expiresAt.After(now) {
+			delete(g.idempotency, key)
+		}
+	}
+	for len(g.idempotency) >= g.cfg.IdempotencyMax {
+		oldestKey := ""
+		var oldest time.Time
+		for key, reservation := range g.idempotency {
+			if reservation.result == nil {
+				continue
+			}
+			if oldestKey == "" || reservation.createdAt.Before(oldest) {
+				oldestKey = key
+				oldest = reservation.createdAt
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(g.idempotency, oldestKey)
+	}
+}
+
+func (g *gateway) reserveImageRequest(ctx context.Context, scope, fingerprint, path string, automatic bool) (*imageReservation, bool, error) {
+	for {
+		g.idempotencyMu.Lock()
+		g.cleanupIdempotencyLocked(time.Now())
+		reservation := g.idempotency[scope]
+		if reservation == nil {
+			if len(g.idempotency) >= g.cfg.IdempotencyMax {
+				g.idempotencyMu.Unlock()
+				return nil, false, errors.New("image idempotency capacity is busy")
+			}
+			reservation = &imageReservation{fingerprint: fingerprint, done: make(chan struct{}), createdAt: time.Now(), path: path, automatic: automatic}
+			g.idempotency[scope] = reservation
+			g.idempotencyMu.Unlock()
+			return reservation, true, nil
+		}
+		if reservation.fingerprint != fingerprint {
+			g.idempotencyMu.Unlock()
+			return nil, false, errors.New("Idempotency-Key was already used with a different image request")
+		}
+		if reservation.automatic && reservation.path == path {
+			g.idempotencyMu.Unlock()
+			return nil, true, nil
+		}
+		if reservation.result != nil {
+			g.idempotencyMu.Unlock()
+			return reservation, false, nil
+		}
+		done := reservation.done
+		g.idempotencyMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		case <-done:
+		}
+	}
+}
+
+func (g *gateway) completeImageRequest(scope string, reservation *imageReservation, upstreamStarted bool, result *imageReservationResult) {
+	g.idempotencyMu.Lock()
+	defer g.idempotencyMu.Unlock()
+	if g.idempotency[scope] != reservation {
+		return
+	}
+	if !upstreamStarted {
+		delete(g.idempotency, scope)
+		close(reservation.done)
+		return
+	}
+	if result == nil {
+		result = &imageReservationResult{status: http.StatusBadGateway}
+	}
+	reservation.result = result
+	ttl := g.cfg.IdempotencyTTL
+	if reservation.automatic {
+		ttl = g.cfg.FallbackDedupTTL
+	}
+	reservation.expiresAt = time.Now().Add(ttl)
+	close(reservation.done)
+}
+
+func (g *gateway) replayImageRequest(w http.ResponseWriter, reservation *imageReservation) {
+	result := reservation.result
+	w.Header().Set("X-MadAPI-Idempotent-Replay", "true")
+	if result != nil && result.publicURL != "" {
+		if result.clientFormat == "b64_json" {
+			if err := g.writeBase64Response(w, result.publicURL); err != nil {
+				g.failed.Add(1)
+				return
+			}
+		} else {
+			g.writeURLResponse(w, []string{result.publicURL})
+		}
+		g.served.Add(1)
+		return
+	}
+	status := http.StatusBadGateway
+	if result != nil && result.status >= 400 {
+		status = result.status
+	}
+	http.Error(w, "image request already completed without a reusable result", status)
 }
 
 func capabilityFor(model string) string {
@@ -1124,6 +1301,13 @@ func (g *gateway) handleImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	scope, err := idempotencyKey(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var requestHash hash.Hash = sha256.New()
+	r.Body = &hashingReadCloser{Reader: io.TeeReader(r.Body, requestHash), Closer: r.Body}
 	prepared, err := g.prepare(r)
 	if err != nil {
 		g.failed.Add(1)
@@ -1131,6 +1315,38 @@ func (g *gateway) handleImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer prepared.Cleanup()
+	var reservation *imageReservation
+	var reservationResult *imageReservationResult
+	upstreamStarted := false
+	fingerprint := hex.EncodeToString(requestHash.Sum(nil))
+	automatic := false
+	if scope == "" {
+		scope = automaticFallbackScope(r, fingerprint)
+		automatic = scope != ""
+	}
+	if scope != "" {
+		var owner bool
+		reservation, owner, err = g.reserveImageRequest(r.Context(), scope, fingerprint, canonicalImagePath(r.URL.Path), automatic)
+		if err != nil {
+			status := http.StatusConflict
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				status = http.StatusRequestTimeout
+			} else if err.Error() == "image idempotency capacity is busy" {
+				status = http.StatusServiceUnavailable
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+		if !owner {
+			g.replayImageRequest(w, reservation)
+			return
+		}
+		if reservation != nil {
+			defer func() {
+				g.completeImageRequest(scope, reservation, upstreamStarted, reservationResult)
+			}()
+		}
+	}
 	slots := g.slotsForCapability(prepared.Capability)
 	release, err := acquire(r.Context(), g.cfg.QueueTimeout, g.globalSlots, slots)
 	if err != nil {
@@ -1154,15 +1370,18 @@ func (g *gateway) handleImage(w http.ResponseWriter, r *http.Request) {
 	req.ContentLength = prepared.ContentLength
 	copyRequestHeaders(req.Header, r.Header)
 	req.Header.Set("Content-Type", prepared.ContentType)
+	upstreamStarted = true
 	resp, err := g.client.Do(req)
 	if err != nil {
 		g.failed.Add(1)
+		reservationResult = &imageReservationResult{status: http.StatusBadGateway}
 		http.Error(w, "upstream request failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		g.failed.Add(1)
+		reservationResult = &imageReservationResult{status: resp.StatusCode}
 		copyResponseHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.CopyBuffer(w, io.LimitReader(resp.Body, g.cfg.MaxResponseBytes), make([]byte, 64<<10))
@@ -1171,6 +1390,7 @@ func (g *gateway) handleImage(w http.ResponseWriter, r *http.Request) {
 	path, _, err := g.spoolResponse(resp.Body)
 	if err != nil {
 		g.failed.Add(1)
+		reservationResult = &imageReservationResult{status: http.StatusBadGateway}
 		http.Error(w, "upstream image response is too large", http.StatusBadGateway)
 		return
 	}
@@ -1195,9 +1415,11 @@ func (g *gateway) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		g.failed.Add(1)
+		reservationResult = &imageReservationResult{status: http.StatusBadGateway}
 		http.Error(w, "upstream image response is invalid", http.StatusBadGateway)
 		return
 	}
+	reservationResult = &imageReservationResult{status: http.StatusOK, publicURL: publicURL, clientFormat: prepared.ClientFormat}
 	if prepared.ClientFormat == "b64_json" {
 		if err := g.writeBase64Response(w, publicURL); err != nil {
 			g.failed.Add(1)

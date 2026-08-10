@@ -23,6 +23,9 @@ Environment=INLINE_CONCURRENCY=1
 Environment=QUEUE_TIMEOUT_SECONDS=300
 Environment=UPSTREAM_TIMEOUT_SECONDS=360
 Environment=DOWNLOAD_TIMEOUT_SECONDS=180
+Environment=IDEMPOTENCY_TTL_SECONDS=1800
+Environment=IDEMPOTENCY_MAX_ENTRIES=10000
+Environment=FALLBACK_DEDUP_TTL_SECONDS=180
 Environment=GOMEMLIMIT=192MiB
 Environment=GOGC=50
 ExecStart=/opt/image-media-gateway/image-media-gateway

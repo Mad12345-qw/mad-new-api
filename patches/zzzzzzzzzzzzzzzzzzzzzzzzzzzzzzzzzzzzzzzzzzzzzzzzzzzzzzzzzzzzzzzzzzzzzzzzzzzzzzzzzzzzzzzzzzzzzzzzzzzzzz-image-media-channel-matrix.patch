@@ -2,11 +2,14 @@ diff --git a/controller/relay.go b/controller/relay.go
 index 3aa05c0d..8c712579 100644
 --- a/controller/relay.go
 +++ b/controller/relay.go
-@@ -331,6 +331,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
+@@ -331,6 +331,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
  	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
  		return false
  	}
 +	if c.Writer.Written() {
++		return false
++	}
++	if isAmbiguousPaidImageError(c, openaiErr) {
 +		return false
 +	}
  	if types.IsChannelError(openaiErr) {
@@ -22,10 +25,33 @@ index 3aa05c0d..8c712579 100644
  	code := openaiErr.StatusCode
  	if code >= 200 && code < 300 {
  		return false
-@@ -356,6 +362,34 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
+@@ -356,6 +362,57 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
  	return operation_setting.ShouldRetryByStatusCode(code)
  }
  
++func isPaidImageRequest(c *gin.Context) bool {
++	if c == nil || c.Request == nil {
++		return false
++	}
++	switch strings.ToLower(strings.TrimSpace(c.Request.URL.Path)) {
++	case "/v1/images/generations", "/images/generations", "/v1/images/edits", "/images/edits", "/v1/images/variations", "/images/variations":
++		return true
++	default:
++		return false
++	}
++}
++
++func isAmbiguousPaidImageError(c *gin.Context, openaiErr *types.NewAPIError) bool {
++	if !isPaidImageRequest(c) || openaiErr == nil {
++		return false
++	}
++	if openaiErr.GetErrorCode() == types.ErrorCodeBadResponseBody {
++		return true
++	}
++	code := openaiErr.StatusCode
++	return code == http.StatusRequestTimeout || code >= http.StatusInternalServerError
++}
++
 +func isRetryablePrecommitError(openaiErr *types.NewAPIError) bool {
 +	if openaiErr == nil {
 +		return false
@@ -62,20 +88,38 @@ new file mode 100644
 index 00000000..b9d4b636
 --- /dev/null
 +++ b/controller/relay_precommit_retry_test.go
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,56 @@
 +package controller
 +
 +import (
 +	"errors"
 +	"net/http"
++	"net/http/httptest"
 +	"testing"
 +
 +	"github.com/QuantumNous/new-api/types"
++	"github.com/gin-gonic/gin"
 +	"github.com/stretchr/testify/require"
 +)
 +
 +func retryError(status int, code types.ErrorCode, message string) *types.NewAPIError {
 +	return types.NewErrorWithStatusCode(errors.New(message), code, status)
++}
++
++func retryContext(path string) *gin.Context {
++	context, _ := gin.CreateTestContext(httptest.NewRecorder())
++	context.Request = httptest.NewRequest(http.MethodPost, path, nil)
++	return context
++}
++
++func TestAmbiguousPaidImageErrorsAreNotRetried(t *testing.T) {
++	context := retryContext("/v1/images/generations")
++	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusGatewayTimeout, 524} {
++		require.True(t, isAmbiguousPaidImageError(context, retryError(status, types.ErrorCodeBadResponseStatusCode, "ambiguous image result")))
++	}
++	require.True(t, isAmbiguousPaidImageError(context, retryError(http.StatusOK, types.ErrorCodeBadResponseBody, "paid success was malformed")))
++	require.False(t, isAmbiguousPaidImageError(context, retryError(http.StatusTooManyRequests, types.ErrorCodeBadResponseStatusCode, "not dispatched")))
++	require.False(t, isAmbiguousPaidImageError(retryContext("/v1/chat/completions"), retryError(http.StatusBadGateway, types.ErrorCodeBadResponseStatusCode, "chat retry")))
 +}
 +
 +func TestRetryablePrecommitErrors(t *testing.T) {

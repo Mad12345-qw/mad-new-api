@@ -165,7 +165,7 @@ index e0ab48e2..32786cf2 100644
  
  	"github.com/QuantumNous/new-api/dto"
  	"github.com/QuantumNous/new-api/relay/channel"
-@@ -23,6 +27,94 @@ import (
+@@ -23,6 +27,87 @@ import (
  type Adaptor struct {
  }
  
@@ -208,13 +208,6 @@ index e0ab48e2..32786cf2 100644
 +		case "HD", "HIGH":
 +			return "2K"
 +		}
-+	}
-+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
-+	if strings.HasSuffix(normalizedModel, "-4k") {
-+		return "4K"
-+	}
-+	if strings.HasSuffix(normalizedModel, "-2k") {
-+		return "2K"
 +	}
 +	return "1K"
 +}
@@ -336,8 +329,8 @@ index 00000000..7d7ec105
 +
 +func TestGeminiImagePreviewAliasDefaults(t *testing.T) {
 +	request := dto.ImageRequest{Prompt: "draw a test image"}
-+	require.Equal(t, "4K", geminiImageSize(request, "gemini-3.1-flash-image-preview-4K"))
-+	require.Equal(t, "4K", geminiImageSize(request, "gemini-3-pro-image-preview-4K"))
++	require.Equal(t, "1K", geminiImageSize(request, "gemini-3.1-flash-image-preview-4K"))
++	require.Equal(t, "1K", geminiImageSize(request, "gemini-3-pro-image-preview-4K"))
 +	require.Equal(t, "1K", geminiImageSize(request, "gemini-3.1-flash-image-preview"))
 +	require.Equal(t, "1K", geminiImageSize(request, "gemini-3-pro-image-preview"))
 +}

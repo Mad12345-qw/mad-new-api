@@ -147,12 +147,47 @@ func TestGeminiAliasPreservesImageRouteForChannelSelection(t *testing.T) {
 	}
 }
 
+func TestGeminiResolutionAliasesUseSameGenerationContractAsCanonicalModel(t *testing.T) {
+	g := testGateway(t)
+	models := []string{
+		"gemini-3.1-flash-image-preview",
+		"gemini-3.1-flash-image-preview-2K",
+		"gemini-3.1-flash-image-preview-4K",
+	}
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			body := fmt.Sprintf(`{"model":%q,"prompt":"same prompt","response_format":"b64_json","aspect_ratio":"16:9"}`, model)
+			req, _ := http.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			prepared, err := g.prepare(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prepared.Cleanup()
+			if prepared.Capability != modelAdaptive {
+				t.Fatalf("capability = %q", prepared.Capability)
+			}
+			if prepared.UpstreamPath != "/v1/images/generations" {
+				t.Fatalf("path = %q", prepared.UpstreamPath)
+			}
+			raw, _ := io.ReadAll(prepared.Body)
+			var payload map[string]any
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["model"] != model || payload["prompt"] != "same prompt" || payload["response_format"] != "b64_json" || payload["aspect_ratio"] != "16:9" {
+				t.Fatalf("generation contract changed: %s", raw)
+			}
+		})
+	}
+}
+
 func TestAdaptiveGeminiMultipartEditConvertsToReplayableChat(t *testing.T) {
 	models := map[string]string{
 		"gemini-3.1-flash-image-preview":    "1K",
-		"gemini-3.1-flash-image-preview-4K": "4K",
+		"gemini-3.1-flash-image-preview-4K": "1K",
 		"gemini-3-pro-image-preview":        "1K",
-		"gemini-3-pro-image-preview-4K":     "4K",
+		"gemini-3-pro-image-preview-4K":     "1K",
 	}
 	prompt := "preserve every reference detail"
 	reference := []byte("reference-image-exact-bytes")
@@ -178,7 +213,7 @@ func TestAdaptiveGeminiMultipartEditConvertsToReplayableChat(t *testing.T) {
 			if prepared.UpstreamPath != "/v1/chat/completions" {
 				t.Fatalf("path = %q", prepared.UpstreamPath)
 			}
-			if prepared.ContentType != "application/json" || (prepared.Capability != modelAdaptive && prepared.Capability != modelAdaptiveURL) {
+			if prepared.ContentType != "application/json" || prepared.Capability != modelAdaptive {
 				t.Fatalf("content type = %q, capability = %q", prepared.ContentType, prepared.Capability)
 			}
 			raw, _ := io.ReadAll(prepared.Body)
@@ -222,7 +257,7 @@ func TestAdaptiveGeminiMultipartEditConvertsToReplayableChat(t *testing.T) {
 	}
 }
 
-func TestGemini4KMultipartEditUsesReferenceSafeRoute(t *testing.T) {
+func TestGeminiRoutingAliasDoesNotOverrideImageSize(t *testing.T) {
 	for _, model := range []string{
 		"gemini-3.1-flash-image-preview-4K",
 		"gemini-3-pro-image-preview-4K",
@@ -248,12 +283,12 @@ func TestGemini4KMultipartEditUsesReferenceSafeRoute(t *testing.T) {
 			if prepared.UpstreamPath != "/v1/chat/completions" {
 				t.Fatalf("4K alias did not use the reference-safe route: %q", prepared.UpstreamPath)
 			}
-			if prepared.ContentType != "application/json" || prepared.Capability != modelAdaptiveURL {
+			if prepared.ContentType != "application/json" || prepared.Capability != modelAdaptive {
 				t.Fatalf("4K alias conversion is invalid: content type = %q, capability = %q", prepared.ContentType, prepared.Capability)
 			}
 			upstream, _ := io.ReadAll(prepared.Body)
-			if !bytes.Contains(upstream, []byte(model)) || !bytes.Contains(upstream, []byte(`"image_size":"4K"`)) {
-				t.Fatalf("4K request metadata was not preserved: %s", upstream)
+			if !bytes.Contains(upstream, []byte(model)) || !bytes.Contains(upstream, []byte(`"image_size":"1K"`)) {
+				t.Fatalf("routing alias changed request semantics: %s", upstream)
 			}
 			if !bytes.Contains(upstream, []byte(base64.StdEncoding.EncodeToString([]byte("reference-image")))) {
 				t.Fatalf("4K reference image was not preserved: %s", upstream)
@@ -473,7 +508,7 @@ func TestImageModelMatrixConcurrentRouting(t *testing.T) {
 	}
 	cases := []routeCase{
 		{model: "gemini-3.1-flash-image-preview", path: "/v1/images/edits", multipart: true, wantPath: "/v1/chat/completions", capability: modelAdaptive},
-		{model: "gemini-3-pro-image-preview-4K", path: "/v1/images/edits", multipart: true, wantPath: "/v1/chat/completions", capability: modelAdaptiveURL},
+		{model: "gemini-3-pro-image-preview-4K", path: "/v1/images/edits", multipart: true, wantPath: "/v1/chat/completions", capability: modelAdaptive},
 		{model: "gpt-image-2-4k", path: "/v1/images/generations", wantPath: "/v1/images/generations", capability: modelURL},
 		{model: "grok-imagine-image-quality", path: "/v1/images/generations", wantPath: "/v1/images/generations", capability: modelURL},
 	}

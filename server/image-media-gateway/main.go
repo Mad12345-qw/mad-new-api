@@ -34,7 +34,6 @@ const (
 	modelURL         = "url"
 	modelInline      = "inline"
 	modelAdaptive    = "adaptive"
-	modelAdaptiveURL = "adaptive-url"
 	partialFileTTL   = 10 * time.Minute
 )
 
@@ -45,10 +44,10 @@ var modelCapabilities = map[string]string{
 	"grok-imagine-image-quality":        modelURL,
 	"grok-imagine-image-pro":            modelURL,
 	"gemini-3.1-flash-image-preview":    modelAdaptive,
-	"gemini-3.1-flash-image-preview-4k": modelAdaptiveURL,
+	"gemini-3.1-flash-image-preview-4k": modelAdaptive,
 	"gemini-3.1-flash-image-preview-2k": modelAdaptive,
 	"gemini-3-pro-image-preview":        modelAdaptive,
-	"gemini-3-pro-image-preview-4k":     modelAdaptiveURL,
+	"gemini-3-pro-image-preview-4k":     modelAdaptive,
 }
 
 type config struct {
@@ -532,10 +531,6 @@ func imageSize(payload map[string]any) string {
 			return value
 		}
 	}
-	model := strings.ToLower(stringValue(payload["model"]))
-	if strings.HasSuffix(model, "-2k") {
-		return "2K"
-	}
 	return "1K"
 }
 
@@ -592,7 +587,7 @@ func (g *gateway) prepareJSON(r *http.Request) (*preparedRequest, error) {
 		clientFormat = "url"
 	}
 	upstreamPath := canonicalImagePath(r.URL.Path)
-	if capability == modelURL || capability == modelAdaptiveURL {
+	if capability == modelURL {
 		payload["response_format"] = "url"
 		raw, err = json.Marshal(payload)
 	} else if capability == modelInline {
@@ -788,9 +783,7 @@ func (g *gateway) buildGeminiMultipart(spooled *spooledMultipart) (*os.File, int
 	}
 	if imageSize != "1K" && imageSize != "2K" && imageSize != "4K" {
 		quality := strings.ToUpper(field("quality"))
-		if strings.HasSuffix(strings.ToLower(model), "-4k") {
-			imageSize = "4K"
-		} else if strings.HasSuffix(strings.ToLower(model), "-2k") || quality == "HD" || quality == "HIGH" {
+		if quality == "HD" || quality == "HIGH" {
 			imageSize = "2K"
 		} else {
 			imageSize = "1K"
@@ -874,12 +867,12 @@ func (g *gateway) prepareMultipart(r *http.Request, contentType string) (*prepar
 	var size int64
 	upstreamType := ""
 	upstreamPath := canonicalImagePath(r.URL.Path)
-	if capability == modelInline || ((capability == modelAdaptive || capability == modelAdaptiveURL) && isImageEditPath(r.URL.Path)) {
+	if capability == modelInline || (capability == modelAdaptive && isImageEditPath(r.URL.Path)) {
 		body, size, err = g.buildGeminiMultipart(spooled)
 		upstreamType = "application/json"
 		upstreamPath = chatPath(r.URL.Path)
 	} else {
-		body, size, upstreamType, err = g.rebuildMultipart(spooled, capability == modelURL || capability == modelAdaptiveURL)
+		body, size, upstreamType, err = g.rebuildMultipart(spooled, capability == modelURL)
 	}
 	if err != nil {
 		spooled.Cleanup()
@@ -1400,7 +1393,7 @@ func (g *gateway) handleImage(w http.ResponseWriter, r *http.Request) {
 	var publicURL string
 	if prepared.Capability == modelInline {
 		publicURL, err = g.extractInlineImage(path)
-	} else if prepared.Capability == modelAdaptive || prepared.Capability == modelAdaptiveURL {
+	} else if prepared.Capability == modelAdaptive {
 		payload, parseErr := parseURLResponse(path)
 		if parseErr == nil {
 			publicURL, err = g.cacheHTTPImage(r.Context(), payload.Data[0].URL)

@@ -117,6 +117,7 @@ jobs:
               *-codex-native-image-generation.patch|\
               *-codex-pro-model-aliases.patch|\
               *-image-media-channel-matrix.patch|\
+              *-unified-cpa-runtime.patch|\
               *-codex-auth-gate.patch)
                 continue
                 ;;
@@ -141,6 +142,7 @@ jobs:
           apply_deferred_patch codex-native-image-generation
           apply_deferred_patch codex-pro-model-aliases
           apply_deferred_patch image-media-channel-matrix
+          apply_deferred_patch unified-cpa-runtime
 
       - name: Apply CPA gateway auth endpoint
         run: |

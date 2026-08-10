@@ -90,6 +90,10 @@ jobs:
               printf 'Skipping full-production CPA auth patch: %s\n' "$name"
               continue
             fi
+            if [[ "$name" == *"-unified-cpa-runtime.patch" ]]; then
+              printf 'Skipping full-production CPA runtime patch: %s\n' "$name"
+              continue
+            fi
             if [[ "$name" =~ $excluded ]]; then
               printf 'Skipping old personalized patch: %s\n' "$name"
               continue

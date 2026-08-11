@@ -75,23 +75,13 @@ jobs:
           test ${#sha} -eq 40
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Check out pinned official CPA
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: router-for-me/CLIProxyAPI
-          ref: ${{ steps.cpa.outputs.sha }}
-          path: official-cpa
-          fetch-depth: 1
-
       - name: Verify source boundaries
         shell: bash
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C official-cpa rev-parse HEAD)" = "${{ steps.cpa.outputs.sha }}"
-          git -C official-cpa remote get-url origin \
-            | grep -Eq '^https://github.com/router-for-me/CLIProxyAPI(\.git)?$'
-          git -C official-cpa diff --quiet
-          git -C official-cpa diff --cached --quiet
+          test "$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git refs/tags/v7.2.128 | awk '{print $1}')" = "${{ steps.cpa.outputs.sha }}"
+          grep -Fq 'github.com/router-for-me/CLIProxyAPI/v7 v7.2.128' ops/cpa-official-gateway/go.mod
+          ! grep -Eq '^[[:space:]]*replace[[:space:]].*CLIProxyAPI' ops/cpa-official-gateway/go.mod
           test ! -d patches
           test ! -d guards
 
@@ -118,14 +108,14 @@ jobs:
           python3 -m unittest discover -s ops/disaster-recovery -p 'test_*.py'
           python3 -m unittest discover -s ops/mad-api-error-alert -p 'test_*.py'
           python3 -m py_compile ops/release/*.py ops/model-detector/*.py
-          token=$(printf 'ci-route-token' | sha256sum | awk '{print $1}')
-          TRUSTED_ROUTE_TOKEN="$token" ops/release/render-codex-route.sh \
-            http://127.0.0.1:3001 "$RUNNER_TEMP/codex-route.conf"
-          grep -Fq "$token" "$RUNNER_TEMP/codex-route.conf"
+          ops/release/render-codex-route.sh \
+            http://127.0.0.1:18317 \
+            http://127.0.0.1:3000 \
+            "$RUNNER_TEMP/codex-route.conf"
+          grep -Fq 'proxy_pass http://127.0.0.1:18317' "$RUNNER_TEMP/codex-route.conf"
+          grep -Fq 'proxy_pass http://127.0.0.1:3000' "$RUNNER_TEMP/codex-route.conf"
           grep -Fq 'location ^~ /codex/v1/' "$RUNNER_TEMP/codex-route.conf"
           grep -Fq 'location ^~ /v1/' "$RUNNER_TEMP/codex-route.conf"
-          printf 'disable-image-generation: "passthrough"\n' > "$RUNNER_TEMP/cpa-config.yaml"
-          ops/release/verify-cpa-config.sh "$RUNNER_TEMP/cpa-config.yaml"
 
       - name: Build MadAPI image directly from this repository
         shell: bash
@@ -134,18 +124,15 @@ jobs:
             --tag mad-new-api:latest \
             --tag "mad-new-api:${GITHUB_SHA}" .
 
-      - name: Build unmodified official CPA image
+      - name: Build official CPA gateway image
         shell: bash
         run: |
           docker build --pull \
-            --build-arg VERSION=v7.2.128 \
-            --build-arg COMMIT="${{ steps.cpa.outputs.sha }}" \
-            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --tag mad-cpa-codex:latest \
-            --tag "mad-cpa-codex:${{ steps.cpa.outputs.sha }}" \
-            official-cpa
-          docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest \
-            -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
+            --tag mad-cpa-official-gateway:latest \
+            --tag "mad-cpa-official-gateway:${GITHUB_SHA}" \
+            ops/cpa-official-gateway
+          docker run --rm --entrypoint /bin/sh mad-cpa-official-gateway:latest \
+            -c 'test -x /usr/local/bin/madapi-cpa-official-gateway'
 
       - name: Package release
         if: github.event_name != 'pull_request'
@@ -153,7 +140,7 @@ jobs:
         run: |
           mkdir -p release
           docker save mad-new-api:latest | gzip -1 > release/mad-new-api.tar.gz
-          docker save mad-cpa-codex:latest | gzip -1 > release/mad-cpa-codex.tar.gz
+          docker save mad-cpa-official-gateway:latest | gzip -1 > release/mad-cpa-official-gateway.tar.gz
           tar -C product/mad-home -czf release/mad-home.tar.gz .
           tar -czf release/madapi-release-tools.tar.gz \
             ops/release \
@@ -166,18 +153,18 @@ jobs:
             "release_format": 1,
             "madapi_commit": "${GITHUB_SHA}",
             "newapi_source": "Mad12345-qw/mad-new-api",
-            "cpa_source": "router-for-me/CLIProxyAPI",
+            "cpa_source": "router-for-me/CLIProxyAPI v7 embedded through the official Go module",
             "cpa_commit": "${{ steps.cpa.outputs.sha }}",
             "cpa_version": "v7.2.128",
-            "cpa_image_generation_mode": "passthrough",
+            "cpa_image_generation_mode": false,
             "newapi_image": "mad-new-api:latest",
-            "cpa_image": "mad-cpa-codex:latest"
+            "cpa_image": "mad-cpa-official-gateway:latest"
           }
           EOF
           cd release
           sha256sum \
             mad-new-api.tar.gz \
-            mad-cpa-codex.tar.gz \
+            mad-cpa-official-gateway.tar.gz \
             mad-home.tar.gz \
             madapi-release-tools.tar.gz \
             cpa-upstream-commit.txt \
@@ -193,4 +180,4 @@ jobs:
           gh release create build-latest release/* \
             --target "$GITHUB_SHA" \
             --title "MadAPI official CPA release" \
-            --notes "Built directly from this repository. Codex traffic uses an unmodified official CPA pinned in release-manifest.json; NewAPI remains the authentication, channel, billing, and logging boundary."
+            --notes "Built directly from this repository. CPA owns the complete Codex protocol path through the pinned official v7 module; NewAPI owns authentication, channel selection, billing, refunds, and logs."

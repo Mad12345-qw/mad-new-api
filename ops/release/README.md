@@ -5,39 +5,32 @@ relay behavior or CPA protocol behavior.
 
 ## Codex route boundary
 
-The public `/codex/v1` route and ordinary `/v1` route share one NewAPI instance
-and one billing database. NewAPI authenticates the user token first. A private
-ingress header then pins only `/codex/v1` to the `codex` channel group, whose
-channels point to an unmodified official CPA runtime. Ordinary `/v1` clears the
-header and keeps the token's normal channel group.
+The public `/codex/v1` route terminates at the official CPA gateway. CPA owns
+the complete Codex HTTP, SSE, WebSocket, session, tool, reasoning, compact, and
+image protocol path. The gateway calls private NewAPI control endpoints for
+token authentication, channel selection, pre-consumption, settlement, refunds,
+and logs. Ordinary `/v1` continues to terminate at NewAPI.
 
-The official CPA runtime must use:
+The embedded official CPA configuration uses:
 
 ```yaml
-disable-image-generation: "passthrough"
+disable-image-generation: false
 ```
 
-This keeps `/v1/images/generations` and `/v1/images/edits` enabled while leaving
-non-image Responses tool lists unchanged. Codex supplies the `image_gen`
-namespace, then its image tool calls the CPA Image API with `gpt-image-2`.
-Do not use `false` for this deployment: that official default injects the hosted
-`image_generation` tool into ordinary Responses requests. Validate the runtime
-configuration before every switch:
+This preserves the official CPA image behavior, including the built-in
+`image_generation` tool and the default `gpt-image-2` model. Do not replace it
+with a custom tool injector or compatibility bridge. A gateway unit test locks
+this value and runs before every release image build.
+
+Generate one private control token and set the same value as
+`MADAPI_CPA_CONTROL_TOKEN` in the NewAPI and CPA containers. The token never
+appears in the public Nginx configuration. NewAPI's private control routes must
+only be reachable from the CPA container network.
 
 ```sh
-ops/release/verify-cpa-config.sh /opt/madapi/runtime/cpa-config.yaml
-```
-
-Generate one random 64-character hexadecimal secret, set it as both
-`TRUSTED_ROUTE_TOKEN` in NewAPI and the input to `render-codex-route.sh`, and set
-`TRUSTED_ROUTE_GROUP=codex` in NewAPI. The rendered file contains the secret and
-must remain owner-readable only. Never expose or accept this header from a
-public client.
-
-```sh
-export TRUSTED_ROUTE_TOKEN="$(openssl rand -hex 32)"
 ops/release/render-codex-route.sh \
-  http://127.0.0.1:3001 \
+  http://127.0.0.1:18317 \
+  http://127.0.0.1:3000 \
   /etc/nginx/snippets/madapi-codex-route.conf
 ```
 
@@ -100,7 +93,6 @@ ops/release/capture-release.sh \
   new-api \
   /opt/madapi/source \
   /etc/nginx/sites-enabled/madapi.conf \
-  /opt/madapi/runtime/cpa-config.yaml \
   /opt/madapi/runtime/.env
 ```
 
@@ -118,7 +110,7 @@ ops/release/verify-postgres-snapshot.sh \
 Do not release unless all of these are true:
 
 - Candidate tests and real Codex client acceptance pass.
-- `verify-cpa-config.sh` confirms image generation mode is `passthrough`.
+- Gateway unit tests confirm official image generation remains enabled.
 - The production database clone starts successfully with both old and new app
   images and preserves key row counts.
 - Snapshot restore verification passes.

@@ -1,30 +1,19 @@
-name: Build Model Detector Edition
+name: Build model detector edition
 
 on:
   workflow_dispatch:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - 'README.md'
-      - 'assets/mad-codex/**'
-      - 'assets/mad-claude/**'
-      - 'guards/**'
-      - 'patches/*codex*.patch'
-      - 'server/cpa-codex/**'
-      - 'site/**'
-      - 'tests/codex-installer-*'
-      - 'tests/claude-*'
-      - 'patches/*agent-access*.patch'
-      - '.github/workflows/build-release.yml'
-      - '.github/workflows/publish-home.yml'
-      - '.github/workflows/sync-cpa-codex.yml'
+    paths:
+      - 'ops/model-detector/**'
+      - '.github/workflows/build-detector-release.yml'
 
 permissions:
   contents: write
 
 concurrency:
-  group: mad-new-api-detector-build
+  group: madapi-detector-release
   cancel-in-progress: false
 
 jobs:
@@ -33,195 +22,66 @@ jobs:
     timeout-minutes: 75
 
     steps:
-      - name: Check out detector build configuration
-        uses: actions/checkout@v4
+      - name: Check out MadAPI
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Check out pinned New API baseline
-        uses: actions/checkout@v4
-        with:
-          repository: QuantumNous/new-api
-          ref: 5a6c53d4966b2e34690ab49f3dd19be01c88fdbe
-          path: source
-          fetch-depth: 1
-
-      - name: Apply functional patches without old branding
-        shell: bash
-        run: |
-          excluded='^(home-iframe-header-scroll|mad-adforge-nav|mad-black-gold-avatar|mad-custom-model-icons|mad-email-verification|mad-ios-app-icons|mad-recharge-promotion|mad-subscription-layout|mad-telegram-announcement|mad-telegram-system-content|zzzzzzzzzzzzzzzzzzzzzzzz-paid-task-idempotency|zzzzzzzzzzzzzzzzzzzzzzzzz-codex-cpa-capabilities|zzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-search-sol-defaults|zzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-kimi-native-search|zzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-responses|zzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-channel-adaptors|zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-responses-websocket|zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-dynamic-model-catalog|zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-http-cpa-parity|zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-client-catalog|zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-cpa-sidecar-catalog|zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover|z+-codex-cockpit-eight)\.patch$'
-          for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
-            name=$(basename "$patch")
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-first-event-failover.patch" ]; then
-              printf 'Skipping CPA-only patch: %s\n' "$name"
-              continue
-            fi
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-protocol-routing.patch" ]; then
-              printf 'Skipping CPA-only patch: %s\n' "$name"
-              continue
-            fi
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-production-hardening.patch" ]; then
-              printf 'Skipping full-production Codex patch: %s\n' "$name"
-              continue
-            fi
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-capability-contract.patch" ]; then
-              printf 'Skipping full-production Codex patch: %s\n' "$name"
-              continue
-            fi
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-session-replay-contract.patch" ]; then
-              printf 'Skipping full-production Codex patch: %s\n' "$name"
-              continue
-            fi
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-native-image-generation.patch" ]; then
-              printf 'Skipping CPA-dependent Codex image patch: %s\n' "$name"
-              continue
-            fi
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-codex-pro-model-aliases.patch" ]; then
-              printf 'Skipping full-production Codex model alias patch: %s\n' "$name"
-              continue
-            fi
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-cpa-native-executor.patch" ]; then
-              printf 'Skipping CPA-only patch: %s\n' "$name"
-              continue
-            fi
-            if [ "$name" = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-cpa-front-catalog.patch" ]; then
-              printf 'Skipping CPA-only patch: %s\n' "$name"
-              continue
-            fi
-            if [[ "$name" == *"-codex-auth-gate.patch" ]]; then
-              printf 'Skipping full-production CPA auth patch: %s\n' "$name"
-              continue
-            fi
-            if [[ "$name" == *"-unified-cpa-runtime.patch" ]]; then
-              printf 'Skipping full-production CPA runtime patch: %s\n' "$name"
-              continue
-            fi
-            if [[ "$name" =~ $excluded ]]; then
-              printf 'Skipping old personalized patch: %s\n' "$name"
-              continue
-            fi
-            git -C source apply --check "$patch"
-            git -C source apply "$patch"
-          done
-          for patch in "$GITHUB_WORKSPACE"/detector-patches/*.patch; do
-            git -C source apply --check "$patch"
-            git -C source apply "$patch"
-          done
-
-      - name: Verify old brand assets are absent
-        shell: bash
-        run: |
-          test ! -e source/web/default/public/mad-avatar.png
-          ! grep -R -n -E 'AdForge|mad\.myddns\.me/adforge' source/web/default/src
-          grep -R -n '模型真伪检测' source/web/default/src/hooks/use-top-nav-links.ts
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: source/go.mod
-          cache-dependency-path: source/go.sum
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Install frontend dependencies
-        working-directory: source/web
-        run: bun install --frozen-lockfile
-
-      - name: Verify backend formatting
-        working-directory: source
-        shell: bash
-        run: |
-          files=(
-            controller/codex_compat.go
-            controller/codex_compat_test.go
-            controller/playground.go
-            middleware/distributor.go
-            middleware/playground_path.go
-            middleware/playground_path_test.go
-            relay/common/relay_info.go
-            relay/relay_task.go
-            relay/relay_task_billing_test.go
-            router/relay-router.go
-            service/quota.go
-            service/quota_audio_test.go
-          )
-          unformatted=$(gofmt -l "${files[@]}")
-          if [ -n "$unformatted" ]; then
-            printf 'Unformatted Go files:\n%s\n' "$unformatted"
-            exit 1
-          fi
-
-      - name: Test New API functional paths
-        working-directory: source
-        run: go test ./controller ./middleware ./relay/common ./relay ./router ./service
-
-      - name: Verify New API frontend
-        working-directory: source/web/default
-        run: |
-          bun run typecheck
-          ../node_modules/.bin/oxlint -c .oxlintrc.json src/features/playground src/hooks/use-top-nav-links.ts
-          bun run build
-
-      - name: Set up detector dependencies
-        run: python3 -m pip install -r server/model-detector/requirements.txt
-
-      - name: Test detector engine and compile service
+      - name: Test detector
         env:
           DETECTOR_MASTER_KEY: ci-test-master-key-not-for-production
           DETECTOR_ADMIN_TOKEN: ci-test-admin-token-not-for-production
           DETECTOR_DATA_DIR: ${{ runner.temp }}/detector-data
+        shell: bash
         run: |
-          python3 -m unittest discover -s server/model-detector -p 'test_*.py'
-          python3 -m compileall -q server/model-detector
-
-      - name: Validate detector inline JavaScript
-        run: |
+          python3 -m pip install -r ops/model-detector/requirements.txt
+          env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+            -u http_proxy -u https_proxy -u all_proxy \
+            python3 -m unittest discover -s ops/model-detector -p 'test_*.py'
+          python3 -m compileall -q ops/model-detector
           python3 - <<'PY'
           from pathlib import Path
-          html = Path('server/model-detector/ui/index.html').read_text(encoding='utf-8')
+          html = Path('ops/model-detector/ui/index.html').read_text(encoding='utf-8')
           script = html.rsplit('<script>', 1)[1].split('</script>', 1)[0]
           Path('/tmp/model-detector-ui.js').write_text(script, encoding='utf-8')
           PY
           node --check /tmp/model-detector-ui.js
 
-      - name: Test existing media compatibility service
-        run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
-
-      - name: Validate detector Compose configuration
+      - name: Validate detector Compose
         env:
-          PUBLIC_PORT: "3010"
+          PUBLIC_PORT: '3010'
           RELEASE_TAG: detector-latest
           NEW_API_SESSION_SECRET: ci-new-api-session-secret-not-for-production
-          DETECTOR_MASTER_KEY: ci-detector-master-key-not-for-production
-          DETECTOR_ADMIN_TOKEN: ci-detector-admin-token-not-for-production
-        run: docker compose -f server/model-detector/docker-compose.yml config >/dev/null
+          DETECTOR_MASTER_KEY: ci-test-master-key-not-for-production
+          DETECTOR_ADMIN_TOKEN: ci-test-admin-token-not-for-production
+        shell: bash
+        run: docker compose -f ops/model-detector/docker-compose.yml config >/dev/null
 
-      - name: Build release images
+      - name: Build release images from current source
+        shell: bash
         run: |
-          docker build --pull --tag mad-new-api-detector:detector-latest source
-          docker build --pull --tag mad-model-detector:detector-latest server/model-detector
+          docker build --pull --tag mad-new-api-detector:detector-latest .
+          docker build --pull --tag mad-model-detector:detector-latest ops/model-detector
 
-      - name: Export release bundle
+      - name: Export detector bundle
+        shell: bash
         run: |
           docker save mad-new-api-detector:detector-latest | gzip -1 > mad-new-api-detector.tar.gz
           docker save mad-model-detector:detector-latest | gzip -1 > mad-model-detector.tar.gz
-          cp server/model-detector/docker-compose.yml docker-compose.detector.yml
-          cp server/model-detector/nginx.conf nginx.detector.conf
-          cp server/model-detector/env.example detector.env.example
+          cp ops/model-detector/docker-compose.yml docker-compose.detector.yml
+          cp ops/model-detector/nginx.conf nginx.detector.conf
+          cp ops/model-detector/env.example detector.env.example
           sha256sum \
             mad-new-api-detector.tar.gz \
             mad-model-detector.tar.gz \
             docker-compose.detector.yml \
             nginx.detector.conf \
             detector.env.example > detector-release.sha256
-          git -C source rev-parse HEAD > upstream-commit.txt
           git rev-parse HEAD > detector-build-commit.txt
 
       - name: Publish detector release
         if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           gh release delete detector-latest --cleanup-tag --yes || true
           gh release create detector-latest \
@@ -231,7 +91,6 @@ jobs:
             nginx.detector.conf \
             detector.env.example \
             detector-release.sha256 \
-            upstream-commit.txt \
             detector-build-commit.txt \
-            --title "New API model detector edition" \
-            --notes "Pinned New API functional build with old brand assets excluded and the evidence-first model provenance detector bundled as an isolated service."
+            --title "MadAPI model detector edition" \
+            --notes "Built directly from the same MadAPI source tree with the detector isolated as a separate service."

@@ -1,29 +1,26 @@
-name: Build Mad New API
+name: Build MadAPI release
 
 on:
   workflow_dispatch:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - 'detector-patches/**'
-      - 'server/model-detector/**'
-      - '.github/workflows/build-detector-release.yml'
-  schedule:
-    - cron: '0 18 * * 0'
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 concurrency:
-  group: mad-new-api-build
+  group: madapi-release
   cancel-in-progress: false
 
 jobs:
-  agent-installer-acceptance:
-    name: Agent installer acceptance (${{ matrix.os }})
+  agent-installers:
+    name: Agent installers (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -32,381 +29,168 @@ jobs:
           - macos-latest
 
     steps:
-      - name: Check out build configuration
-        uses: actions/checkout@v4
+      - name: Check out MadAPI
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Run Windows PowerShell 5.1 acceptance
+      - name: Validate Windows installers
         if: runner.os == 'Windows'
         shell: powershell
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass `
             -File "$env:GITHUB_WORKSPACE\tests\codex-installer-windows.ps1" `
-            -InstallerPath "$env:GITHUB_WORKSPACE\assets\mad-codex\install.ps1"
-
+            -InstallerPath "$env:GITHUB_WORKSPACE\web\public\mad-codex\install.ps1"
           powershell.exe -NoProfile -ExecutionPolicy Bypass `
             -File "$env:GITHUB_WORKSPACE\tests\claude-installer-windows.ps1" `
-            -InstallerPath "$env:GITHUB_WORKSPACE\assets\mad-claude\install.ps1" `
-            -ImageToolPath "$env:GITHUB_WORKSPACE\assets\mad-claude\image-tool"
-
+            -InstallerPath "$env:GITHUB_WORKSPACE\web\public\mad-claude\install.ps1" `
+            -ImageToolPath "$env:GITHUB_WORKSPACE\web\public\mad-claude\image-tool"
           $env:MADAPI_CLAUDE_LANGUAGE_DRY_RUN = '1'
           powershell.exe -NoProfile -ExecutionPolicy Bypass `
-            -File "$env:GITHUB_WORKSPACE\assets\mad-claude\install-language.ps1"
+            -File "$env:GITHUB_WORKSPACE\web\public\mad-claude\install-language.ps1"
 
-      - name: Run macOS acceptance
+      - name: Validate macOS installers
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          /bin/sh tests/codex-installer-macos.sh assets/mad-codex/install.sh
-          /bin/sh tests/claude-installer-macos.sh assets/mad-claude/install.sh assets/mad-claude/image-tool
-          MADAPI_CLAUDE_LANGUAGE_DRY_RUN=1 /bin/sh assets/mad-claude/install-language.sh
-
-      - name: Run Claude image MCP acceptance
-        shell: bash
-        run: |
-          node tests/claude-image-mcp.mjs assets/mad-claude/image-tool/server.mjs
-          node tests/claude-image-widget.mjs assets/mad-claude/image-tool/widget.html
-          node tests/claude-image-cache-restart.mjs assets/mad-claude/image-tool
-          node tests/mad-home-default-theme.mjs site/mad-home/default-theme.js
+          /bin/sh tests/codex-installer-macos.sh web/public/mad-codex/install.sh
+          /bin/sh tests/claude-installer-macos.sh web/public/mad-claude/install.sh web/public/mad-claude/image-tool
+          MADAPI_CLAUDE_LANGUAGE_DRY_RUN=1 /bin/sh web/public/mad-claude/install-language.sh
 
   build:
-    needs: agent-installer-acceptance
+    name: Build immutable release
+    needs: agent-installers
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
 
     steps:
-      - name: Check out build configuration
-        uses: actions/checkout@v4
+      - name: Check out MadAPI
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
-      - name: Read pinned CPA commit
-        id: cpa-ref
+      - name: Resolve official CPA source
+        id: cpa
+        shell: bash
         run: |
-          sha=$(tr -d '[:space:]' < guards/cpa-upstream-commit.txt)
+          sha=$(tr -d '[:space:]' < ops/release/cpa-upstream-commit.txt)
           test ${#sha} -eq 40
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Check out upstream New API
-        uses: actions/checkout@v4
+      - name: Check out pinned official CPA
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: QuantumNous/new-api
-          ref: 5a6c53d4966b2e34690ab49f3dd19be01c88fdbe
-          path: source
+          repository: router-for-me/CLIProxyAPI
+          ref: ${{ steps.cpa.outputs.sha }}
+          path: official-cpa
           fetch-depth: 1
 
-      - name: Check out pinned CLIProxyAPI
-        uses: actions/checkout@v4
-        with:
-          repository: Mad12345-qw/CLIProxyAPI
-          ref: ${{ steps.cpa-ref.outputs.sha }}
-          path: cpa-source
-          fetch-depth: 1
-
-      - name: Install Mad API static assets
+      - name: Verify source boundaries
+        shell: bash
         run: |
-          mkdir -p source/web/default/public
-          cp -R "$GITHUB_WORKSPACE/assets/." source/web/default/public/
-
-      - name: Apply Mad API patches
-        run: |
-          for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
-            case "$(basename "$patch")" in
-              *-codex-first-event-failover.patch|\
-              *-codex-protocol-routing.patch|\
-              *-codex-production-hardening.patch|\
-              *-codex-capability-contract.patch|\
-              *-codex-session-replay-contract.patch|\
-              *-codex-native-image-generation.patch|\
-              *-codex-pro-model-aliases.patch|\
-              *-image-media-channel-matrix.patch|\
-              *-unified-cpa-runtime.patch|\
-              *-codex-auth-gate.patch)
-                continue
-                ;;
-            esac
-            git -C source apply --check "$patch"
-            git -C source apply "$patch"
-          done
-
-          apply_deferred_patch() {
-            suffix=$1
-            matches=("$GITHUB_WORKSPACE"/patches/*-"$suffix".patch)
-            test ${#matches[@]} -eq 1
-            test -f "${matches[0]}"
-            git -C source apply --check "${matches[0]}"
-            git -C source apply "${matches[0]}"
-          }
-          apply_deferred_patch codex-first-event-failover
-          apply_deferred_patch codex-protocol-routing
-          apply_deferred_patch codex-production-hardening
-          apply_deferred_patch codex-capability-contract
-          apply_deferred_patch codex-session-replay-contract
-          apply_deferred_patch codex-native-image-generation
-          apply_deferred_patch codex-pro-model-aliases
-          apply_deferred_patch image-media-channel-matrix
-          apply_deferred_patch unified-cpa-runtime
-
-      - name: Apply CPA gateway auth endpoint
-        run: |
-          auth_patch="$(find "$GITHUB_WORKSPACE/patches" -maxdepth 1 -name '*-codex-auth-gate.patch' -print -quit)"
-          test -n "$auth_patch"
-          git -C source apply --check "$auth_patch"
-          git -C source apply "$auth_patch"
-
-      - name: Verify protected Mad API customizations
-        working-directory: source
-        run: |
-          sha256sum relay/relay_task.go
-          sha256sum --check "$GITHUB_WORKSPACE/guards/customizations.sha256"
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: cpa-source/go.mod
-          cache-dependency-path: |
-            source/go.sum
-            cpa-source/go.sum
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C official-cpa rev-parse HEAD)" = "${{ steps.cpa.outputs.sha }}"
+          git -C official-cpa remote get-url origin \
+            | grep -Eq '^https://github.com/router-for-me/CLIProxyAPI(\.git)?$'
+          git -C official-cpa diff --quiet
+          git -C official-cpa diff --cached --quiet
+          test ! -d patches
+          test ! -d guards
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.14
+          bun-version: '1.3.14'
 
-      - name: Install frontend dependencies
-        working-directory: source/web
-        run: bun install --frozen-lockfile
-
-      - name: Verify billing patch formatting
-        working-directory: source
+      - name: Validate product assets
+        shell: bash
         run: |
-          gofmt -w \
-            constant/madapi_codex.go \
-            controller/codex_compat.go \
-            controller/relay.go \
-            model/ability.go \
-            model/channel_cache.go \
-            model/channel_retry_madapi_test.go \
-            relay/cpa_native_codex.go \
-            relay/cpa_native_codex_test.go \
-            service/channel_select.go \
-            service/channel_select_madapi_test.go
-          files=(
-            constant/madapi_codex.go
-            controller/codex_catalog.go
-            controller/codex_cockpit.go
-            controller/codex_compat.go
-            controller/codex_compat_test.go
-            controller/codex_websocket.go
-            controller/internal_codex_catalog.go
-            controller/internal_codex_catalog_test.go
-            controller/token.go
-            controller/token_test.go
-            controller/playground.go
-            controller/relay.go
-            controller/relay_precommit_retry_test.go
-            controller/relay_task_retry_test.go
-            middleware/distributor.go
-            middleware/distributor_madapi_test.go
-            middleware/playground_path.go
-            middleware/playground_path_test.go
-            relay/channel/claude/adaptor.go
-            relay/channel/claude/adaptor_responses_test.go
-            relay/channel/claude/responses_via_messages.go
-            relay/channel/deepseek/adaptor.go
-            relay/channel/deepseek/adaptor_responses_test.go
-            relay/channel/gemini/adaptor.go
-            relay/channel/gemini/adaptor_image_preview_test.go
-            relay/channel/moonshot/adaptor.go
-            relay/channel/moonshot/adaptor_test.go
-            relay/channel/openai/cpa_responses_via_chat.go
-            relay/channel/openai/cpa_responses_via_chat_test.go
-            relay/common/relay_info.go
-            relay/responses_handler.go
-            relay/responses_handler_madapi_test.go
-            model/main.go
-            model/ability.go
-            model/channel_cache.go
-            model/channel_retry_madapi_test.go
-            model/log.go
-            model/task.go
-            model/task_cas_test.go
-            model/task_request_reservation.go
-            model/task_request_reservation_test.go
-            model/token.go
-            relay/channel/api_request.go
-            relay/channel/zhipu_4v/relay-zhipu_v4.go
-            relay/channel/zhipu_4v/relay-zhipu_v4_test.go
-            relay/cpa_native_codex.go
-            relay/cpa_native_codex_test.go
-            relay/channel/task/xai/adaptor.go
-            relay/channel/task/xai/adaptor_test.go
-            relay/channel/task/xai/constants.go
-            relay/relay_adaptor.go
-            relay/relay_adaptor_test.go
-            relay/relay_task.go
-            relay/relay_task_billing_test.go
-            router/video-router.go
-            router/relay-router.go
-            service/quota.go
-            service/channel_select.go
-            service/channel_select_madapi_test.go
-            service/quota_audio_test.go
-            service/codexclientmodels/models.go
-            service/relayconvert/cpa_channel_compat.go
-            service/relayconvert/cpa_channel_compat_test.go
-            service/relayconvert/cpa_responses_compat.go
-            service/relayconvert/request_compat.go
-            service/relayconvert/internal/cpa_common/bytes.go
-            service/relayconvert/internal/cpa_responses/native.go
-            service/relayconvert/internal/cpa_responses/native_test.go
-            service/relayconvert/internal/cpa_responses/request.go
-            service/relayconvert/internal/cpa_responses/request_test.go
-            service/relayconvert/internal/cpa_responses/response.go
-            service/relayconvert/internal/cpa_responses/response_test.go
-            service/relayconvert/internal/cpa_responses/tools.go
-            service/relayconvert/internal/cpa_responses/websocket.go
-            service/relayconvert/internal/cpa_responses/websocket_test.go
-            service/relayconvert/internal/oai_chat/to_oai_responses_req.go
-            service/relayconvert/internal/oai_chat/to_oai_responses_req_test.go
-            service/relayconvert/internal/oai_responses/native_tools_test.go
-            service/relayconvert/internal/oai_responses/to_claude_messages_req.go
-            service/relayconvert/internal/oai_responses/to_gemini_chat_req.go
-          )
-          unformatted=$(gofmt -l "${files[@]}")
-          if [ -n "$unformatted" ]; then
-            printf 'Unformatted Go files:\n%s\n' "$unformatted"
-            gofmt -d "${files[@]}"
-            exit 1
-          fi
+          node tests/claude-image-mcp.mjs web/public/mad-claude/image-tool/server.mjs
+          node tests/claude-image-widget.mjs web/public/mad-claude/image-tool/widget.html
+          node tests/claude-image-cache-restart.mjs web/public/mad-claude/image-tool
+          node tests/mad-home-default-theme.mjs product/mad-home/default-theme.js
+          grep -Fq 'https://mad.myddns.me/codex/v1' product/mad-home/index.html
 
-      - name: Test backend paths
-        working-directory: source
-        run: go test ./common ./controller ./middleware ./model ./relay/common ./relay/channel/claude ./relay/channel/deepseek ./relay/channel/gemini ./relay/channel/moonshot ./relay/channel/openai ./relay/channel/task/xai ./relay/channel/zhipu_4v ./relay ./router ./service ./service/codexclientmodels ./service/relayconvert ./service/relayconvert/internal/cpa_common ./service/relayconvert/internal/cpa_responses ./service/relayconvert/internal/oai_chat ./service/relayconvert/internal/oai_responses
-
-      - name: Verify playground frontend
-        working-directory: source/web/default
+      - name: Validate operations tools
+        shell: bash
         run: |
-          bun test tests/codex-config.test.ts tests/claude-config.test.ts
-          bun run typecheck
-          ../node_modules/.bin/oxlint -c .oxlintrc.json src/features/playground
-          bun run build
+          for script in ops/release/*.sh ops/disaster-recovery/*.sh ops/docker-disk-guard/*.sh; do
+            bash -n "$script"
+          done
+          python3 -m unittest discover -s ops/disaster-recovery -p 'test_*.py'
+          python3 -m unittest discover -s ops/mad-api-error-alert -p 'test_*.py'
+          python3 -m py_compile ops/release/*.py ops/model-detector/*.py
+          token=$(printf 'ci-route-token' | sha256sum | awk '{print $1}')
+          TRUSTED_ROUTE_TOKEN="$token" ops/release/render-codex-route.sh \
+            http://127.0.0.1:3001 "$RUNNER_TEMP/codex-route.conf"
+          grep -Fq "$token" "$RUNNER_TEMP/codex-route.conf"
+          grep -Fq 'location ^~ /codex/v1/' "$RUNNER_TEMP/codex-route.conf"
+          grep -Fq 'location ^~ /v1/' "$RUNNER_TEMP/codex-route.conf"
+          printf 'disable-image-generation: "passthrough"\n' > "$RUNNER_TEMP/cpa-config.yaml"
+          ops/release/verify-cpa-config.sh "$RUNNER_TEMP/cpa-config.yaml"
 
-      - name: Test image response compatibility service
-        run: python3 -m unittest discover -s server/image-url-compat -p 'test_*.py'
-
-      - name: Test streaming image media gateway
-        working-directory: server/image-media-gateway
+      - name: Build MadAPI image directly from this repository
+        shell: bash
         run: |
-          go test ./...
-          go vet ./...
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/image-media-gateway" .
+          docker build --pull \
+            --tag mad-new-api:latest \
+            --tag "mad-new-api:${GITHUB_SHA}" .
 
-      - name: Test native CPA route reconciliation
-        run: python3 -m unittest server/cpa-codex-native/test_patch_nginx.py
-
-      - name: Test native CPA deployment reconciliation
-        run: python3 -m unittest server/cpa-codex-native/test_compose_reconcile.py
-
-      - name: Test disaster recovery tooling
-        run: python3 -m unittest discover -s server/disaster-recovery -p 'test_*.py'
-
-      - name: Verify CPA deployment scripts
+      - name: Build unmodified official CPA image
+        shell: bash
         run: |
-          sh -n server/new-api-autoupdate.sh
-          sh -n server/new-api-component-deploy.sh
-          sh -n server/cpa-codex-native/entrypoint.sh
-          sh -n server/cpa-codex-native/autodeploy.sh
-          sh -n server/disaster-recovery/install.sh
+          docker build --pull \
+            --build-arg VERSION=v7.2.128 \
+            --build-arg COMMIT="${{ steps.cpa.outputs.sha }}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --tag mad-cpa-codex:latest \
+            --tag "mad-cpa-codex:${{ steps.cpa.outputs.sha }}" \
+            official-cpa
+          docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest \
+            -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
 
-      - name: Build image
-        run: docker build --pull --tag mad-new-api:latest source
-
-      - name: Build native single-instance CPA image
-        run: docker build --pull --file server/cpa-codex-native/Dockerfile --tag mad-cpa-codex:latest .
-
-      - name: Verify selected-channel CPA runtime contents
-        run: docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
-
-      - name: Exercise selected-channel CPA runtime
-        run: python3 server/cpa-codex-native/test_runtime_acceptance.py --image mad-cpa-codex:latest --image-gateway "$GITHUB_WORKSPACE/image-media-gateway"
-
-      - name: Export image
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      - name: Package release
+        if: github.event_name != 'pull_request'
+        shell: bash
         run: |
-          docker save mad-new-api:latest | gzip -1 > mad-new-api.tar.gz
-          sha256sum mad-new-api.tar.gz > mad-new-api.tar.gz.sha256
-          docker save mad-cpa-codex:latest | gzip -1 > mad-cpa-codex.tar.gz
-          sha256sum mad-cpa-codex.tar.gz > mad-cpa-codex.tar.gz.sha256
-          tar -C site/mad-home -czf mad-home.tar.gz .
-          cp server/image-url-compat/service.py image-url-compat.py
-          cp server/image-url-compat/image-url-compat.service image-url-compat.service
-          cp server/image-url-compat/patch_nginx.py patch-image-compat-nginx.py
-          cp server/image-media-gateway/image-media-gateway.service image-media-gateway.service
-          cp server/new-api-autoupdate.sh new-api-autoupdate.sh
-          cp server/new-api-component-deploy.sh new-api-component-deploy.sh
-          cp server/mad-api-error-alert/mad-api-error-alert.py mad-api-error-alert.py
-          cp server/mad-api-error-alert/mad-api-error-alert.service mad-api-error-alert.service
-          cp server/mad-api-error-alert/mad-api-error-alert.timer mad-api-error-alert.timer
-          cp server/cpa-codex-native/autodeploy.sh cpa-codex-autodeploy.sh
-          cp server/cpa-codex-native/patch_nginx.py patch-cpa-codex-nginx.py
-          cp server/cpa-codex-native/compose_reconcile.py compose-cpa-codex.py
-          cp guards/cpa-upstream-commit.txt cpa-upstream-commit.txt
-          sha256sum mad-home.tar.gz > mad-home.tar.gz.sha256
-          sha256sum image-url-compat.py > image-url-compat.py.sha256
-          sha256sum image-url-compat.service > image-url-compat.service.sha256
-          sha256sum patch-image-compat-nginx.py > patch-image-compat-nginx.py.sha256
-          sha256sum image-media-gateway > image-media-gateway.sha256
-          sha256sum image-media-gateway.service > image-media-gateway.service.sha256
-          sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
-          sha256sum new-api-component-deploy.sh > new-api-component-deploy.sh.sha256
-          sha256sum mad-api-error-alert.py > mad-api-error-alert.py.sha256
-          sha256sum mad-api-error-alert.service > mad-api-error-alert.service.sha256
-          sha256sum mad-api-error-alert.timer > mad-api-error-alert.timer.sha256
-          sha256sum cpa-codex-autodeploy.sh > cpa-codex-autodeploy.sh.sha256
-          sha256sum patch-cpa-codex-nginx.py > patch-cpa-codex-nginx.py.sha256
-          sha256sum compose-cpa-codex.py > compose-cpa-codex.py.sha256
-          sha256sum cpa-upstream-commit.txt > cpa-upstream-commit.txt.sha256
-          git -C source rev-parse HEAD > upstream-commit.txt
+          mkdir -p release
+          docker save mad-new-api:latest | gzip -1 > release/mad-new-api.tar.gz
+          docker save mad-cpa-codex:latest | gzip -1 > release/mad-cpa-codex.tar.gz
+          tar -C product/mad-home -czf release/mad-home.tar.gz .
+          tar -czf release/madapi-release-tools.tar.gz \
+            ops/release \
+            ops/disaster-recovery \
+            ops/docker-disk-guard \
+            ops/mad-api-error-alert
+          cp ops/release/cpa-upstream-commit.txt release/cpa-upstream-commit.txt
+          cat > release/release-manifest.json <<EOF
+          {
+            "release_format": 1,
+            "madapi_commit": "${GITHUB_SHA}",
+            "newapi_source": "Mad12345-qw/mad-new-api",
+            "cpa_source": "router-for-me/CLIProxyAPI",
+            "cpa_commit": "${{ steps.cpa.outputs.sha }}",
+            "cpa_version": "v7.2.128",
+            "cpa_image_generation_mode": "passthrough",
+            "newapi_image": "mad-new-api:latest",
+            "cpa_image": "mad-cpa-codex:latest"
+          }
+          EOF
+          cd release
+          sha256sum \
+            mad-new-api.tar.gz \
+            mad-cpa-codex.tar.gz \
+            mad-home.tar.gz \
+            madapi-release-tools.tar.gz \
+            cpa-upstream-commit.txt \
+            release-manifest.json > SHA256SUMS
 
-      - name: Publish stable release
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      - name: Publish build-latest release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           gh release delete build-latest --cleanup-tag --yes || true
-          gh release create build-latest \
-            mad-new-api.tar.gz \
-            mad-new-api.tar.gz.sha256 \
-            mad-cpa-codex.tar.gz \
-            mad-cpa-codex.tar.gz.sha256 \
-            mad-home.tar.gz \
-            mad-home.tar.gz.sha256 \
-            image-url-compat.py \
-            image-url-compat.py.sha256 \
-            image-url-compat.service \
-            image-url-compat.service.sha256 \
-            patch-image-compat-nginx.py \
-            patch-image-compat-nginx.py.sha256 \
-            image-media-gateway \
-            image-media-gateway.sha256 \
-            image-media-gateway.service \
-            image-media-gateway.service.sha256 \
-            new-api-autoupdate.sh \
-            new-api-autoupdate.sh.sha256 \
-            new-api-component-deploy.sh \
-            new-api-component-deploy.sh.sha256 \
-            mad-api-error-alert.py \
-            mad-api-error-alert.py.sha256 \
-            mad-api-error-alert.service \
-            mad-api-error-alert.service.sha256 \
-            mad-api-error-alert.timer \
-            mad-api-error-alert.timer.sha256 \
-            cpa-codex-autodeploy.sh \
-            cpa-codex-autodeploy.sh.sha256 \
-            patch-cpa-codex-nginx.py \
-            patch-cpa-codex-nginx.py.sha256 \
-            compose-cpa-codex.py \
-            compose-cpa-codex.py.sha256 \
-            cpa-upstream-commit.txt \
-            cpa-upstream-commit.txt.sha256 \
-            upstream-commit.txt \
-            --title "Mad New API latest build" \
-            --notes "Automated build from the pinned upstream New API source with Mad API billing, branding, recharge, multi-model playground, and image response compatibility customizations."
+          gh release create build-latest release/* \
+            --target "$GITHUB_SHA" \
+            --title "MadAPI official CPA release" \
+            --notes "Built directly from this repository. Codex traffic uses an unmodified official CPA pinned in release-manifest.json; NewAPI remains the authentication, channel, billing, and logging boundary."

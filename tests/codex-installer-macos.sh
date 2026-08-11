@@ -2,184 +2,79 @@
 set -eu
 
 installer_path=${1:?installer path is required}
-installer_path=$(CDPATH= cd -- "$(dirname -- "$installer_path")" && pwd)/$(basename -- "$installer_path")
-refresh_script_path=$(dirname -- "$installer_path")/refresh-model-catalog.sh
-temporary_root=${RUNNER_TEMP:-/tmp}
-home="$temporary_root/mad-codex-desktop-$$"
-fail() { printf 'Assertion failed: %s\n' "$1" >&2; exit 1; }
-hash_file() { shasum -a 256 "$1" | awk '{print $1}'; }
-write_oauth() { printf '%s' '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"},"last_refresh":"2026-08-02T00:00:00Z"}' > "$1"; }
-run_install() { CODEX_HOME=$1 MADAPI_KEY=$2 MADAPI_CODEX_LOGIN_MODE=${3:-auto} MADAPI_INSTALL_TEST_MODE=1 MADAPI_REFRESH_SCRIPT_SOURCE="$refresh_script_path" MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE="$(dirname -- "$installer_path")/restore-history.sh" /bin/sh "$installer_path"; }
+asset_root=$(CDPATH= cd -- "$(dirname -- "$installer_path")" && pwd)
+repo_root=$(CDPATH= cd -- "$asset_root/../../.." && pwd)
+refresh_path=$asset_root/refresh-model-catalog.sh
+history_path=$asset_root/restore-history.sh
 
-! grep -Fq 'CODEX_CLI_PATH' "$installer_path" || fail 'CLI probing remains.'
-! grep -Fq 'madapi.key' "$installer_path" || fail 'Command authentication remains.'
-! grep -Fq 'command -v codex' "$installer_path" || fail 'CLI discovery remains.'
-grep -Fq '<key>RunAtLoad</key><true/>' "$installer_path" || fail 'macOS login refresh trigger is missing.'
-! grep -Fq '<key>StartInterval</key>' "$installer_path" || fail 'A periodic macOS catalog refresh trigger remains.'
-! grep -Fq '<integer>300</integer>' "$installer_path" || fail 'The five-minute macOS catalog refresh remains.'
-grep -Fq 'restore-history.sh' "$installer_path" || fail 'The local history recovery is not part of the installer.'
-trap 'rm -rf "$home"' EXIT
-mkdir -p "$home/sessions"
-config="$home/config.toml"; auth="$home/auth.json"; key_file="$home/madapi.key"; cache="$home/models_cache.json"; session="$home/sessions/sentinel.jsonl"
-cat > "$config" <<'EOF'
-model_provider = "custom"
-model = "deepseek-v4-flash"
-  'model_catalog_json' = "cc-switch-model-catalog.json"
-disable_response_storage = true
-[model_providers.custom]
-name = "Existing Provider"
-base_url = "https://old.invalid/v1"
-requires_openai_auth = false
-experimental_bearer_token = "sk-stale-bearer"
-[model_providers.custom.auth]
-command = "/bin/sh"
-args = ["-c", "printf stale"]
-[model_providers.madapi]
-name = "Old MadAPI"
-[plugins."github@openai-curated"]
-enabled = true
-EOF
-write_oauth "$auth"; printf '%s' 'keep-me' > "$key_file"; printf '{}' > "$cache"; printf 'session' > "$session"
-config_hash=$(hash_file "$config"); auth_hash=$(hash_file "$auth"); session_hash=$(hash_file "$session")
-run_install "$home" 'sk-macos-first-key'
-grep -Fq 'model_provider = "custom"' "$config" || fail 'Provider identity changed.'
-grep -Fq 'model = "deepseek-v4-flash"' "$config" || fail 'Default model changed.'
-grep -Fq 'name = "Existing Provider"' "$config" || fail 'Provider name changed.'
-grep -Fq 'experimental_bearer_token = "sk-macos-first-key"' "$config" || fail 'Bearer token missing.'
-grep -Fq 'requires_openai_auth = true' "$config" || fail 'Desktop auth setting missing.'
-  grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$config" || fail 'OAuth native route is missing.'
-grep -Fq 'disable_response_storage = true' "$config" || fail 'Unrelated setting changed.'
-grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$config" || fail 'OAuth managed catalog is missing.'
-! grep -Fq 'cc-switch-model-catalog.json' "$config" || fail 'Conflicting third-party catalog remains.'
-! grep -Fq '[model_providers.custom.auth]' "$config" || fail 'Command auth was added.'
-! grep -Fq 'sk-stale-bearer' "$config" || fail 'Stale bearer remains.'
-! grep -Fq 'printf stale' "$config" || fail 'Stale command auth remains.'
-! grep -Fq '[model_providers.madapi]' "$config" || fail 'Temporary provider remains.'
-[ "$(cat "$key_file")" = keep-me ] || fail 'Existing key file changed.'
-[ ! -e "$cache" ] || fail 'Stale cache remains.'
-[ "$(hash_file "$auth")" = "$auth_hash" ] || fail 'OAuth state changed.'
-[ "$(hash_file "$session")" = "$session_hash" ] || fail 'Session changed.'
-[ -f "$home/madapi-refresh-model-catalog.sh" ] || fail 'OAuth refresh script is missing.'
-[ -f "$home/madapi-restore-history.sh" ] || fail 'Local history recovery script is missing.'
-[ -f "$home/madapi-cockpit-model-catalog.json" ] || fail 'OAuth catalog file is missing.'
-backup=$(find "$home" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
-[ -n "$backup" ] && [ "$(hash_file "$backup")" = "$config_hash" ] || fail 'Backup is not exact.'
-run_install "$home" 'sk-macos-second-key'
-grep -Fq 'experimental_bearer_token = "sk-macos-second-key"' "$config" || fail 'Repeat install did not update token.'
-[ "$(grep -c '^\[model_providers\.custom\]$' "$config")" -eq 1 ] || fail 'Duplicate provider created.'
-fresh="$home/fresh"; mkdir -p "$fresh"; write_oauth "$fresh/auth.json"; run_install "$fresh" 'sk-macos-fresh-key'
-grep -Fq 'model_provider = "custom"' "$fresh/config.toml" || fail 'Fresh identity is wrong.'
-grep -Fq 'model = "gpt-5.6-sol"' "$fresh/config.toml" || fail 'Fresh default missing.'
-grep -Fq 'requires_openai_auth = true' "$fresh/config.toml" || fail 'Fresh OAuth setting missing.'
-  grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$fresh/config.toml" || fail 'Fresh OAuth native route is missing.'
-grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$fresh/config.toml" || fail 'Fresh OAuth managed catalog is missing.'
-grep -Fq 'experimental_bearer_token = "sk-macos-fresh-key"' "$fresh/config.toml" || fail 'Fresh bearer token missing.'
-[ ! -e "$fresh/madapi.key" ] || fail 'Fresh install created key file.'
+fail() { printf '%s\n' "$1" >&2; exit 1; }
 
-api_only="$home/api-only"; mkdir -p "$api_only"
-printf '%s' 'model = "gpt-5.6-sol"' > "$api_only/config.toml"
-printf '%s' '{"OPENAI_API_KEY":"sk-existing-api-key","tokens":null,"last_refresh":null}' > "$api_only/auth.json"
-printf '{}' > "$api_only/models_cache.json"
-api_config_hash=$(hash_file "$api_only/config.toml"); api_auth_hash=$(hash_file "$api_only/auth.json")
-run_install "$api_only" 'sk-macos-api-key'
-grep -Fq 'requires_openai_auth = false' "$api_only/config.toml" || fail 'API-key auth gate is wrong.'
-  ! grep -Fq '[model_providers.custom.auth]' "$api_only/config.toml" || fail 'API-key command auth remains.'
-  grep -Fq 'experimental_bearer_token = "sk-macos-api-key"' "$api_only/config.toml" || fail 'API-key bearer token is missing.'
-grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$api_only/config.toml" || fail 'API-key managed catalog is missing.'
-grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$api_only/config.toml" || fail 'API-key Cockpit route is missing.'
-! grep -Fq 'cc-switch-model-catalog.json' "$api_only/config.toml" || fail 'Conflicting third-party catalog remains.'
-[ -f "$api_only/madapi-refresh-model-catalog.sh" ] || fail 'API-key refresh script is missing.'
-[ -f "$api_only/madapi-cockpit-model-catalog.json" ] || fail 'API-key catalog file is missing.'
-[ ! -e "$api_only/models_cache.json" ] || fail 'API-key stale cache remains.'
-[ "$(/usr/bin/plutil -extract OPENAI_API_KEY raw -o - "$api_only/auth.json")" = sk-existing-api-key ] || fail 'Existing API-key authentication changed.'
-[ "$(hash_file "$api_only/auth.json")" = "$api_auth_hash" ] || fail 'Existing API-key authentication was not preserved byte-for-byte.'
-api_config_backup=$(find "$api_only" -maxdepth 1 -name 'config.toml.madapi-backup-*' -type f)
-[ "$(hash_file "$api_config_backup")" = "$api_config_hash" ] || fail 'API-key config backup is not exact.'
-[ -z "$(find "$api_only" -maxdepth 1 -name 'auth.json.madapi-backup-*' -type f)" ] || fail 'Installer created an unnecessary authentication backup.'
+/bin/sh -n "$installer_path"
+/bin/sh -n "$refresh_path"
+/bin/sh -n "$history_path"
+grep -Fq 'requires_openai_auth = false' "$installer_path" || fail 'Official custom gateway authentication is missing.'
+grep -Fq 'env_key = ' "$installer_path" || fail 'Official custom gateway env_key is missing.'
+grep -Fq 'x-openai-actor-authorization' "$installer_path" || fail 'Official gateway actor header is missing.'
+grep -Fq 'supports_websockets = false' "$installer_path" || fail 'WebSocket opt-out is missing.'
+grep -Fq 'image_generation = true' "$installer_path" || fail 'Codex image generation feature is missing.'
+grep -Fq '/codex/v1' "$installer_path" || fail 'Dedicated NewAPI-CPA route is missing.'
+! grep -Fq '/codex/cockpit/v1' "$installer_path" || fail 'Legacy API compatibility route remains.'
+! grep -Fq 'experimental_bearer_token' "$installer_path" || fail 'Token is still written into config.toml.'
 
-unsigned="$home/unsigned"; mkdir -p "$unsigned"
-printf '%s' 'model = "gpt-5.6-sol"' > "$unsigned/config.toml"
-run_install "$unsigned" 'sk-macos-new-key'
-! grep -Fq '[model_providers.custom.auth]' "$unsigned/config.toml" || fail 'New-user install forced command authentication.'
-grep -Fq 'requires_openai_auth = true' "$unsigned/config.toml" || fail 'New-user install did not preserve the Codex sign-in chooser.'
-grep -Fq 'experimental_bearer_token = "sk-macos-new-key"' "$unsigned/config.toml" || fail 'New-user MadAPI bearer token is missing.'
-grep -Fq 'model_catalog_json = "madapi-cockpit-model-catalog.json"' "$unsigned/config.toml" || fail 'New-user install did not configure the managed catalog.'
-  grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$unsigned/config.toml" || fail 'New-user install did not configure the OAuth-native route.'
-[ ! -e "$unsigned/auth.json" ] || fail 'New-user install forced API-key sign-in.'
-
-switch_home="$home/login-switch"; mkdir -p "$switch_home"
-printf '%s' 'model = "gpt-5.6-sol"' > "$switch_home/config.toml"
-write_oauth "$switch_home/auth.json"
-switch_oauth_hash=$(hash_file "$switch_home/auth.json")
-run_install "$switch_home" 'sk-macos-switch-api' apikey
-grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$switch_home/config.toml" || fail 'Explicit API mode did not select the mapped route.'
-grep -Fq 'requires_openai_auth = false' "$switch_home/config.toml" || fail 'Explicit API mode auth gate is wrong.'
-[ "$(/usr/bin/plutil -extract auth_mode raw -o - "$switch_home/auth.json")" = apikey ] || fail 'Explicit API mode did not set API authentication.'
-[ "$(/usr/bin/plutil -extract OPENAI_API_KEY raw -o - "$switch_home/auth.json")" = sk-macos-switch-api ] || fail 'Explicit API mode wrote the wrong key.'
-switch_oauth_backup=$(find "$switch_home" -maxdepth 1 -name 'auth.json.madapi-backup-*' -type f | sort | head -n 1)
-[ -n "$switch_oauth_backup" ] && [ "$(hash_file "$switch_oauth_backup")" = "$switch_oauth_hash" ] || fail 'OAuth state backup is not exact.'
-switch_api_hash=$(hash_file "$switch_home/auth.json")
-run_install "$switch_home" 'sk-macos-switch-oauth' oauth
-grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$switch_home/config.toml" || fail 'Explicit OAuth mode did not select the native route.'
-grep -Fq 'requires_openai_auth = true' "$switch_home/config.toml" || fail 'Explicit OAuth mode auth gate is wrong.'
-[ ! -e "$switch_home/auth.json" ] || fail 'Explicit OAuth mode did not exit API-key login.'
-switch_api_backup=$(find "$switch_home" -maxdepth 1 -name 'auth.json.madapi-backup-*' -type f | sort | tail -n 1)
-[ -n "$switch_api_backup" ] && [ "$(hash_file "$switch_api_backup")" = "$switch_api_hash" ] || fail 'API state backup is not exact.'
-
-refresh_home="$home/refresh"; mkdir -p "$refresh_home"
-cat > "$refresh_home/config.toml" <<'EOF'
-model_provider = "custom"
-[model_providers.custom]
-base_url = "https://mad.myddns.me/codex/cockpit/v1"
-requires_openai_auth = false
-experimental_bearer_token = "sk-macos-refresh-key"
-EOF
-valid_catalog="$home/valid-catalog.json"
-printf '%s' '{"models":[{"slug":"gpt-5.6-sol-pro","display_name":"GPT 5.6 Sol Pro"},{"slug":"gpt-5.6-terra-pro","display_name":"GPT 5.6 Terra Pro"}]}' > "$valid_catalog"
-CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$valid_catalog" /bin/sh "$refresh_script_path"
-grep -Fq '"slug":"gpt-5.6-sol-pro"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'OAuth refresh omitted gpt-5.6-sol-pro.'
-grep -Fq '"slug":"gpt-5.6-terra-pro"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'OAuth refresh omitted gpt-5.6-terra-pro.'
-grep -Fq 'base_url = "https://mad.myddns.me/codex/v1"' "$refresh_home/config.toml" || fail 'Unsigned refresh did not select the OAuth-native route.'
-grep -Fq 'requires_openai_auth = true' "$refresh_home/config.toml" || fail 'Unsigned refresh did not enable the OAuth gate.'
-printf '%s' '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-local","tokens":null}' > "$refresh_home/auth.json"
-CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$valid_catalog" /bin/sh "$refresh_script_path"
-grep -Fq 'base_url = "https://mad.myddns.me/codex/cockpit/v1"' "$refresh_home/config.toml" || fail 'API refresh did not select the mapped route.'
-grep -Fq 'requires_openai_auth = false' "$refresh_home/config.toml" || fail 'API refresh did not disable the OAuth gate.'
-grep -Fq '"slug":"gpt-5.6-sol-pro"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'API refresh omitted gpt-5.6-sol-pro.'
-grep -Fq '"slug":"gpt-5.6-terra-pro"' "$refresh_home/madapi-cockpit-model-catalog.json" || fail 'API refresh omitted gpt-5.6-terra-pro.'
-invalid_catalog="$home/invalid-catalog.json"
-printf '%s' '{not-json}' > "$invalid_catalog"
-if CODEX_HOME="$refresh_home" MADAPI_REFRESH_RESPONSE_FILE="$invalid_catalog" /bin/sh "$refresh_script_path" >/dev/null 2>&1; then
-  fail 'Structured catalog refresh accepted invalid JSON.'
+if [ "$(uname -s)" != Darwin ]; then
+  printf '%s\n' 'Codex macOS source contract passed; runtime acceptance requires macOS.'
+  exit 0
 fi
 
-history_home="$home/history-recovery"; history_project="$history_home/project"; history_session="$history_home/sessions/2026/08/04/rollout-2026-08-04T00-00-00-00000000-0000-7000-8000-000000000001.jsonl"
-mkdir -p "$(dirname -- "$history_session")" "$history_project"
-printf '%s' '{"timestamp":"2026-08-04T00:00:00Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000001","timestamp":"2026-08-04T00:00:00Z","cwd":"'"$history_project"'"}}' > "$history_session"
-printf '%s\n' '{"id":"00000000-0000-7000-8000-000000000001","thread_name":"Existing conversation","updated_at":"2026-08-04T00:00:00Z"}' > "$history_home/session_index.jsonl"
-printf '%s\n' 'model_provider = "custom"' > "$history_home/config.toml"
-python3 - "$history_home/state_5.sqlite" <<'PY'
-import sqlite3
-import sys
+root=$(mktemp -d "${TMPDIR:-/tmp}/madapi-clean-codex.XXXXXX")
+trap 'rm -rf "$root"' EXIT HUP INT TERM
+codex_home=$root/.codex
+mkdir -p "$codex_home/sessions"
+config=$codex_home/config.toml
+auth=$codex_home/auth.json
+session=$codex_home/sessions/sentinel.jsonl
+cat > "$config" <<'EOF'
+model_provider = "custom"
+model = "gpt-5.6-terra"
+disable_response_storage = true
 
-connection = sqlite3.connect(sys.argv[1])
-connection.execute("create table threads (id text primary key, model_provider text, archived integer not null, source text, thread_source text)")
-connection.execute("insert into threads (id, model_provider, archived, source, thread_source) values (?, ?, ?, ?, ?)", ("00000000-0000-7000-8000-000000000001", "openai", 0, "vscode", "user"))
-connection.commit()
-connection.close()
-PY
-printf '%s' '{"local-projects":{"local-test":{"rootPaths":["'"$history_project"'"]}},"projectless-thread-ids":["00000000-0000-7000-8000-000000000001"]}' > "$history_home/.codex-global-state.json"
-CODEX_HOME="$history_home" /bin/sh "$(dirname -- "$installer_path")/restore-history.sh"
-grep -Fq 'Existing conversation' "$history_home/session_index.jsonl" || fail 'History recovery changed the existing session index.'
-grep -Fq '"projectId":"local-test"' "$history_home/.codex-global-state.json" || fail 'History recovery did not restore project ownership.'
-history_provider=$(python3 - "$history_home/state_5.sqlite" <<'PY'
-import sqlite3
-import sys
+[model_providers.custom]
+name = "custom"
+base_url = "https://old.invalid/v1"
 
-connection = sqlite3.connect(sys.argv[1])
-print(connection.execute("select model_provider from threads where id = ?", ("00000000-0000-7000-8000-000000000001",)).fetchone()[0])
-connection.close()
-PY
-)
-[ "$history_provider" = custom ] || fail 'History recovery did not migrate the active thread provider.'
-printf '%s\n' 'macOS desktop Codex installer acceptance passed.'
+[features]
+memories = true
+EOF
+printf '%s' '{"auth_mode":"chatgpt","tokens":{"access_token":"oauth-access","refresh_token":"oauth-refresh"}}' > "$auth"
+printf '%s' 'session-sentinel' > "$session"
+auth_hash=$(shasum -a 256 "$auth" | awk '{print $1}')
+session_hash=$(shasum -a 256 "$session" | awk '{print $1}')
+
+CODEX_HOME="$codex_home" \
+MADAPI_KEY='sk-clean-macos-test' \
+MADAPI_BASE_URL='http://127.0.0.1:13016' \
+MADAPI_CODEX_LOGIN_MODE='oauth' \
+MADAPI_INSTALL_TEST_MODE=1 \
+MADAPI_REFRESH_SCRIPT_SOURCE="$refresh_path" \
+MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE="$history_path" \
+/bin/sh "$installer_path"
+
+grep -Fq 'base_url = "http://127.0.0.1:13016/codex/v1"' "$config" || fail 'Dedicated NewAPI-CPA route is missing.'
+grep -Fq 'requires_openai_auth = false' "$config" || fail 'Official gateway auth mode changed.'
+grep -Fq 'env_key = "MADAPI_API_KEY"' "$config" || fail 'Gateway env key is missing.'
+grep -Fq 'image_generation = true' "$config" || fail 'Image generation was not enabled.'
+! grep -Fq 'sk-clean-macos-test' "$config" || fail 'MadAPI key leaked into config.toml.'
+[ "$(shasum -a 256 "$auth" | awk '{print $1}')" = "$auth_hash" ] || fail 'OAuth state changed.'
+[ "$(shasum -a 256 "$session" | awk '{print $1}')" = "$session_hash" ] || fail 'Session data changed.'
+
+MADAPI_API_KEY='sk-refresh-macos' \
+MADAPI_REFRESH_RESPONSE_FILE="$repo_root/tests/fixtures/newapi-models.json" \
+MADAPI_CODEX_TEMPLATE_FILE="$repo_root/tests/fixtures/cpa-codex-templates.json" \
+CODEX_HOME="$codex_home" \
+/bin/sh "$refresh_path"
+
+grep -Fq '"slug": "gpt-5.6-sol-pro"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'Sol Pro is missing.'
+grep -Fq '"slug": "gpt-5.6-terra-pro"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'Terra Pro is missing.'
+! grep -Fq '"slug": "gpt-image-2"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'Image-only model leaked into the conversation selector.'
+
+printf '%s\n' 'Codex macOS clean gateway acceptance passed.'

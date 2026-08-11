@@ -1,27 +1,13 @@
-name: Publish Mad Home
+name: Publish MadAPI home
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'site/mad-home/**'
-      - 'server/new-api-autoupdate.sh'
-      - '.github/workflows/publish-home.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'site/mad-home/**'
-      - 'server/new-api-autoupdate.sh'
-      - '.github/workflows/publish-home.yml'
 
 permissions:
   contents: write
 
 concurrency:
-  group: mad-new-api-build
+  group: madapi-release
   cancel-in-progress: false
 
 jobs:
@@ -30,28 +16,26 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Check out homepage source
-        uses: actions/checkout@v4
+      - name: Check out MadAPI
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Package verified homepage release
+      - name: Validate and package homepage
+        shell: bash
         run: |
-          sh -n server/new-api-autoupdate.sh
-          tar -C site/mad-home -czf mad-home.tar.gz .
-          cp server/new-api-autoupdate.sh new-api-autoupdate.sh
+          node tests/mad-home-default-theme.mjs product/mad-home/default-theme.js
+          grep -Fq 'https://mad.myddns.me/v1' product/mad-home/index.html
+          grep -Fq 'https://mad.myddns.me/codex/v1' product/mad-home/index.html
+          tar -C product/mad-home -czf mad-home.tar.gz .
           sha256sum mad-home.tar.gz > mad-home.tar.gz.sha256
-          sha256sum new-api-autoupdate.sh > new-api-autoupdate.sh.sha256
           tar -tzf mad-home.tar.gz | grep -Fxq './index.html'
-          grep -Fq 'https://mad.myddns.me/codex/v1' site/mad-home/index.html
 
-      - name: Update homepage release assets
-        if: github.event_name != 'pull_request'
+      - name: Update homepage release asset
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           gh release view build-latest >/dev/null
           gh release upload build-latest \
             mad-home.tar.gz \
             mad-home.tar.gz.sha256 \
-            new-api-autoupdate.sh \
-            new-api-autoupdate.sh.sha256 \
             --clobber

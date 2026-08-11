@@ -117,6 +117,7 @@ jobs:
           done
           python3 -m unittest discover -s ops/disaster-recovery -p 'test_*.py'
           python3 -m unittest discover -s ops/mad-api-error-alert -p 'test_*.py'
+          python3 -m unittest discover -s ops/release -p 'test_*.py'
           python3 -m py_compile ops/release/*.py ops/model-detector/*.py
           token=$(printf 'ci-route-token' | sha256sum | awk '{print $1}')
           TRUSTED_ROUTE_TOKEN="$token" ops/release/render-codex-route.sh \

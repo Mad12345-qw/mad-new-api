@@ -34,6 +34,26 @@ Generate one random 64-character hexadecimal secret, set it as both
 must remain owner-readable only. Never expose or accept this header from a
 public client.
 
+Synchronize NewAPI's active Codex-capable source channels into the `codex`
+group before switching. The synchronizer creates one bridge channel per source
+channel and maps models to official CPA provider prefixes, so NewAPI remains
+responsible for channel selection, priority, weight, retries, billing, and logs.
+CPA receives the selected prefix and uses the matching source credential. It
+does not print API keys and writes the generated config and gateway key with
+owner-only permissions.
+
+```sh
+ops/release/sync-cpa-channel-bridge.py \
+  --database /opt/new-api/data/one-api.db \
+  --models ops/release/codex-bridge-models.txt \
+  --output-config /opt/madapi/runtime/cpa-config.yaml \
+  --gateway-key-file /opt/madapi/runtime/cpa-gateway.key \
+  --gateway-base-url http://cpa-codex-native:8317
+```
+
+Run this only after the database snapshot. Re-running it is idempotent: active
+source channels are updated in place and stale bridge channels are disabled.
+
 ```sh
 export TRUSTED_ROUTE_TOKEN="$(openssl rand -hex 32)"
 ops/release/render-codex-route.sh \
@@ -119,6 +139,7 @@ Do not release unless all of these are true:
 
 - Candidate tests and real Codex client acceptance pass.
 - `verify-cpa-config.sh` confirms image generation mode is `passthrough`.
+- The channel bridge dry run and synthetic prefix-routing acceptance pass.
 - The production database clone starts successfully with both old and new app
   images and preserves key row counts.
 - Snapshot restore verification passes.

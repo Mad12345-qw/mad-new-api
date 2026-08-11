@@ -152,6 +152,7 @@ jobs:
           done
           python3 -m unittest discover -s ops/disaster-recovery -p 'test_*.py'
           python3 -m unittest discover -s ops/mad-api-error-alert -p 'test_*.py'
+          python3 -m unittest discover -s ops/release -p 'test_*.py'
           printf 'disable-image-generation: "passthrough"\n' > "$RUNNER_TEMP/cpa-config.yaml"
           ops/release/verify-cpa-config.sh "$RUNNER_TEMP/cpa-config.yaml"
           python3 -m pip install -r ops/model-detector/requirements.txt

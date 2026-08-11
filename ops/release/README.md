@@ -7,20 +7,11 @@ relay behavior or CPA protocol behavior.
 
 The public `/codex/v1` route and ordinary `/v1` route share one NewAPI instance
 and one billing database. NewAPI authenticates the user token first. A private
-ingress header marks only `/codex/v1` as Codex traffic while preserving the
-user's existing group. NewAPI then selects the original channel, owns retries
-and billing, and dispatches the selected credential to the isolated official
-CPA SDK host. Ordinary `/v1` clears the marker and keeps the existing NewAPI
-relay path.
+ingress header then pins only `/codex/v1` to the `codex` channel group, whose
+channels point to an unmodified official CPA runtime. Ordinary `/v1` clears the
+header and keeps the token's normal channel group.
 
-The SDK host registers one runtime-only CPA Auth and the exact requested model,
-pins execution to that Auth through the official CPA public SDK, then removes
-both registrations when the request ends. It does not copy channels, query the
-NewAPI database, choose credentials, retry another credential, or bill users.
-The NewAPI and CPA SDK host communicate with raw binary framing; image payloads
-are not Base64-wrapped by this boundary.
-
-The SDK host bootstraps the official CPA runtime with:
+The official CPA runtime must use:
 
 ```yaml
 disable-image-generation: "passthrough"
@@ -37,22 +28,17 @@ configuration before every switch:
 ops/release/verify-cpa-config.sh /opt/madapi/runtime/cpa-config.yaml
 ```
 
-Generate two independent random 64-character hexadecimal secrets. Use the first
-as both `TRUSTED_ROUTE_TOKEN` in NewAPI and the input to
-`render-codex-route.sh`. Set `TRUSTED_ROUTE_GROUP=codex` only as the trusted
-route enablement value and set `TRUSTED_ROUTE_PRESERVE_USER_GROUP=true`; no
-copied `codex` channels are required. Use the second as
-`MADAPI_CPA_SDK_DISPATCH_TOKEN` in both NewAPI and the SDK host, and set
-`MADAPI_CPA_SDK_DISPATCH_URL=http://cpa-sdk-host:18417/execute` in NewAPI. Never
-expose either internal header or token to a public client.
+Generate one random 64-character hexadecimal secret, set it as both
+`TRUSTED_ROUTE_TOKEN` in NewAPI and the input to `render-codex-route.sh`, and set
+`TRUSTED_ROUTE_GROUP=codex` in NewAPI. The rendered file contains the secret and
+must remain owner-readable only. Never expose or accept this header from a
+public client.
 
 ```sh
 export TRUSTED_ROUTE_TOKEN="$(openssl rand -hex 32)"
 ops/release/render-codex-route.sh \
   http://127.0.0.1:3001 \
   /etc/nginx/snippets/madapi-codex-route.conf
-
-export MADAPI_CPA_SDK_DISPATCH_TOKEN="$(openssl rand -hex 32)"
 ```
 
 ## Required release shape
@@ -132,8 +118,7 @@ ops/release/verify-postgres-snapshot.sh \
 Do not release unless all of these are true:
 
 - Candidate tests and real Codex client acceptance pass.
-- The SDK host health endpoint reports `official-cpa-sdk-v7.2.128` and its tests
-  confirm image generation mode is `passthrough` with internal retries disabled.
+- `verify-cpa-config.sh` confirms image generation mode is `passthrough`.
 - The production database clone starts successfully with both old and new app
   images and preserves key row counts.
 - Snapshot restore verification passes.
@@ -141,24 +126,6 @@ Do not release unless all of these are true:
 - The old image, old CPA config, old Nginx config, old environment, and database
   snapshot remain available for the entire observation window.
 - GitHub and production are changed only after the test evidence is reviewed.
-
-After the GitHub release assets pass those gates, deploy the exact release with
-the production Compose and Nginx files. The command snapshots Compose, the
-root-only environment file, Nginx, SQLite, and the current image IDs before it
-loads or switches anything. It starts and health-checks the SDK host first,
-then NewAPI, then validates and reloads the Codex edge route. Any failure
-restores the previous files, database, image tag, and containers.
-
-```sh
-tar -xzf madapi-release-tools.tar.gz -C /opt/madapi-release-tools
-/opt/madapi-release-tools/ops/release/deploy-cpa-sdk-boundary.sh
-```
-
-For an offline rehearsal, set `MADAPI_RELEASE_DIR` to a directory containing
-`release-manifest.json`, `SHA256SUMS`, `mad-new-api.tar.gz`, and
-`mad-cpa-sdk-host.tar.gz`. The same script and rollback path are used in test
-and production; only the Compose, Nginx, health, and release directory paths
-change through `MADAPI_*` environment variables.
 
 For a production deployment that currently uses SQLite, first import the exact
 production image and database clone, then run `verify-sqlite-image-compat.sh`.

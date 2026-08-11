@@ -12,7 +12,6 @@ import (
 )
 
 const trustedRouteTokenHeader = "X-New-Api-Route-Token"
-const trustedCodexRouteContextKey = "madapi_trusted_codex_route"
 
 // TrustedRouteGroup lets a private ingress pin requests to an isolated channel
 // group while preserving the authenticated user's token, quota, and billing.
@@ -40,15 +39,7 @@ func TrustedRouteGroup() gin.HandlerFunc {
 			return
 		}
 
-		c.Set(trustedCodexRouteContextKey, true)
-		if !strings.EqualFold(strings.TrimSpace(os.Getenv("TRUSTED_ROUTE_PRESERVE_USER_GROUP")), "true") {
-			common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
-		}
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
 		c.Next()
 	}
-}
-
-// IsTrustedCodexRoute reports whether the private ingress authenticated this request.
-func IsTrustedCodexRoute(c *gin.Context) bool {
-	return c != nil && c.GetBool(trustedCodexRouteContextKey)
 }

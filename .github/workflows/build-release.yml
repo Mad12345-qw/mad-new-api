@@ -94,6 +94,8 @@ jobs:
           git -C official-cpa diff --cached --quiet
           test ! -d patches
           test ! -d guards
+          grep -Eq '^[[:space:]]*github.com/router-for-me/CLIProxyAPI/v7[[:space:]]+v7\.2\.128([[:space:]]|$)' \
+            ops/cpa-sdk-host/go.mod
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -148,6 +150,16 @@ jobs:
           docker run --rm --entrypoint /bin/sh mad-cpa-codex:latest \
             -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
 
+      - name: Build isolated official CPA SDK host
+        shell: bash
+        run: |
+          docker build --pull \
+            --tag mad-cpa-sdk-host:latest \
+            --tag "mad-cpa-sdk-host:${GITHUB_SHA}" \
+            ops/cpa-sdk-host
+          docker run --rm --entrypoint /bin/sh mad-cpa-sdk-host:latest \
+            -c 'test -x /usr/local/bin/mad-cpa-sdk-host'
+
       - name: Package release
         if: github.event_name != 'pull_request'
         shell: bash
@@ -155,6 +167,7 @@ jobs:
           mkdir -p release
           docker save mad-new-api:latest | gzip -1 > release/mad-new-api.tar.gz
           docker save mad-cpa-codex:latest | gzip -1 > release/mad-cpa-codex.tar.gz
+          docker save mad-cpa-sdk-host:latest | gzip -1 > release/mad-cpa-sdk-host.tar.gz
           tar -C product/mad-home -czf release/mad-home.tar.gz .
           tar -czf release/madapi-release-tools.tar.gz \
             ops/release \
@@ -164,7 +177,7 @@ jobs:
           cp ops/release/cpa-upstream-commit.txt release/cpa-upstream-commit.txt
           cat > release/release-manifest.json <<EOF
           {
-            "release_format": 1,
+            "release_format": 2,
             "madapi_commit": "${GITHUB_SHA}",
             "newapi_source": "Mad12345-qw/mad-new-api",
             "cpa_source": "router-for-me/CLIProxyAPI",
@@ -172,13 +185,16 @@ jobs:
             "cpa_version": "v7.2.128",
             "cpa_image_generation_mode": "passthrough",
             "newapi_image": "mad-new-api:latest",
-            "cpa_image": "mad-cpa-codex:latest"
+            "cpa_sdk_module": "github.com/router-for-me/CLIProxyAPI/v7@v7.2.128",
+            "cpa_sdk_host_image": "mad-cpa-sdk-host:latest",
+            "legacy_cpa_rollback_image": "mad-cpa-codex:latest"
           }
           EOF
           cd release
           sha256sum \
             mad-new-api.tar.gz \
             mad-cpa-codex.tar.gz \
+            mad-cpa-sdk-host.tar.gz \
             mad-home.tar.gz \
             madapi-release-tools.tar.gz \
             cpa-upstream-commit.txt \
@@ -194,4 +210,4 @@ jobs:
           gh release create build-latest release/* \
             --target "$GITHUB_SHA" \
             --title "MadAPI official CPA release" \
-            --notes "Built directly from this repository. Codex traffic uses an unmodified official CPA pinned in release-manifest.json; NewAPI remains the authentication, channel, billing, and logging boundary."
+            --notes "Built directly from this repository. NewAPI owns authentication, channel selection, retries, billing, and logs; the isolated host executes Codex traffic through the pinned official CPA SDK. The standalone official CPA image remains packaged only for rollback."

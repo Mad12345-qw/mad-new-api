@@ -46,6 +46,22 @@ func TestTrustedRouteGroupPinsAuthenticatedIngress(t *testing.T) {
 	require.False(t, ctx.IsAborted())
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "codex", common.GetContextKeyString(ctx, constant.ContextKeyUsingGroup))
+	require.True(t, IsTrustedCodexRoute(ctx))
+	require.Empty(t, ctx.Request.Header.Get(trustedRouteTokenHeader))
+}
+
+func TestTrustedRouteGroupCanPreserveAuthenticatedUserGroup(t *testing.T) {
+	t.Setenv("TRUSTED_ROUTE_GROUP", "codex")
+	t.Setenv("TRUSTED_ROUTE_TOKEN", "internal-secret")
+	t.Setenv("TRUSTED_ROUTE_PRESERVE_USER_GROUP", "true")
+	ctx, recorder := newTrustedRouteTestContext(t, "internal-secret")
+
+	TrustedRouteGroup()(ctx)
+
+	require.False(t, ctx.IsAborted())
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyUsingGroup))
+	require.True(t, IsTrustedCodexRoute(ctx))
 	require.Empty(t, ctx.Request.Header.Get(trustedRouteTokenHeader))
 }
 

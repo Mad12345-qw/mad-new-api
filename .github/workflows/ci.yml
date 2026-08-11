@@ -50,6 +50,19 @@ jobs:
           make test
           go test ./middleware -run 'TrustedRoute|RouteGroup' -count=1
 
+      - name: Set up Go for official CPA SDK host
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: ops/cpa-sdk-host/go.mod
+          cache-dependency-path: ops/cpa-sdk-host/go.sum
+
+      - name: Test official CPA SDK host
+        working-directory: ops/cpa-sdk-host
+        shell: bash
+        run: |
+          go test ./...
+          go build ./...
+
   frontend:
     name: Frontend and product assets
     runs-on: ubuntu-latest
@@ -135,6 +148,8 @@ jobs:
           test "$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git refs/tags/v7.2.128 | awk '{print $1}')" = "$sha"
           test ! -d patches
           test ! -d guards
+          grep -Eq '^[[:space:]]*github.com/router-for-me/CLIProxyAPI/v7[[:space:]]+v7\.2\.128([[:space:]]|$)' \
+            ops/cpa-sdk-host/go.mod
           ! grep -n -E 'Mad12345-qw/CLIProxyAPI|Apply Mad API patches|calciumion/new-api' \
             .github/workflows/build-release.yml \
             .github/workflows/publish-home.yml \
@@ -171,5 +186,8 @@ jobs:
           test "$(git -C official-cpa rev-parse HEAD)" = "$sha"
           docker build --tag mad-new-api:pr .
           docker build --tag mad-cpa-codex:pr official-cpa
+          docker build --tag mad-cpa-sdk-host:pr ops/cpa-sdk-host
           docker run --rm --entrypoint /bin/sh mad-cpa-codex:pr \
             -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
+          docker run --rm --entrypoint /bin/sh mad-cpa-sdk-host:pr \
+            -c 'test -x /usr/local/bin/mad-cpa-sdk-host'

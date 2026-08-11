@@ -94,7 +94,7 @@ jobs:
           git -C official-cpa diff --cached --quiet
           test ! -d patches
           test ! -d guards
-          grep -Fxq 'require github.com/router-for-me/CLIProxyAPI/v7 v7.2.128' \
+          grep -Eq '^[[:space:]]*github.com/router-for-me/CLIProxyAPI/v7[[:space:]]+v7\.2\.128([[:space:]]|$)' \
             ops/cpa-sdk-host/go.mod
 
       - name: Set up Bun

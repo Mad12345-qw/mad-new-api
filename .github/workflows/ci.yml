@@ -148,7 +148,7 @@ jobs:
           test "$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git refs/tags/v7.2.128 | awk '{print $1}')" = "$sha"
           test ! -d patches
           test ! -d guards
-          grep -Fxq 'require github.com/router-for-me/CLIProxyAPI/v7 v7.2.128' \
+          grep -Eq '^[[:space:]]*github.com/router-for-me/CLIProxyAPI/v7[[:space:]]+v7\.2\.128([[:space:]]|$)' \
             ops/cpa-sdk-host/go.mod
           ! grep -n -E 'Mad12345-qw/CLIProxyAPI|Apply Mad API patches|calciumion/new-api' \
             .github/workflows/build-release.yml \

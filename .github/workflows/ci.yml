@@ -31,10 +31,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: '1.26.1'
           cache-dependency-path: |
             go.sum
             relaykit/go.sum
+            ops/cpa-official-gateway/go.sum
 
       - name: Create frontend embed placeholder
         shell: bash
@@ -48,20 +49,7 @@ jobs:
           go vet ./...
           go build ./...
           make test
-          go test ./middleware -run 'TrustedRoute|RouteGroup' -count=1
-
-      - name: Set up Go for official CPA SDK host
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: ops/cpa-sdk-host/go.mod
-          cache-dependency-path: ops/cpa-sdk-host/go.sum
-
-      - name: Test official CPA SDK host
-        working-directory: ops/cpa-sdk-host
-        shell: bash
-        run: |
-          go test ./...
-          go build ./...
+          (cd ops/cpa-official-gateway && go test ./...)
 
   frontend:
     name: Frontend and product assets
@@ -146,10 +134,10 @@ jobs:
           sha=$(tr -d '[:space:]' < ops/release/cpa-upstream-commit.txt)
           test ${#sha} -eq 40
           test "$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git refs/tags/v7.2.128 | awk '{print $1}')" = "$sha"
+          grep -Fq 'github.com/router-for-me/CLIProxyAPI/v7 v7.2.128' ops/cpa-official-gateway/go.mod
+          ! grep -Eq '^[[:space:]]*replace[[:space:]].*CLIProxyAPI' ops/cpa-official-gateway/go.mod
           test ! -d patches
           test ! -d guards
-          grep -Eq '^[[:space:]]*github.com/router-for-me/CLIProxyAPI/v7[[:space:]]+v7\.2\.128([[:space:]]|$)' \
-            ops/cpa-sdk-host/go.mod
           ! grep -n -E 'Mad12345-qw/CLIProxyAPI|Apply Mad API patches|calciumion/new-api' \
             .github/workflows/build-release.yml \
             .github/workflows/publish-home.yml \
@@ -167,9 +155,6 @@ jobs:
           done
           python3 -m unittest discover -s ops/disaster-recovery -p 'test_*.py'
           python3 -m unittest discover -s ops/mad-api-error-alert -p 'test_*.py'
-          python3 -m unittest discover -s ops/release -p 'test_*.py'
-          printf 'disable-image-generation: "passthrough"\n' > "$RUNNER_TEMP/cpa-config.yaml"
-          ops/release/verify-cpa-config.sh "$RUNNER_TEMP/cpa-config.yaml"
           python3 -m pip install -r ops/model-detector/requirements.txt
           env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
             -u http_proxy -u https_proxy -u all_proxy \
@@ -179,15 +164,7 @@ jobs:
       - name: Build exact release images
         shell: bash
         run: |
-          sha=$(tr -d '[:space:]' < ops/release/cpa-upstream-commit.txt)
-          git clone --filter=blob:none --no-checkout https://github.com/router-for-me/CLIProxyAPI.git official-cpa
-          git -C official-cpa fetch --depth=1 origin "$sha"
-          git -C official-cpa checkout --detach "$sha"
-          test "$(git -C official-cpa rev-parse HEAD)" = "$sha"
           docker build --tag mad-new-api:pr .
-          docker build --tag mad-cpa-codex:pr official-cpa
-          docker build --tag mad-cpa-sdk-host:pr ops/cpa-sdk-host
-          docker run --rm --entrypoint /bin/sh mad-cpa-codex:pr \
-            -c 'test -x /CLIProxyAPI/CLIProxyAPI && test ! -e /app/plugins/madapi-dynamic.so'
-          docker run --rm --entrypoint /bin/sh mad-cpa-sdk-host:pr \
-            -c 'test -x /usr/local/bin/mad-cpa-sdk-host'
+          docker build --tag mad-cpa-official-gateway:pr ops/cpa-official-gateway
+          docker run --rm --entrypoint /bin/sh mad-cpa-official-gateway:pr \
+            -c 'test -x /usr/local/bin/madapi-cpa-official-gateway'

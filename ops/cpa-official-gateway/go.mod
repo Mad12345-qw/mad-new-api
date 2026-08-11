@@ -1,10 +1,10 @@
-module github.com/Mad12345-qw/mad-cpa-sdk-host
+module github.com/Mad12345-qw/madapi-cpa-official-gateway
 
 go 1.26.0
 
 require (
+	github.com/gin-gonic/gin v1.10.1
 	github.com/router-for-me/CLIProxyAPI/v7 v7.2.128
-	github.com/stretchr/testify v1.11.1
 )
 
 require (
@@ -15,12 +15,10 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect
 	github.com/cloudwego/iasm v0.2.0 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dlclark/regexp2/v2 v2.5.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
-	github.com/gin-gonic/gin v1.10.1 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.20.0 // indirect
@@ -52,7 +50,6 @@ require (
 	github.com/pion/transport/v4 v4.0.2 // indirect
 	github.com/pion/turn/v5 v5.0.12 // indirect
 	github.com/pion/webrtc/v4 v4.2.17 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/redis/go-redis/v9 v9.19.0 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect

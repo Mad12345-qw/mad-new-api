@@ -34,19 +34,6 @@ import (
 )
 
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
-	if middleware.IsTrustedCodexRoute(c) {
-		switch info.RelayMode {
-		case relayconstant.RelayModeResponses,
-			relayconstant.RelayModeResponsesCompact:
-			return relay.CPASDKHelper(c, info)
-		case relayconstant.RelayModeImagesGenerations,
-			relayconstant.RelayModeImagesEdits:
-			channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
-			if relay.CPASDKSupportsImages(channelType) {
-				return relay.CPASDKHelper(c, info)
-			}
-		}
-	}
 	var err *types.NewAPIError
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:

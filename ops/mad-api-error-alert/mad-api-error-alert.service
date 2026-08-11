@@ -1,0 +1,19 @@
+[Unit]
+Description=MadAPI ops consecutive request error email monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/madapi-ops/.env
+Environment=MAD_API_DB=/opt/madapi-new-api/data/one-api.db
+Environment=MAD_API_ALERT_STATE_DIR=/var/lib/madapi-ops/error-alert
+ExecStart=/usr/bin/python3 /opt/madapi-ops/mad-api-error-alert/mad-api-error-alert.py
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/madapi-ops/error-alert

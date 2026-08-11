@@ -1,0 +1,14 @@
+[Unit]
+Description=Create a local MadAPI ops recovery snapshot
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/madapi-ops/.env
+Environment=MADAPI_APP_ROOT=/opt/madapi-new-api
+Environment=MADAPI_RECOVERY_REPO_DIR=/opt/madapi-ops/private-backups
+ExecStart=/usr/bin/python3 /opt/madapi-ops/disaster-recovery/backup.py
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=20min

@@ -1,0 +1,15 @@
+[Unit]
+Description=Publish an encrypted MadAPI ops recovery snapshot
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/madapi-ops/.env
+Environment=MADAPI_APP_ROOT=/opt/madapi-new-api
+Environment=MADAPI_RECOVERY_REPO_DIR=/opt/madapi-ops/private-backups
+ExecStart=/usr/bin/python3 /opt/madapi-ops/disaster-recovery/backup.py --publish
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=30min

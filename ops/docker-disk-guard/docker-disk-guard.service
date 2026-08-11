@@ -1,0 +1,10 @@
+[Unit]
+Description=Prune unused Docker data before it can exhaust the system disk
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/madapi-ops/docker-disk-guard/docker-disk-guard.sh
+TimeoutStartSec=15min
+Nice=10

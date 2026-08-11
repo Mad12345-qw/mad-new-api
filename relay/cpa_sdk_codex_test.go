@@ -58,3 +58,22 @@ func TestCPASDKSupportsImagesOnlyForOfficialImageExecutors(t *testing.T) {
 	require.False(t, CPASDKSupportsImages(appconstant.ChannelTypeVertexAi))
 	require.False(t, CPASDKSupportsImages(appconstant.ChannelTypeAnthropic))
 }
+
+func TestStripCPASDKHopByHopHeaders(t *testing.T) {
+	headers := http.Header{
+		"Connection":        {"keep-alive, X-Remove-Me"},
+		"Upgrade":           {"websocket"},
+		"Keep-Alive":        {"timeout=5"},
+		"Transfer-Encoding": {"chunked"},
+		"Te":                {"trailers"},
+		"X-Remove-Me":       {"connection-scoped"},
+		"X-Keep-Me":         {"end-to-end"},
+	}
+
+	stripCPASDKHopByHopHeaders(headers)
+
+	require.Equal(t, "end-to-end", headers.Get("X-Keep-Me"))
+	for _, name := range []string{"Connection", "Upgrade", "Keep-Alive", "Transfer-Encoding", "Te", "X-Remove-Me"} {
+		require.Empty(t, headers.Values(name), name)
+	}
+}

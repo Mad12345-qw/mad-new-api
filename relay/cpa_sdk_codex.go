@@ -33,6 +33,18 @@ const (
 	cpaSDKMetadataLimit      = 1 << 20
 )
 
+var cpaSDKHopByHopHeaders = map[string]struct{}{
+	"connection":          {},
+	"keep-alive":          {},
+	"proxy-authenticate":  {},
+	"proxy-authorization": {},
+	"proxy-connection":    {},
+	"te":                  {},
+	"trailer":             {},
+	"transfer-encoding":   {},
+	"upgrade":             {},
+}
+
 var cpaSDKDispatchClient = newCPASDKDispatchClient()
 
 type cpaSDKDispatchMeta struct {
@@ -189,7 +201,26 @@ func cpaSDKRequest(c *gin.Context, info *relaycommon.RelayInfo) ([]byte, http.He
 	for name, value := range overrides {
 		headers.Set(name, value)
 	}
+	stripCPASDKHopByHopHeaders(headers)
 	return body, headers, source, nil
+}
+
+func stripCPASDKHopByHopHeaders(headers http.Header) {
+	if headers == nil {
+		return
+	}
+	connectionHeaders := append([]string(nil), headers.Values("Connection")...)
+	for name := range cpaSDKHopByHopHeaders {
+		headers.Del(name)
+	}
+	for _, value := range connectionHeaders {
+		for _, name := range strings.Split(value, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				headers.Del(name)
+			}
+		}
+	}
 }
 
 func cpaSDKWriteAndBill(c *gin.Context, info *relaycommon.RelayInfo, response *http.Response) *types.NewAPIError {

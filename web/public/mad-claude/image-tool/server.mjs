@@ -42,9 +42,10 @@ function gatewayConfig() {
   const config = JSON.parse(
     fs.readFileSync(path.join(library, `${configId}.json`), "utf8"),
   );
-  const baseUrl = String(config.inferenceGatewayBaseUrl || "")
+  let baseUrl = String(config.inferenceGatewayBaseUrl || "")
     .trim()
     .replace(/\/+$/, "");
+  while (/\/v1$/i.test(baseUrl)) baseUrl = baseUrl.slice(0, -3).replace(/\/+$/, "");
   const apiKey = String(config.inferenceGatewayApiKey || "").trim();
   if (!baseUrl || !apiKey) {
     throw new Error("Claude Gateway URL or API key is missing");
@@ -311,7 +312,7 @@ async function requestGeneration(prompt, size) {
 
   const { baseUrl, apiKey } = gatewayConfig();
   const response = await fetchWithTimeout(
-    `${baseUrl}/images/generations`,
+    `${baseUrl}/v1/images/generations`,
     {
       method: "POST",
       headers: {

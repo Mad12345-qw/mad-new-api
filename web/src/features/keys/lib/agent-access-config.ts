@@ -58,7 +58,7 @@ export function buildAgentInstallCommand(options: AgentCommandOptions): string {
       )
     } else {
       assignments.push(
-        `$env:MADAPI_CLAUDE_BASE_URL=${quotePowerShell(`${baseUrl}/v1`)}`,
+        `$env:MADAPI_CLAUDE_BASE_URL=${quotePowerShell(baseUrl)}`,
         `$env:MADAPI_CLAUDE_INSTALL_LANGUAGE=${quotePowerShell(options.installClaudeChinese ? '1' : '0')}`
       )
     }
@@ -75,7 +75,7 @@ export function buildAgentInstallCommand(options: AgentCommandOptions): string {
     )
   } else {
     variables.push(
-      `MADAPI_CLAUDE_BASE_URL=${quoteShell(`${baseUrl}/v1`)}`,
+      `MADAPI_CLAUDE_BASE_URL=${quoteShell(baseUrl)}`,
       `MADAPI_CLAUDE_INSTALL_LANGUAGE=${quoteShell(options.installClaudeChinese ? '1' : '0')}`
     )
   }

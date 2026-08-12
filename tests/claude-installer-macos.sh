@@ -29,6 +29,8 @@ run_installer() {
   MADAPI_CLAUDE_THREEP_DIR="$threep" \
   MADAPI_CLAUDE_TOOL_DIR="$tool" \
   MADAPI_CLAUDE_IMAGE_SOURCE_DIR="$image_source" \
+  MADAPI_CLAUDE_BASE_URL='https://mad.myddns.me/v1/' \
+  MADAPI_BASE_URL='https://mad.myddns.me/v1' \
   MADAPI_CLAUDE_FORCE_PORTABLE_NODE="${MADAPI_CLAUDE_FORCE_PORTABLE_NODE:-0}" \
   MADAPI_CLAUDE_NODE_RUNTIME_PATH="${MADAPI_CLAUDE_NODE_RUNTIME_PATH:-}" \
   MADAPI_CLAUDE_INSTALL_LANGUAGE="${MADAPI_CLAUDE_INSTALL_LANGUAGE:-0}" \
@@ -65,12 +67,21 @@ const expected = ['claude-fable-5','claude-opus-4-8','claude-opus-5','claude-son
 assert(JSON.stringify(gateway.inferenceModels.map((item) => item.name)) === JSON.stringify(expected), 'Gateway models are incorrect');
 assert(meta.entries.filter((entry) => entry.name === 'MadAPI').length === 1, 'Duplicate MadAPI entries found');
 assert(meta.entries.filter((entry) => entry.name === 'Existing').length === 1, 'Existing entry was lost');
+assert(gateway.inferenceGatewayBaseUrl === 'https://mad.myddns.me', 'Gateway base URL was not normalized to the root');
 JXA
 
 [ -f "$tool/server.mjs" ]
 [ -f "$tool/widget.html" ]
 [ "$(grep -c '/mad-home/' "$tool/widget.html" || true)" -eq 0 ]
 [ -f "$tool/cache/keep-image.png" ]
+grep -Fq '"$base_url/v1/models"' "$installer" || {
+  printf '%s\n' 'Models endpoint does not use /v1/models.' >&2
+  exit 1
+}
+grep -Fq '${baseUrl}/v1/images/generations' "$image_tool/server.mjs" || {
+  printf '%s\n' 'Image endpoint does not use /v1/images/generations.' >&2
+  exit 1
+}
 
 printf '%s\n' '#!/bin/sh' 'exit 9' > "$root/language-failure.sh"
 chmod 700 "$root/language-failure.sh"

@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
+import {
+  Check,
+  Gift,
+  ExternalLink,
+  JapaneseYen,
+  Loader2,
+  Receipt,
+} from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -143,6 +150,19 @@ export function RechargeFormCard({
     Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
   const minTopup = getMinTopupAmount(topupInfo)
   const redemptionEnabled = topupInfo?.enable_redemption !== false
+  const currentPromotion = getRechargePromotionQuote(
+    topupInfo?.recharge_promotion,
+    topupAmount
+  )
+  const defaultPaymentMethod = topupInfo?.pay_methods?.[0]
+  const quickTopupDisabled =
+    !defaultPaymentMethod ||
+    topupAmount < minTopup ||
+    (defaultPaymentMethod.min_topup || 0) > topupAmount ||
+    !!paymentLoading
+  const nextPromotionTier = presetAmounts.find(
+    (preset) => preset.value > topupAmount
+  )
 
   if (loading) {
     return (
@@ -156,8 +176,8 @@ export function RechargeFormCard({
             {/* Preset Amounts Skeleton */}
             <div className='space-y-3'>
               <Skeleton className='h-3 w-16' />
-              <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
-                {Array.from({ length: 8 }, (_, index) => `preset-${index}`).map(
+              <div className='grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3'>
+                {Array.from({ length: 6 }, (_, index) => `preset-${index}`).map(
                   (key) => (
                     <Skeleton key={key} className='h-[72px] rounded-lg' />
                   )
@@ -199,35 +219,44 @@ export function RechargeFormCard({
     <TitledCard
       title={t('Add Funds')}
       description={t('Choose an amount and payment method')}
-      icon={<WalletCards className='h-4 w-4' />}
+      icon={<JapaneseYen className='h-4 w-4' />}
       iconTone='success'
+      iconClassName='bg-[#17140f] text-[#d6a84b]'
+      titleClassName='text-sm sm:text-base'
+      descriptionClassName='text-[10px] sm:text-xs'
       disableHoverEffect
+      headerClassName='p-3 !pb-3 sm:p-4 sm:!pb-4'
       action={
         onOpenBilling ? (
           <Button
             variant='outline'
             size='sm'
             onClick={onOpenBilling}
-            className='w-full gap-2 sm:w-auto'
+            className='w-full gap-2 text-xs sm:w-auto'
           >
             <Receipt className='h-4 w-4' />
             {t('Order History')}
           </Button>
         ) : null
       }
-      contentClassName='space-y-4 sm:space-y-6'
+      contentClassName='space-y-3 p-3 sm:space-y-4 sm:p-4'
     >
       {/* Online Topup Section */}
       {hasAnyTopup ? (
-        <div className='space-y-4 sm:space-y-6'>
+        <div className='space-y-3 sm:space-y-4'>
           {hasConfigurableTopup && (
             <>
               {presetAmounts.length > 0 && (
-                <div className='space-y-2.5 sm:space-y-3'>
-                  <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
-                    {t('Amount')}
-                  </Label>
-                  <div className='grid grid-cols-2 gap-1.5 sm:gap-3 md:grid-cols-4'>
+                <div className='space-y-2'>
+                  <div className='flex flex-wrap items-center justify-between gap-2'>
+                    <Label className='text-muted-foreground text-[10px] font-medium tracking-wider uppercase'>
+                      {t('Amount')}
+                    </Label>
+                    <span className='text-[10px] font-semibold text-[#d6b66c]'>
+                      {t('Recharge more to receive a larger bonus')}
+                    </span>
+                  </div>
+                  <div className='grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3'>
                     {presetAmounts.map((preset) => {
                       const promotion = getRechargePromotionQuote(
                         topupInfo?.recharge_promotion,
@@ -248,91 +277,136 @@ export function RechargeFormCard({
                         discount,
                         usdExchangeRate
                       )
+                      const badge =
+                        preset.value === 6
+                          ? promotion?.promotional
+                            ? t('New user bonus')
+                            : t('New user bonus used')
+                          : preset.value === 128
+                            ? t('Most popular')
+                            : preset.value === 648
+                              ? t('Best value')
+                              : null
                       return (
                         <Button
                           key={preset.value}
                           variant='outline'
                           className={cn(
-                            'flex min-h-16 flex-col items-start rounded-lg px-3 py-2.5 text-left whitespace-normal sm:min-h-[72px] sm:p-4',
+                            'relative flex min-h-28 flex-col items-start justify-between overflow-hidden rounded-lg px-3 py-3 text-left whitespace-normal sm:p-3.5',
                             selectedPreset === preset.value
-                              ? 'border-foreground bg-foreground/5 dark:border-foreground dark:bg-foreground/10'
-                              : 'border-muted'
+                              ? 'border-[#9b7b38] bg-[#d7b96f]/8 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_22px_rgba(0,0,0,0.14)]'
+                              : 'border-muted hover:border-[#8b6a2c]/65'
                           )}
                           onClick={() => onSelectPreset(preset)}
                         >
-                          <div className='flex w-full items-center justify-between'>
-                            <div className='text-base font-semibold sm:text-lg'>
-                              {formatNumber(displayValue)}
-                            </div>
-                            {hasDiscount && (
-                              <div className='text-xs font-medium text-green-600'>
-                                {getDiscountLabel(discount)}
-                              </div>
-                            )}
-                          </div>
-                          <div className='text-muted-foreground mt-1.5 w-full text-xs sm:mt-2'>
-                            Pay {formatCurrency(actualPrice)}
-                            {hasDiscount && savedAmount > 0 && (
-                              <span className='text-green-600'>
-                                {' '}
-                                • Save {formatCurrency(savedAmount)}
-                              </span>
-                            )}
-                          </div>
-                          {promotion?.promotional && (
-                            <div className='mt-1 flex w-full flex-wrap gap-x-2 gap-y-0.5 text-[11px] leading-4'>
-                              <span className='font-medium text-emerald-600'>
-                                {t('Bonus {{rate}}%', {
-                                  rate: promotion.bonusRatePercent,
-                                })}{' '}
-                                {formatNumber(
-                                  promotion.bonusAmount * usdExchangeRate
-                                )}
-                              </span>
-                              <span className='text-muted-foreground'>
-                                {t('Expected arrival: {{amount}}', {
-                                  amount: formatNumber(
-                                    promotion.creditedAmount * usdExchangeRate
-                                  ),
-                                })}
-                              </span>
-                            </div>
+                          {selectedPreset === preset.value && (
+                            <span className='absolute top-2 right-2 grid size-5 place-items-center rounded-full bg-[#d9ba6f] text-[#17140f]'>
+                              <Check className='size-3.5' />
+                            </span>
                           )}
+                          <div className='flex w-full items-start justify-between gap-2'>
+                            <div>
+                              <div className='text-xs font-semibold sm:text-sm'>
+                                ¥{formatNumber(displayValue)}
+                              </div>
+                              <div className='text-muted-foreground mt-1 text-[10px]'>
+                                {t('You Pay')} ¥{formatCurrency(actualPrice)}
+                              </div>
+                            </div>
+                            {(badge || promotion?.promotional) && (
+                              <span
+                                className={cn(
+                                  'min-h-[29px] shrink-0 whitespace-nowrap rounded-full border border-[#8b6a2c]/55 bg-[#17140f] px-3 py-[7px] text-[11px] leading-none font-semibold text-[#e0bd70]',
+                                  selectedPreset === preset.value && 'mr-6'
+                                )}
+                              >
+                                {badge ||
+                                  t('Bonus {{rate}}%', {
+                                    rate: promotion?.bonusRatePercent,
+                                  })}
+                              </span>
+                            )}
+                          </div>
+                          <div className='mt-2.5 grid w-full grid-cols-[auto_1fr_auto] items-end gap-1.5'>
+                            <span className='whitespace-nowrap text-xs font-bold text-[#e0bd70] [text-shadow:0_1px_0_#000] sm:text-sm'>
+                              {promotion?.promotional
+                                ? `${t('Recharge bonus')} ¥${formatNumber(promotion.bonusAmount * usdExchangeRate)}`
+                                : hasDiscount && savedAmount > 0
+                                  ? `${getDiscountLabel(discount)} ¥${formatCurrency(savedAmount)}`
+                                  : t('No bonus')}
+                            </span>
+                            <span />
+                            <span className='whitespace-nowrap text-[10px] font-semibold sm:text-xs'>
+                              {t('Expected arrival')} ¥
+                              {formatNumber(
+                                (promotion?.creditedAmount ?? preset.value) *
+                                  usdExchangeRate
+                              )}
+                            </span>
+                          </div>
                         </Button>
                       )
                     })}
                   </div>
+                  <div className='mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#8b6a2c]/45 bg-[#17140f] px-3 py-2 text-[10px] sm:text-xs'>
+                    <div className='flex flex-wrap items-center gap-3'>
+                      <span className='rounded-full border border-[#8b6a2c]/55 px-2 py-1 text-[9px] font-semibold text-[#e0bd70]'>
+                        {t('Recharge suggestion')}
+                      </span>
+                      <span className='font-medium text-white'>
+                        {currentPromotion?.promotional
+                          ? `${t('Expected arrival')} ¥${formatNumber(currentPromotion.creditedAmount * usdExchangeRate)}`
+                          : t('Choose a promotional tier to receive a bonus')}
+                      </span>
+                    </div>
+                    <span className='font-semibold text-[#e0bd70]'>
+                      {nextPromotionTier
+                        ? t('Next tier: {{amount}}', {
+                            amount: `¥${nextPromotionTier.value}`,
+                          })
+                        : t('Highest bonus tier unlocked')}
+                    </span>
+                  </div>
                 </div>
               )}
 
-              <div className='space-y-2.5 sm:space-y-3'>
+              <div className='space-y-2'>
                 <Label
                   htmlFor='topup-amount'
-                  className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
+                  className='text-muted-foreground text-[10px] font-medium tracking-wider uppercase'
                 >
                   {t('Custom Amount')}
                 </Label>
-                <div className='grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
-                  <Input
-                    id='topup-amount'
-                    type='number'
-                    value={localAmount}
-                    onChange={(e) => handleAmountChange(e.target.value)}
-                    min={minTopup}
-                    placeholder={`Minimum ${minTopup}`}
-                    className='h-9 text-base sm:h-10 sm:text-lg'
-                  />
-                  <div className='bg-muted/30 flex min-h-9 items-center justify-between gap-2 rounded-md border px-3 lg:min-w-52'>
-                    <span className='text-muted-foreground truncate text-xs'>
-                      {t('Amount to pay:')}
-                    </span>
+                <div className='grid grid-cols-1 gap-2 lg:grid-cols-[minmax(0,0.8fr)_minmax(520px,1.2fr)] lg:items-stretch'>
+                  <div className='relative'>
+                    <span className='absolute top-1/2 left-4 -translate-y-1/2 text-sm font-semibold text-[#d6b66c]'>¥</span>
+                    <Input
+                      id='topup-amount'
+                      type='number'
+                      value={localAmount}
+                      onChange={(e) => handleAmountChange(e.target.value)}
+                      min={minTopup}
+                      placeholder={`${t('Minimum:')} ${minTopup}`}
+                      className='h-full min-h-16 pl-10 text-sm sm:text-base'
+                    />
+                  </div>
+                  <div className='bg-muted/30 grid min-h-16 grid-cols-3 items-center gap-3 rounded-md border px-4 py-2 sm:grid-cols-[repeat(3,minmax(0,1fr))_auto] sm:gap-4'>
+                    <div><span className='text-muted-foreground block text-[10px] sm:text-xs'>{t('You Pay')}</span>
                     {calculating ? (
                       <Skeleton className='h-5 w-16' />
                     ) : (
-                      <span className='text-sm font-semibold'>
-                        {formatCurrency(paymentAmount)}
-                      </span>
-                    )}
+                      <span className='whitespace-nowrap text-xs font-bold sm:text-sm'>¥{formatCurrency(paymentAmount)}</span>
+                    )}</div>
+                    <div><span className='text-muted-foreground block text-[10px] sm:text-xs'>{t('Recharge bonus')}</span><span className='whitespace-nowrap text-base font-bold text-[#e0bd70] sm:text-lg'>+¥{formatNumber((currentPromotion?.bonusAmount ?? 0) * usdExchangeRate)}</span></div>
+                    <div><span className='text-muted-foreground block text-[10px] sm:text-xs'>{t('Expected arrival')}</span><span className='whitespace-nowrap text-xs font-bold sm:text-sm'>¥{formatNumber((currentPromotion?.creditedAmount ?? topupAmount) * usdExchangeRate)}</span></div>
+                    <Button
+                      type='button'
+                      disabled={quickTopupDisabled}
+                      onClick={() => defaultPaymentMethod && onPaymentMethodSelect(defaultPaymentMethod)}
+                      className='col-span-3 h-12 w-full min-w-40 border border-[#e0bd70] bg-[#d9ba6f] px-7 text-sm font-bold text-[#17140f] shadow-[0_8px_20px_rgba(217,186,111,0.16)] hover:bg-[#e7c979] sm:col-span-1 sm:w-auto'
+                    >
+                      {paymentLoading === defaultPaymentMethod?.type ? <Loader2 className='size-4 animate-spin' /> : t('Recharge now')}
+                    </Button>
                   </div>
                 </div>
               </div>

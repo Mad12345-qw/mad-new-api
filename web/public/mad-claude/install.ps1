@@ -45,6 +45,15 @@ function Restore-File {
     }
 }
 
+function Normalize-MadApiRoot {
+    param([string]$Value)
+    $normalized = ([string]$Value).Trim().TrimEnd('/')
+    while ($normalized -match '(?i)/v1$') {
+        $normalized = $normalized.Substring(0, $normalized.Length - 3).TrimEnd('/')
+    }
+    return $normalized
+}
+
 function Merge-ClaudeConfig {
     param([string]$Path, [string]$ServerPath, [string]$NodeCommand)
     $config = Read-JsonFile $Path
@@ -90,19 +99,19 @@ $models = @(
     'claude-haiku-4-5'
 )
 $baseUrl = if ([string]::IsNullOrWhiteSpace([string]$env:MADAPI_CLAUDE_BASE_URL)) {
-    'https://mad.myddns.me/v1'
+    'https://mad.myddns.me'
 } else {
-    ([string]$env:MADAPI_CLAUDE_BASE_URL).TrimEnd('/')
+    Normalize-MadApiRoot ([string]$env:MADAPI_CLAUDE_BASE_URL)
 }
-$publicBaseUrl = ([string]$env:MADAPI_BASE_URL).Trim().TrimEnd('/')
-if ([string]::IsNullOrWhiteSpace($publicBaseUrl)) { $publicBaseUrl = $baseUrl -replace '/v1$', '' }
+$publicBaseUrl = Normalize-MadApiRoot ([string]$env:MADAPI_BASE_URL)
+if ([string]::IsNullOrWhiteSpace($publicBaseUrl)) { $publicBaseUrl = $baseUrl }
 $testMode = [string]$env:MADAPI_INSTALL_TEST_MODE -eq '1'
 
 Write-Host 'Checking MadAPI model access...'
 if (-not [string]::IsNullOrWhiteSpace([string]$env:MADAPI_MODELS_FIXTURE_PATH)) {
     $modelsJson = [IO.File]::ReadAllText([string]$env:MADAPI_MODELS_FIXTURE_PATH, [Text.Encoding]::UTF8)
 } else {
-    $response = Invoke-WebRequest -UseBasicParsing -Uri ($baseUrl + '/models') -Method Get -Headers @{
+    $response = Invoke-WebRequest -UseBasicParsing -Uri ($baseUrl + '/v1/models') -Method Get -Headers @{
         'x-api-key' = $apiKey
         'Accept' = 'application/json'
     } -TimeoutSec 30

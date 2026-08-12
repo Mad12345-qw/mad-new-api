@@ -29,6 +29,8 @@ export const apiKeySchema = z.object({
   status: z.number(), // 1: enabled, 2: disabled, 3: expired, 4: exhausted
   remain_quota: z.number(),
   used_quota: z.number(),
+  lifetime_used_quota: z.number().nullable().optional(),
+  recent_7d_used_quota: z.number().nullable().optional(),
   unlimited_quota: z.boolean(),
   expired_time: z.number(), // -1 for never expires
   created_time: z.number(),

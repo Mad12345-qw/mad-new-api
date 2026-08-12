@@ -42,6 +42,8 @@ describe('Agent Access command contract', () => {
 
     assert.match(command, /https:\/\/mad\.example\/mad-claude\/install\.ps1/)
     assert.match(command, /MADAPI_CLAUDE_INSTALL_LANGUAGE=/)
+    assert.match(command, /MADAPI_CLAUDE_BASE_URL='https:\/\/mad\.example'/)
+    assert.doesNotMatch(command, /MADAPI_CLAUDE_BASE_URL='https:\/\/mad\.example\/v1'/)
     assert.doesNotMatch(command, /MADAPI_CODEX_LOGIN_MODE=/)
   })
 })

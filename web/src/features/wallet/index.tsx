@@ -298,7 +298,7 @@ export function Wallet(props: WalletProps) {
             <div
               className={
                 showSubscriptionPanel
-                  ? 'grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] xl:items-start'
+                  ? 'grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start'
                   : 'grid gap-4'
               }
             >

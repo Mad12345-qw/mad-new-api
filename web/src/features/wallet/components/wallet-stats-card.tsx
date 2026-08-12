@@ -52,6 +52,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     description: string
     icon: typeof WalletCards
     tone: IconBadgeTone
+    iconClassName?: string
   }[] = [
     {
       label: t('Current Balance'),
@@ -59,6 +60,7 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
       description: t('Remaining quota'),
       icon: WalletCards,
       tone: 'success',
+      iconClassName: 'bg-[#17140f] text-[#d6a84b]',
     },
     {
       label: t('Total Usage'),
@@ -81,7 +83,11 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
       {stats.map((item) => (
         <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
           <div className='flex items-center gap-1.5 sm:gap-2.5'>
-            <IconBadge tone={item.tone} size='stat'>
+            <IconBadge
+              tone={item.tone}
+              size='stat'
+              className={item.iconClassName}
+            >
               <item.icon />
             </IconBadge>
             <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>

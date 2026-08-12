@@ -16,7 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Bot, Check, Copy, Languages, Monitor, Terminal } from 'lucide-react'
+import {
+  Apple,
+  Bot,
+  Check,
+  Copy,
+  Image,
+  Languages,
+  Monitor,
+  ShieldCheck,
+  Terminal,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -94,15 +104,19 @@ export function AgentAccessDialog({ open, onOpenChange, tokenKey }: Props) {
       open={open}
       onOpenChange={onOpenChange}
       title={t('Agent Access')}
-      contentClassName='sm:max-w-xl'
+      contentClassName='max-h-[min(90vh,760px)] overflow-y-auto sm:max-w-2xl'
       footer={
-        <Button onClick={handleCopy} disabled={!tokenKey}>
+        <Button
+          className='w-full sm:w-auto sm:min-w-40'
+          onClick={handleCopy}
+          disabled={!tokenKey}
+        >
           {copied ? <Check /> : <Copy />}
           {t('Copy Command')}
         </Button>
       }
     >
-      <div className='space-y-5'>
+      <div className='space-y-4'>
         <Tabs value={agent} onValueChange={(value) => setAgent(value as AgentKind)}>
           <TabsList className='grid w-full grid-cols-2'>
             <TabsTrigger value='codex'>
@@ -116,25 +130,33 @@ export function AgentAccessDialog({ open, onOpenChange, tokenKey }: Props) {
           </TabsList>
         </Tabs>
 
-        <div className='space-y-2'>
-          <Label>{t('Operating System')}</Label>
+        <div className='space-y-1.5'>
+          <Label className='text-muted-foreground flex items-center gap-1.5 text-xs font-medium'>
+            <Monitor className='size-3.5' />
+            {t('Operating System')}
+          </Label>
           <Tabs
             value={platform}
             onValueChange={(value) => setPlatform(value as AgentPlatform)}
           >
-            <TabsList className='grid w-full grid-cols-2'>
+            <TabsList className='grid w-full grid-cols-2 sm:w-72'>
               <TabsTrigger value='windows'>
                 <Monitor />
                 Windows
               </TabsTrigger>
-              <TabsTrigger value='macos'>macOS</TabsTrigger>
+              <TabsTrigger value='macos'>
+                <Apple />
+                macOS
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
 
         {agent === 'codex' ? (
-          <div className='space-y-2'>
-            <Label>{t('Login Mode')}</Label>
+          <div className='space-y-1.5'>
+            <Label className='text-muted-foreground text-xs font-medium'>
+              {t('Login Mode')}
+            </Label>
             <Tabs
               value={loginMode}
               onValueChange={(value) => setLoginMode(value as CodexLoginMode)}
@@ -146,24 +168,70 @@ export function AgentAccessDialog({ open, onOpenChange, tokenKey }: Props) {
             </Tabs>
           </div>
         ) : (
-          <label className='flex cursor-pointer items-center gap-3'>
+          <label className='border-border flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5'>
             <Checkbox
               checked={installChinese}
               onCheckedChange={(checked) => setInstallChinese(checked === true)}
             />
-            <Languages className='size-4 text-muted-foreground' />
-            <span className='text-sm'>{t('Install Chinese Interface')}</span>
+            <Languages className='mt-0.5 size-4 shrink-0 text-sky-600 dark:text-sky-400' />
+            <span className='min-w-0'>
+              <span className='block text-sm font-medium'>
+                {t('Install Chinese Interface')}
+              </span>
+              <span className='text-muted-foreground mt-0.5 block text-xs'>
+                {t('Language installation is separate and cannot roll back Claude access')}
+              </span>
+            </span>
           </label>
         )}
 
-        <Textarea
-          value={command}
-          readOnly
-          rows={6}
-          spellCheck={false}
-          className='min-h-32 resize-none font-mono text-xs'
-          aria-label={t('Install Command')}
-        />
+        <div className='bg-muted/35 overflow-hidden rounded-lg border'>
+          <div className='border-border flex items-center justify-between gap-3 border-b px-3 py-2'>
+            <span className='text-muted-foreground text-xs font-medium'>
+              {platform === 'windows'
+                ? t('PowerShell command')
+                : t('Terminal command')}
+            </span>
+            <span className='text-muted-foreground shrink-0 text-[10px] uppercase'>
+              {platform === 'windows' ? 'PowerShell' : 'Shell'}
+            </span>
+          </div>
+          <Textarea
+            value={command}
+            readOnly
+            rows={6}
+            spellCheck={false}
+            className='max-h-36 min-h-32 resize-none rounded-none border-0 bg-transparent font-mono text-[11px] leading-5 shadow-none focus-visible:ring-0 sm:text-xs'
+            aria-label={t('Install Command')}
+          />
+        </div>
+
+        <div className='grid grid-cols-1 gap-2 text-xs sm:grid-cols-3'>
+          <div className='flex items-center gap-1.5'>
+            <ShieldCheck className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+            <span>{t('Backs up the original configuration')}</span>
+          </div>
+          <div className='flex items-center gap-1.5'>
+            <Bot className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+            <span>
+              {agent === 'codex'
+                ? t('Updates the MadAPI provider safely')
+                : t('Installs five Claude models')}
+            </span>
+          </div>
+          <div className='flex items-center gap-1.5'>
+            {agent === 'claude' ? (
+              <Image className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+            ) : (
+              <Terminal className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+            )}
+            <span>
+              {agent === 'claude'
+                ? t('Installs the image generation tool')
+                : t('Keeps plugins and MCP settings')}
+            </span>
+          </div>
+        </div>
       </div>
     </Dialog>
   )

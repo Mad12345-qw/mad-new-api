@@ -5277,6 +5277,23 @@
     "Operating System": "Operating System",
     "Login Mode": "Login Mode",
     "Install Chinese Interface": "Install Chinese Interface",
-    "Install Command": "Install Command"
+    "Install Command": "Install Command",
+    "Recharge more to receive a larger bonus": "Recharge more to receive a larger bonus",
+    "New user bonus": "New user bonus",
+    "New user bonus used": "New user bonus used",
+    "Most popular": "Most popular",
+    "Best value": "Best value",
+    "No bonus": "No bonus",
+    "Recharge suggestion": "Recharge suggestion",
+    "Choose a promotional tier to receive a bonus": "Choose a promotional tier to receive a bonus",
+    "Next tier: {{amount}}": "Next tier: {{amount}}",
+    "Highest bonus tier unlocked": "Highest bonus tier unlocked",
+    "Recharge now": "Recharge now",
+    "Language installation is separate and cannot roll back Claude access": "Language installation is separate and cannot roll back Claude access",
+    "Backs up the original configuration": "Backs up the original configuration",
+    "Updates the MadAPI provider safely": "Updates the MadAPI provider safely",
+    "Installs five Claude models": "Installs five Claude models",
+    "Installs the image generation tool": "Installs the image generation tool",
+    "Keeps plugins and MCP settings": "Keeps plugins and MCP settings"
   }
 }

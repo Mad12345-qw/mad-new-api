@@ -235,7 +235,7 @@ for _ in $(seq 1 30); do
 done
 [[ "$image_status" == 200 ]]
 
-"$script_dir/render-unified-route.sh" "$old_port" "$image_port" "$tmp_route"
+bash "$script_dir/render-unified-route.sh" "$old_port" "$image_port" "$tmp_route"
 python3 "$script_dir/patch-nginx-unified-route.py" "$site" "$tmp_route" "$tmp_site"
 cp -a "$tmp_site" "$site"
 site_switched=1

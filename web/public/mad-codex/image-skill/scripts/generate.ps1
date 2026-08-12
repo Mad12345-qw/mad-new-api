@@ -20,7 +20,7 @@ $codexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) {
     [string]$env:CODEX_HOME
 }
 $keyPath = Join-Path $codexHome 'madapi.key'
-$outputDirectory = Join-Path $codexHome 'generated_images'
+$outputDirectory = Join-Path (Get-Location).Path 'outputs'
 $baseUrl = ([string]$env:MADAPI_BASE_URL).Trim().TrimEnd('/')
 if ([string]::IsNullOrWhiteSpace($baseUrl)) { $baseUrl = 'https://mad.myddns.me' }
 $endpoint = $baseUrl + '/v1/images/generations'

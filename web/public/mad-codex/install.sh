@@ -327,8 +327,6 @@ fi
 if [ -f "$key_path" ]; then key_backup_path="$key_path.madapi-backup-$transaction_id"; cp "$key_path" "$key_backup_path"; fi
 if [ -d "$image_skill_path" ]; then image_skill_backup_path="$image_skill_path.madapi-backup-$transaction_id"; mv "$image_skill_path" "$image_skill_backup_path"; fi
 if [ "$auth_mutation" = write ] && [ "$had_auth" -eq 1 ]; then auth_backup_path="$auth_path.madapi-backup-$transaction_id"; cp "$auth_path" "$auth_backup_path"; fi
-history_backup_path="$codex_home/madapi-install-history-backup-$transaction_id"
-MADAPI_HISTORY_PROVIDER="$provider_id" MADAPI_HISTORY_BACKUP_DIR="$history_backup_path" /bin/sh "$temp_history_path"
 mkdir -p "$managed_backup_path"
 if [ -f "$refresh_script_path" ]; then cp -p "$refresh_script_path" "$managed_backup_path/madapi-refresh-model-catalog.sh"; had_refresh_script=1; fi
 if [ -f "$history_script_path" ]; then cp -p "$history_script_path" "$managed_backup_path/madapi-restore-history.sh"; had_history_script=1; fi
@@ -375,6 +373,11 @@ EOF
     /bin/launchctl setenv "$gateway_key_env_name" "$api_key"
 fi
 rm -f "$models_cache_path"
+history_backup_path="$codex_home/madapi-install-history-backup-$transaction_id"
+if ! MADAPI_HISTORY_PROVIDER="$provider_id" MADAPI_HISTORY_BACKUP_DIR="$history_backup_path" /bin/sh "$history_script_path"; then
+  printf '%s\n' 'Warning: MadAPI local history recovery was skipped; the Codex installation remains active.' >&2
+  history_backup_path=
+fi
 success=1
 
 printf 'MadAPI Codex desktop configuration installed: %s\n' "$config_path"

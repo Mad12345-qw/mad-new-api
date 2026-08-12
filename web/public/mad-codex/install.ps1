@@ -117,19 +117,6 @@ function Restore-ManagedFiles([string]$BackupRoot, [string[]]$Paths) {
     }
 }
 
-function Invoke-HistoryRecovery([string]$ScriptPath, [string]$CodexHome, [string]$ProviderId, [string]$BackupRoot) {
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $attemptBackup = if ($attempt -eq 1) { $BackupRoot } else { $BackupRoot + '-retry-' + $attempt }
-        $output = @(& "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -CodexHome $CodexHome -ProviderId $ProviderId -BackupPath $attemptBackup 2>&1)
-        $exitCode = $LASTEXITCODE
-        foreach ($line in $output) { Write-Host ([string]$line) }
-        if ($exitCode -eq 0) { return $attemptBackup }
-        Restore-HistoryBackup $CodexHome $attemptBackup
-        if ($attempt -lt 3) { Start-Sleep -Seconds $attempt }
-    }
-    throw 'MadAPI local history recovery did not complete after 3 attempts.'
-}
-
 $apiKey = [string]$env:MADAPI_KEY
 if ([string]::IsNullOrWhiteSpace($apiKey) -or $apiKey -notmatch '^sk-[A-Za-z0-9._-]+$') {
     throw 'MADAPI_KEY is missing or invalid.'
@@ -411,8 +398,6 @@ try {
         $authBackupPath = '{0}.madapi-backup-{1}' -f $authPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
         [IO.File]::Copy($authPath, $authBackupPath, $false)
     }
-    $historyBackupPath = Join-Path $codexHome ('madapi-install-history-backup-' + $transactionId)
-    $historyBackupPath = Invoke-HistoryRecovery $tempHistoryPath $codexHome $providerId $historyBackupPath
     Backup-ManagedFiles $managedFileBackupRoot $managedFilePaths
     $managedFilesBackedUp = $true
     Move-Item -LiteralPath $tempConfigPath -Destination $configPath -Force
@@ -433,6 +418,13 @@ try {
     $env:MADAPI_API_KEY = $apiKey
     if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
     if (-not $testMode) { Register-CatalogRefreshTask $refreshLauncherPath }
+    $historyBackupPath = Join-Path $codexHome ('madapi-install-history-backup-' + $transactionId)
+    & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $historyScriptPath -CodexHome $codexHome -ProviderId $providerId -BackupPath $historyBackupPath
+    if ($LASTEXITCODE -ne 0) {
+        Restore-HistoryBackup $codexHome $historyBackupPath
+        Write-Warning 'MadAPI local history recovery was skipped; the Codex installation remains active.'
+        $historyBackupPath = $null
+    }
 } catch {
     Restore-HistoryBackup $codexHome $historyBackupPath
     if ($managedFilesBackedUp) { Restore-ManagedFiles $managedFileBackupRoot $managedFilePaths }

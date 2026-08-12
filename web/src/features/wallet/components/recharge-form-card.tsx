@@ -44,6 +44,7 @@ import {
   getMinTopupAmount,
   calculatePresetPricing,
 } from '../lib'
+import { getRechargePromotionQuote } from '../types'
 import type {
   PaymentMethod,
   PresetAmount,
@@ -228,6 +229,10 @@ export function RechargeFormCard({
                   </Label>
                   <div className='grid grid-cols-2 gap-1.5 sm:gap-3 md:grid-cols-4'>
                     {presetAmounts.map((preset) => {
+                      const promotion = getRechargePromotionQuote(
+                        topupInfo?.recharge_promotion,
+                        preset.value
+                      )
                       const discount =
                         preset.discount ||
                         topupInfo?.discount?.[preset.value] ||
@@ -274,6 +279,25 @@ export function RechargeFormCard({
                               </span>
                             )}
                           </div>
+                          {promotion?.promotional && (
+                            <div className='mt-1 flex w-full flex-wrap gap-x-2 gap-y-0.5 text-[11px] leading-4'>
+                              <span className='font-medium text-emerald-600'>
+                                {t('Bonus {{rate}}%', {
+                                  rate: promotion.bonusRatePercent,
+                                })}{' '}
+                                {formatNumber(
+                                  promotion.bonusAmount * usdExchangeRate
+                                )}
+                              </span>
+                              <span className='text-muted-foreground'>
+                                {t('Expected arrival: {{amount}}', {
+                                  amount: formatNumber(
+                                    promotion.creditedAmount * usdExchangeRate
+                                  ),
+                                })}
+                              </span>
+                            </div>
+                          )}
                         </Button>
                       )
                     })}

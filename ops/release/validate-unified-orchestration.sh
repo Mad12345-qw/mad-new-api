@@ -5,12 +5,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 compose="$script_dir/docker-compose.unified.yml"
 route="$script_dir/nginx-unified-route.conf.template"
 legacy="$script_dir/deploy-codex-control-only.sh"
+gateway_hash="$script_dir/production-image-gateway.sha256"
 
 command -v python3 >/dev/null
 command -v bash >/dev/null
 test -f "$compose"
 test -f "$route"
 test -f "$legacy"
+test -f "$gateway_hash"
 
 for file in "$script_dir"/*.sh; do
   bash -n "$file"
@@ -39,16 +41,26 @@ for marker in (
     'database="${MADAPI_SQLITE_DATABASE:-$data_dir/one-api.db}"',
     "source.backup(target)",
     'docker stop "${old_writers[@]}"',
+    'candidate_new="new-api"',
+    'candidate_cpa="cpa-official-gateway"',
     'manifest_commit="$(python3',
     'docker tag mad-new-api:latest "$new_api_image"',
     'docker tag mad-cpa-official-gateway:latest "$cpa_image"',
     "sqlite_single_writer=true",
     "check_pair",
+    'start_pair "$snapshot_data" "$snapshot_logs" "$candidate_port"',
+    'start_pair "$data_dir" "$log_dir" "$old_port"',
     "candidate-data",
+    'sha256sum -c "$image_gateway_hash_file"',
+    'image-gateway-upstream.before.conf',
+    'image-gateway-upstream.candidate.conf',
+    'systemctl restart "$image_gateway_service"',
+    '"http://127.0.0.1:$image_port/health"',
+    'UPSTREAM=http://127.0.0.1:$old_port',
 ):
     if marker not in deploy:
         raise SystemExit(f"SQLite single-writer deploy gate is missing: {marker}")
-for marker in ("docker stop \"$candidate_new\" \"$candidate_cpa\"", "cpa_status", "sqlite_single_writer=true"):
+for marker in ("docker stop \"$candidate_new\" \"$candidate_cpa\"", 'docker rename "$candidate_new" "$deployed_new_backup"', 'docker rename "$deployed_new_backup" "$candidate_new"', "cpa_status", "sqlite_single_writer=true", "image-gateway-upstream.before.conf", "image-gateway-upstream.candidate.conf", 'systemctl restart "$image_gateway_service"'):
     if marker not in rollback:
         raise SystemExit(f"SQLite single-writer rollback gate is missing: {marker}")
 
@@ -70,7 +82,7 @@ PY
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
-"$script_dir/render-unified-route.sh" 3001 3013 "$tmp_dir/route.conf"
+bash "$script_dir/render-unified-route.sh" 3001 3013 "$tmp_dir/route.conf"
 grep -Fq 'proxy_pass http://127.0.0.1:3001;' "$tmp_dir/route.conf"
 grep -Fq 'proxy_pass http://127.0.0.1:3013;' "$tmp_dir/route.conf"
 ! grep -Fq 'new-api-codex-control' "$tmp_dir/route.conf"

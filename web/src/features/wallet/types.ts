@@ -35,6 +35,55 @@ export interface ApiResponse<T = unknown> {
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
 export type AmountResponse = ApiResponse<string>
+
+export const RECHARGE_PROMOTION_AMOUNT_OPTIONS = [6, 30, 68, 128, 328, 648]
+
+export interface RechargePromotion {
+  new_user_six_eligible: boolean
+  amount_options: number[]
+}
+
+export interface RechargePromotionQuote {
+  amount: number
+  creditedAmount: number
+  bonusAmount: number
+  bonusRatePercent: number
+  promotional: boolean
+}
+
+export function getRechargePromotionQuote(
+  promotion: RechargePromotion | undefined,
+  amount: number
+): RechargePromotionQuote | null {
+  if (!promotion || !promotion.amount_options.includes(amount)) return null
+
+  if (amount === 6 && !promotion.new_user_six_eligible) {
+    return {
+      amount,
+      creditedAmount: amount,
+      bonusAmount: 0,
+      bonusRatePercent: 0,
+      promotional: false,
+    }
+  }
+
+  const bonusRate =
+    amount === 6
+      ? 2 / 6
+      : ({ 30: 0.05, 68: 0.08, 128: 0.12, 328: 0.18, 648: 0.25 } as Record<
+          number,
+          number
+        >)[amount] || 0
+  const bonusAmount = amount * bonusRate
+
+  return {
+    amount,
+    creditedAmount: amount + bonusAmount,
+    bonusAmount,
+    bonusRatePercent: Math.round(bonusRate * 1000) / 10,
+    promotional: bonusAmount > 0,
+  }
+}
 export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
   url?: string
 }
@@ -134,6 +183,8 @@ export interface TopupInfo {
   amount_options: number[]
   /** Discount rates by amount */
   discount: Record<number, number>
+  /** Server-provided recharge promotion display contract */
+  recharge_promotion?: RechargePromotion
   /** Optional topup link for purchasing codes */
   topup_link?: string
   /** Whether Creem topup is enabled */

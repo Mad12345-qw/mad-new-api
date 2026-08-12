@@ -190,6 +190,14 @@ export function DataTableRowActions<TData>({
     statusIcon = <PowerOff className='size-4' />
   }
 
+  const handleOpenAgentAccess = async () => {
+    const realKey = await resolveRealKey(apiKey.id)
+    if (!realKey) return
+    setResolvedKey(realKey)
+    setCurrentRow(apiKey)
+    setOpen('agent-access')
+  }
+
   return (
     <div className='-ml-1.5 flex items-center gap-1'>
       <Tooltip>
@@ -231,6 +239,23 @@ export function DataTableRowActions<TData>({
           <Edit />
         </TooltipTrigger>
         <TooltipContent>{t('Edit')}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant='ghost'
+              size='icon-sm'
+              onClick={handleOpenAgentAccess}
+              disabled={isRealKeyLoading}
+              aria-label={t('Agent Access')}
+            />
+          }
+        >
+          <Bot />
+        </TooltipTrigger>
+        <TooltipContent>{t('Agent Access')}</TooltipContent>
       </Tooltip>
 
       <DataTableRowActionMenu
@@ -285,13 +310,7 @@ export function DataTableRowActions<TData>({
           </DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuItem
-          onClick={async () => {
-            const realKey = await resolveRealKey(apiKey.id)
-            if (!realKey) return
-            setResolvedKey(realKey)
-            setCurrentRow(apiKey)
-            setOpen('agent-access')
-          }}
+          onClick={handleOpenAgentAccess}
         >
           {t('Agent Access')}
           <DropdownMenuShortcut>

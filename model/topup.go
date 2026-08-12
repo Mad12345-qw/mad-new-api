@@ -16,6 +16,9 @@ type TopUp struct {
 	UserId          int     `json:"user_id" gorm:"index"`
 	Amount          int64   `json:"amount"`
 	Money           float64 `json:"money"`
+	CreditedQuota   int64   `json:"credited_quota" gorm:"default:0"`
+	BonusQuota      int64   `json:"bonus_quota" gorm:"default:0"`
+	PromotionCode   string  `json:"promotion_code" gorm:"type:varchar(64);default:''"`
 	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
 	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
@@ -320,6 +323,16 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	if tradeNo == "" {
 		return errors.New("未提供订单号")
+	}
+	if topUp := GetTopUpByTradeNo(tradeNo); topUp != nil && topUp.PaymentProvider == PaymentProviderEpay {
+		completion, err := CompleteEpayTopUp(tradeNo, topUp.PaymentMethod)
+		if err != nil {
+			return err
+		}
+		if !completion.AlreadyCompleted {
+			RecordTopupLog(completion.TopUp.UserId, fmt.Sprintf("管理员补单成功，到账额度：%v，赠送额度：%v，支付金额：%.2f", logger.FormatQuota(int(completion.CreditedQuota)), logger.FormatQuota(int(completion.BonusQuota)), completion.TopUp.Money), callerIp, completion.TopUp.PaymentMethod, "admin")
+		}
+		return nil
 	}
 
 	refCol := "`trade_no`"

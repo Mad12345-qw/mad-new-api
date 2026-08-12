@@ -226,8 +226,13 @@ image_gateway_switched=1
 systemctl daemon-reload
 systemctl restart "$image_gateway_service"
 systemctl is-active --quiet "$image_gateway_service"
-image_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
-  "http://127.0.0.1:$image_port/health" || true)"
+image_status=""
+for _ in $(seq 1 30); do
+  image_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \
+    "http://127.0.0.1:$image_port/health" || true)"
+  [[ "$image_status" == 200 ]] && break
+  sleep 0.5
+done
 [[ "$image_status" == 200 ]]
 
 "$script_dir/render-unified-route.sh" "$old_port" "$image_port" "$tmp_route"

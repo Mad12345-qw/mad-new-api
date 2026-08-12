@@ -64,13 +64,15 @@ function Invoke-CodexInstallerCase {
         Assert-True ($config -match '(?m)^experimental_bearer_token = ') 'Codex OAuth bearer configuration is missing.'
         Assert-True ($config -notmatch '(?m)^env_key = "MADAPI_API_KEY"\s*$') 'Codex OAuth incorrectly uses API env_key.'
         $catalog = Get-Content -LiteralPath (Join-Path $codexCaseHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        Assert-True (@($catalog.models).Count -eq 16) 'Codex OAuth catalog is not 16 models.'
+        Assert-True (@($catalog.models).Count -eq 17) 'Codex OAuth catalog is not 17 models.'
+        Assert-True (@($catalog.models | Where-Object { [string]$_.slug -eq 'grok-4.6' }).Count -eq 1) 'Codex OAuth catalog is missing grok-4.6.'
     } else {
         Assert-True ($config -match '(?m)^requires_openai_auth = false\s*$') 'Codex API auth mode is missing.'
         Assert-True ($config -match '(?m)^env_key = "MADAPI_API_KEY"\s*$') "Codex $Mode env key is missing."
         Assert-True ($config -notmatch 'experimental_bearer_token') 'Codex API config contains OAuth bearer configuration.'
         $catalog = Get-Content -LiteralPath (Join-Path $codexCaseHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         Assert-True (@($catalog.models).Count -eq 8) 'Codex API catalog is not 8 models.'
+        Assert-True (@($catalog.models | Where-Object { [string]$_.display_name -eq 'grok-4.6' }).Count -eq 1) 'Codex API catalog is missing grok-4.6.'
     }
     Assert-True ($config -match '(?m)^image_generation = true\s*$') "Codex $Mode image feature is missing."
     Assert-True ($config -match '(?m)^network_access = true\s*$') "Codex $Mode image network access is missing."
@@ -175,7 +177,7 @@ try {
     $meta = [IO.File]::ReadAllText((Join-Path $threePRoot 'configLibrary\_meta.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
     $gatewayPath = Join-Path $threePRoot ('configLibrary\' + [string]$meta.appliedId + '.json')
     $gateway = [IO.File]::ReadAllText($gatewayPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
-    Assert-True ([string]$gateway.inferenceGatewayBaseUrl -eq 'https://mad.test/v1') 'Claude gateway URL is wrong.'
+    Assert-True ([string]$gateway.inferenceGatewayBaseUrl -eq 'https://mad.test') 'Claude gateway URL is wrong.'
     Assert-True (@($gateway.inferenceModels).Count -eq 5) 'Claude model count is wrong.'
     Assert-True (@($gateway.inferenceModels | Where-Object { [string]$_.name -eq 'claude-haiku-4-5' }).Count -eq 1) 'Claude Haiku model is missing.'
 

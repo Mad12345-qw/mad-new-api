@@ -96,7 +96,8 @@ MADAPI_CODEX_TEMPLATE_FILE="$repo_root/tests/fixtures/cpa-codex-templates.json" 
 CODEX_HOME="$codex_home" \
 /bin/sh "$refresh_path"
 oauth_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.models.length))' "$codex_home/madapi-cockpit-model-catalog.json")
-[ "$oauth_count" = 16 ] || fail 'OAuth catalog does not contain exactly 16 conversation models.'
+[ "$oauth_count" = 17 ] || fail 'OAuth catalog does not contain exactly 17 conversation models.'
+grep -Fq '"slug": "grok-4.6"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth catalog is missing grok-4.6.'
 ! grep -Fq '"slug": "gpt-image-2"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth image model leaked into the conversation selector.'
 ! grep -Fq '"slug": "seedance-2.0-fast"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth video model leaked into the conversation selector.'
 
@@ -123,5 +124,7 @@ grep -Fq 'localeOverride = "zh-CN"' "$api_home/config.toml" || fail 'API Chinese
 grep -Fq 'network_access = true' "$api_home/config.toml" || fail 'API image skill network access was not enabled.'
 api_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.models.length))' "$api_home/madapi-cockpit-model-catalog.json")
 [ "$api_count" = 8 ] || fail 'API catalog does not contain exactly eight models.'
+grep -Fq '"display_name": "grok-4.6"' "$api_home/madapi-cockpit-model-catalog.json" || fail 'API catalog is missing grok-4.6.'
+! grep -Fq '"display_name": "grok-4.5"' "$api_home/madapi-cockpit-model-catalog.json" || fail 'API catalog still contains grok-4.5.'
 
 printf '%s\n' 'Codex macOS clean gateway acceptance passed.'

@@ -26,13 +26,19 @@ Assert-True ($installer.Contains('supports_websockets = false')) 'WebSocket opt-
 Assert-True ($installer.Contains('image_generation = true')) 'Codex image generation feature is missing.'
 Assert-True ($installer.Contains('/codex/v1')) 'Dedicated NewAPI-CPA route is missing.'
 Assert-True (-not $installer.Contains('/codex/cockpit/v1')) 'Legacy API compatibility route remains.'
+Assert-True ($installer.Contains("'ChatGPT', 'Codex'")) 'Codex Desktop process-group shutdown is missing.'
+Assert-True ($installer.Contains('OpenAI.Codex_')) 'Codex Desktop package filter is missing.'
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('madapi-clean-codex-' + [guid]::NewGuid().ToString('N'))
 $codexHome = Join-Path $root '.codex'
 $configPath = Join-Path $codexHome 'config.toml'
 $authPath = Join-Path $codexHome 'auth.json'
 $sessionPath = Join-Path $codexHome 'sessions\sentinel.jsonl'
+$projectRoot = Join-Path $root 'project-one'
+$projectSessionPath = Join-Path $codexHome 'sessions\rollout-project-one.jsonl'
+$globalStatePath = Join-Path $codexHome '.codex-global-state.json'
 New-Item -ItemType Directory -Path (Split-Path -Parent $sessionPath) -Force | Out-Null
+New-Item -ItemType Directory -Path $projectRoot -Force | Out-Null
 
 $originalConfig = @'
 model_provider = "custom"
@@ -61,6 +67,25 @@ try {
     Write-Utf8 $configPath $originalConfig
     Write-Utf8 $authPath $oauth
     Write-Utf8 $sessionPath 'session-sentinel'
+    Write-Utf8 $projectSessionPath (([ordered]@{
+        type = 'session_meta'
+        payload = [ordered]@{
+            id = 'project-thread-one'
+            cwd = $projectRoot
+        }
+    } | ConvertTo-Json -Compress))
+    Write-Utf8 $globalStatePath (([ordered]@{
+        'local-projects' = [ordered]@{
+            'local-project-one' = [ordered]@{
+                id = 'local-project-one'
+                name = 'Project One'
+                rootPaths = @($projectRoot)
+            }
+        }
+        'projectless-thread-ids' = @('project-thread-one')
+        'thread-workspace-root-hints' = [ordered]@{}
+        'thread-project-assignments' = [ordered]@{}
+    } | ConvertTo-Json -Depth 20 -Compress))
     Write-Utf8 (Join-Path $codexHome 'models_cache.json') '{}'
     $authHash = Hash $authPath
     $sessionHash = Hash $sessionPath
@@ -94,6 +119,10 @@ try {
     Assert-True ($result.Contains('experimental_bearer_token = "sk-clean-installer-test"')) 'OAuth bearer token is not bound to the configured MadAPI key.'
     Assert-True ((Hash $authPath) -eq $authHash) 'OAuth state changed.'
     Assert-True ((Hash $sessionPath) -eq $sessionHash) 'Session data changed.'
+    $globalState = Get-Content -LiteralPath $globalStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True (@($globalState.'local-projects'.PSObject.Properties).Count -eq 1) 'Existing Codex project was lost.'
+    Assert-True ($null -ne $globalState.'thread-project-assignments'.PSObject.Properties['project-thread-one']) 'Project conversation assignment was not restored.'
+    Assert-True ('project-thread-one' -notin @($globalState.'projectless-thread-ids')) 'Assigned conversation remains projectless.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $codexHome 'models_cache.json'))) 'Stale model cache remains.'
     Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json')) 'Initial catalog is missing.'
     $imageSkillText = [IO.File]::ReadAllText((Join-Path (Join-Path (Split-Path -Parent $codexHome) '.agents') 'skills\madapi-imagegen\SKILL.md'), [Text.Encoding]::UTF8)
@@ -135,7 +164,7 @@ try {
     Assert-True ($terra.default_reasoning_level -eq $terraPro.default_reasoning_level) 'Terra Pro capability profile differs from Terra.'
 
     $apiSlugs = @($catalog.models | ForEach-Object { [string]$_.display_name })
-    $expectedApi = @('claude-fable-5','claude-opus-5','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','grok-4.5','gpt-5.6-sol-pro','gpt-5.6-terra-pro')
+    $expectedApi = @('claude-fable-5','claude-opus-5','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','grok-4.6','gpt-5.6-sol-pro','gpt-5.6-terra-pro')
     Assert-True (($apiSlugs -join '|') -eq ($expectedApi -join '|')) 'API catalog is not exactly the fixed eight models.'
 
     $env:MADAPI_CODEX_AUTH_KIND = 'oauth'
@@ -143,9 +172,13 @@ try {
     & $refreshScript -CodexHome $codexHome | Out-Host
     $oauthCatalog = Get-Content -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $oauthSlugs = @($oauthCatalog.models | ForEach-Object { [string]$_.slug })
-    Assert-True ($oauthSlugs.Count -eq 16) 'OAuth catalog does not contain exactly 16 conversation models.'
+    Assert-True ($oauthSlugs.Count -eq 17) 'OAuth catalog does not contain exactly 17 conversation models.'
     Assert-True ('gpt-image-2' -notin $oauthSlugs -and 'seedance-2.0-fast' -notin $oauthSlugs) 'OAuth media model leaked into the conversation catalog.'
     Assert-True ('gpt-5.6-sol' -in $oauthSlugs -and 'gpt-5.6-terra' -in $oauthSlugs) 'OAuth Pro/base model catalog is incomplete.'
+    Assert-True ('grok-4.6' -in $oauthSlugs) 'OAuth catalog is missing grok-4.6.'
+    $oauthGrok = @($oauthCatalog.models | Where-Object { $_.slug -eq 'grok-4.6' })[0]
+    $grokProfile = @($catalog.models | Where-Object { $_.display_name -eq 'grok-4.6' })[0]
+    Assert-True ($oauthGrok.default_reasoning_level -eq $grokProfile.default_reasoning_level) 'OAuth grok-4.6 capability profile differs from the registered API slot.'
 
     Write-Host 'Codex Windows clean gateway acceptance passed.'
 } finally {

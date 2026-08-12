@@ -26,7 +26,7 @@ var cpaAPIModelSlots = map[string]string{
 	"gpt-5.6-sol":   "gpt-5.6-sol",
 	"gpt-5.6-terra": "gpt-5.6-terra",
 	"gpt-5.6-luna":  "gpt-5.6-luna",
-	"gpt-5.4-mini":  "grok-4.5",
+	"gpt-5.4-mini":  "grok-4.6",
 	"gpt-5.3-codex": "gpt-5.6-sol-pro",
 	"gpt-5.2":       "gpt-5.6-terra-pro",
 }

@@ -1,11 +1,15 @@
 package middleware
 
 import (
+	"bytes"
 	"crypto/subtle"
+	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,7 +17,19 @@ const (
 	cpaControlTokenEnv    = "MADAPI_CPA_CONTROL_TOKEN"
 	cpaControlTokenHeader = "X-MadAPI-CPA-Control-Token"
 	cpaRequestPathHeader  = "X-MadAPI-CPA-Request-Path"
+	cpaLoginModeHeader    = "X-MadAPI-Codex-Login-Mode"
 )
+
+var cpaAPIModelSlots = map[string]string{
+	"gpt-5.5":       "claude-fable-5",
+	"gpt-5.4":       "claude-opus-5",
+	"gpt-5.6-sol":   "gpt-5.6-sol",
+	"gpt-5.6-terra": "gpt-5.6-terra",
+	"gpt-5.6-luna":  "gpt-5.6-luna",
+	"gpt-5.4-mini":  "grok-4.5",
+	"gpt-5.3-codex": "gpt-5.6-sol-pro",
+	"gpt-5.2":       "gpt-5.6-terra-pro",
+}
 
 // CPAControlAuth limits the CPA control plane to the private gateway.
 func CPAControlAuth() gin.HandlerFunc {
@@ -25,6 +41,54 @@ func CPAControlAuth() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid CPA control credential"})
 			return
 		}
+		c.Next()
+	}
+}
+
+// CPAControlModelSlots restores API-mode Codex model shells before NewAPI
+// applies token limits, channel selection, pricing, and billing. OAuth mode
+// uses its native model names and never enters this mapping.
+func CPAControlModelSlots() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !strings.EqualFold(strings.TrimSpace(c.GetHeader(cpaLoginModeHeader)), "apikey") {
+			c.Next()
+			return
+		}
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid CPA request body"})
+			return
+		}
+	raw, err := storage.Bytes()
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid CPA request body"})
+			return
+		}
+		var payload map[string]json.RawMessage
+		if err = json.Unmarshal(raw, &payload); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid CPA request body"})
+			return
+		}
+		var shell string
+		if err = json.Unmarshal(payload["model"], &shell); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+			return
+		}
+		target, ok := cpaAPIModelSlots[strings.ToLower(strings.TrimSpace(shell))]
+		if !ok || strings.EqualFold(shell, target) {
+			c.Next()
+			return
+		}
+		payload["model"], _ = json.Marshal(target)
+		rewritten, err := json.Marshal(payload)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid CPA request body"})
+			return
+		}
+		common.CleanupBodyStorage(c)
+		c.Set(common.KeyRequestBody, rewritten)
+		c.Request.Body = io.NopCloser(bytes.NewReader(rewritten))
+		c.Request.ContentLength = int64(len(rewritten))
 		c.Next()
 	}
 }

@@ -22,6 +22,9 @@ models_cache_path="$codex_home/models_cache.json"
 catalog_path="$codex_home/madapi-cockpit-model-catalog.json"
 refresh_script_path="$codex_home/madapi-refresh-model-catalog.sh"
 history_script_path="$codex_home/madapi-restore-history.sh"
+key_path="$codex_home/madapi.key"
+skills_path="$codex_home/skills"
+image_skill_path="$skills_path/madapi-imagegen"
 transaction_id="$$-$(date '+%s')"
 temp_path="$codex_home/config.toml.madapi.$transaction_id.tmp"
 temp_refresh_path="$codex_home/madapi-refresh-model-catalog.$transaction_id.tmp"
@@ -30,13 +33,24 @@ temp_catalog_path="$codex_home/madapi-cockpit-model-catalog.$transaction_id.tmp"
 temp_auth_path="$codex_home/auth.json.madapi.$transaction_id.tmp"
 temp_plist_path="$codex_home/madapi-model-catalog.$transaction_id.plist"
 body_path="$codex_home/config.toml.madapi.$transaction_id.body"
+temp_key_path="$codex_home/madapi.key.$transaction_id.tmp"
+temp_image_skill_path="$skills_path/madapi-imagegen.$transaction_id.tmp"
+managed_backup_path="$codex_home/madapi-install-managed-backup-$transaction_id"
 backup_path=
 auth_backup_path=
 history_backup_path=
+key_backup_path=
+image_skill_backup_path=
 had_config=0
 had_auth=0
 config_installed=0
 auth_changed=0
+key_installed=0
+image_skill_installed=0
+managed_files_backed_up=0
+had_refresh_script=0
+had_history_script=0
+had_catalog=0
 success=0
 test_mode=${MADAPI_INSTALL_TEST_MODE:-0}
 staging_home=
@@ -74,9 +88,10 @@ if [ "$requested_login_mode" = oauth ]; then
   auth_kind=oauth
 elif [ "$requested_login_mode" = apikey ]; then
   auth_kind=apikey
+  auth_mutation=write
 fi
 
-mkdir -p "$codex_home"
+mkdir -p "$codex_home" "$skills_path"
 [ -f "$config_path" ] && had_config=1
 
 root_string_value() {
@@ -146,7 +161,7 @@ provider_name=
 [ -n "$provider_name" ] || provider_name=$provider_id
 
 if [ "$had_config" -eq 1 ]; then
-  LC_ALL=C awk -v target="model_providers.$provider_id" '
+  LC_ALL=C awk -v target="model_providers.$provider_id" -v force_locale="$auth_kind" '
     function root_key(line, equals_at, key, first, last, quote) {
       equals_at = index(line, "=")
       if (equals_at == 0) return ""
@@ -159,36 +174,55 @@ if [ "$had_config" -eq 1 ]; then
       }
       return key
     }
-    BEGIN { current = ""; skip = 0; features = 0 }
+    BEGIN { current = ""; skip = 0; features = 0; desktop = 0 }
     /^[[:space:]]*\[[^]]+\][[:space:]]*(#.*)?$/ {
       section = $0; sub(/^[[:space:]]*\[/, "", section); sub(/\].*$/, "", section); current = section
       skip = (current == "model_providers.madapi" || index(current, "model_providers.madapi.") == 1 || current == target || index(current, target ".") == 1)
       if (skip) next
       if (current == "features") { features = 1; print; print "image_generation = true"; next }
+      if (current == "desktop") { desktop = 1; print; print "localeOverride = \"zh-CN\""; next }
     }
     skip { next }
     current == "features" && /^[[:space:]]*image_generation[[:space:]]*=/ { next }
+    current == "desktop" && /^[[:space:]]*localeOverride[[:space:]]*=/ { next }
     current == "" { key = root_key($0); if (key == "model_provider" || key == "model_catalog_json") next }
     { print }
-    END { if (!features) { print ""; print "[features]"; print "image_generation = true" } }
+    END {
+      if (!features) { print ""; print "[features]"; print "image_generation = true" }
+      if (!desktop) { print ""; print "[desktop]"; print "localeOverride = \"zh-CN\"" }
+    }
   ' "$config_path" > "$body_path"
 else
   : > "$body_path"
+  printf '\n[desktop]\nlocaleOverride = "zh-CN"\n' > "$body_path"
 fi
 
 cleanup() {
   if [ "$success" -ne 1 ] && [ -n "$history_backup_path" ] && [ -d "$history_backup_path" ]; then
-    for name in session_index.jsonl .codex-global-state.json state_5.sqlite state_5.sqlite-wal state_5.sqlite-shm; do
-      if [ -f "$history_backup_path/$name" ]; then cp -p "$history_backup_path/$name" "$codex_home/$name"; else rm -f "$codex_home/$name"; fi
+    [ ! -f "$history_backup_path/session_index.jsonl.before" ] || cp -p "$history_backup_path/session_index.jsonl.before" "$codex_home/session_index.jsonl"
+    [ ! -f "$history_backup_path/.codex-global-state.json.before" ] || cp -p "$history_backup_path/.codex-global-state.json.before" "$codex_home/.codex-global-state.json"
+    for name in state_5.sqlite state_5.sqlite-wal state_5.sqlite-shm; do
+      [ ! -f "$history_backup_path/$name" ] || cp -p "$history_backup_path/$name" "$codex_home/$name"
     done
+  fi
+  if [ "$success" -ne 1 ] && [ "$managed_files_backed_up" -eq 1 ]; then
+    if [ "$had_refresh_script" -eq 1 ]; then cp -p "$managed_backup_path/madapi-refresh-model-catalog.sh" "$refresh_script_path"; else rm -f "$refresh_script_path"; fi
+    if [ "$had_history_script" -eq 1 ]; then cp -p "$managed_backup_path/madapi-restore-history.sh" "$history_script_path"; else rm -f "$history_script_path"; fi
+    if [ "$had_catalog" -eq 1 ]; then cp -p "$managed_backup_path/madapi-cockpit-model-catalog.json" "$catalog_path"; else rm -f "$catalog_path"; fi
   fi
   if [ "$success" -ne 1 ] && [ "$auth_changed" -eq 1 ]; then
     if [ "$had_auth" -eq 1 ] && [ -n "$auth_backup_path" ] && [ -f "$auth_backup_path" ]; then cp "$auth_backup_path" "$auth_path"; else rm -f "$auth_path"; fi
   fi
+  if [ "$success" -ne 1 ] && [ "$image_skill_installed" -eq 1 ]; then rm -rf "$image_skill_path"; fi
+  if [ "$success" -ne 1 ] && [ -n "$image_skill_backup_path" ] && [ -d "$image_skill_backup_path" ]; then mv "$image_skill_backup_path" "$image_skill_path"; fi
+  if [ "$success" -ne 1 ] && [ "$key_installed" -eq 1 ]; then rm -f "$key_path"; fi
+  if [ "$success" -ne 1 ] && [ -n "$key_backup_path" ] && [ -f "$key_backup_path" ]; then cp "$key_backup_path" "$key_path"; fi
   if [ "$success" -ne 1 ] && [ "$config_installed" -eq 1 ]; then
     if [ "$had_config" -eq 1 ] && [ -n "$backup_path" ] && [ -f "$backup_path" ]; then cp "$backup_path" "$config_path"; else rm -f "$config_path"; fi
   fi
-  rm -f "$temp_path" "$temp_refresh_path" "$temp_history_path" "$temp_catalog_path" "$temp_auth_path" "$temp_plist_path" "$body_path"
+  rm -f "$temp_path" "$temp_refresh_path" "$temp_history_path" "$temp_catalog_path" "$temp_auth_path" "$temp_plist_path" "$body_path" "$temp_key_path"
+  rm -rf "$temp_image_skill_path"
+  rm -rf "$managed_backup_path"
   [ -z "$staging_home" ] || rm -rf "$staging_home"
 }
 trap cleanup EXIT
@@ -210,12 +244,35 @@ trap 'exit 1' HUP INT TERM
   printf '%s\n' 'wire_api = "responses"'
   printf '%s\n' 'requires_openai_auth = false'
   printf 'env_key = %s\n' "$(toml_string "$gateway_key_env_name")"
-  printf '%s\n' 'http_headers = { "x-openai-actor-authorization" = "madapi-gateway" }'
+  printf 'http_headers = { "x-openai-actor-authorization" = "madapi-gateway", "x-madapi-codex-login-mode" = %s }\n' "$(toml_string "$auth_kind")"
   printf '%s\n' 'supports_websockets = false'
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 3'
   printf '%s\n' 'context_window_override = 1048576'
 } > "$temp_path"
+
+printf '%s\n' "$api_key" > "$temp_key_path"
+mkdir -p "$temp_image_skill_path/scripts"
+image_skill_source=${MADAPI_IMAGE_SKILL_SOURCE_DIR:-}
+if [ -z "$image_skill_source" ]; then
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
+  if [ -n "$script_dir" ] && [ -d "$script_dir/image-skill" ]; then image_skill_source="$script_dir/image-skill"; fi
+fi
+if [ -n "$image_skill_source" ]; then
+  cp "$image_skill_source/SKILL.md" "$temp_image_skill_path/SKILL.md"
+  cp "$image_skill_source/scripts/generate.sh" "$temp_image_skill_path/scripts/generate.sh"
+elif [ "$test_mode" = 1 ]; then
+  printf '%s\n' 'MADAPI_IMAGE_SKILL_SOURCE_DIR is required in installer test mode.' >&2
+  exit 1
+else
+  curl -fsSL "$madapi_base_url/mad-codex/image-skill/SKILL.md" -o "$temp_image_skill_path/SKILL.md"
+  curl -fsSL "$madapi_base_url/mad-codex/image-skill/scripts/generate.sh" -o "$temp_image_skill_path/scripts/generate.sh"
+fi
+[ -s "$temp_image_skill_path/SKILL.md" ] && [ -s "$temp_image_skill_path/scripts/generate.sh" ] || { printf '%s\n' 'The MadAPI image generation skill is invalid.' >&2; exit 1; }
+chmod 700 "$temp_image_skill_path/scripts/generate.sh"
+if [ "$auth_mutation" = write ]; then
+  printf '{"auth_mode":"apikey","OPENAI_API_KEY":"%s"}' "$api_key" > "$temp_auth_path"
+fi
 
 refresh_source=${MADAPI_REFRESH_SCRIPT_SOURCE:-}
 if [ -z "$refresh_source" ]; then
@@ -251,26 +308,32 @@ else
 fi
 [ -s "$temp_history_path" ] || { printf '%s\n' 'The MadAPI history restore script is invalid.' >&2; exit 1; }
 
-if [ "$test_mode" = 1 ]; then
-  printf '%s' '{"models":[{"slug":"gpt-5.6-sol","display_name":"gpt-5.6-sol"}]}' > "$temp_catalog_path"
-else
-  staging_home="$codex_home/madapi-catalog-stage-$transaction_id"
-  mkdir -p "$staging_home"
-  cp "$temp_path" "$staging_home/config.toml"
-  if ! MADAPI_API_KEY="$api_key" MADAPI_BASE_URL="$madapi_base_url" CODEX_HOME="$staging_home" /bin/sh "$temp_refresh_path"; then
-    rm -rf "$staging_home"
-    printf '%s\n' 'Unable to download the initial MadAPI model catalog.' >&2
-    exit 1
-  fi
-  mv "$staging_home/madapi-cockpit-model-catalog.json" "$temp_catalog_path"
+staging_home="$codex_home/madapi-catalog-stage-$transaction_id"
+mkdir -p "$staging_home"
+cp "$temp_path" "$staging_home/config.toml"
+if ! MADAPI_API_KEY="$api_key" MADAPI_BASE_URL="$madapi_base_url" MADAPI_CODEX_AUTH_KIND="$auth_kind" CODEX_HOME="$staging_home" /bin/sh "$temp_refresh_path"; then
   rm -rf "$staging_home"
-  staging_home=
+  printf '%s\n' 'Unable to download the initial MadAPI model catalog.' >&2
+  exit 1
 fi
+mv "$staging_home/madapi-cockpit-model-catalog.json" "$temp_catalog_path"
+rm -rf "$staging_home"
+staging_home=
 
 if [ "$had_config" -eq 1 ]; then
   backup_path="$config_path.madapi-backup-$(date '+%Y%m%d-%H%M%S')-$$"
   cp -p "$config_path" "$backup_path"
 fi
+if [ -f "$key_path" ]; then key_backup_path="$key_path.madapi-backup-$transaction_id"; cp "$key_path" "$key_backup_path"; fi
+if [ -d "$image_skill_path" ]; then image_skill_backup_path="$image_skill_path.madapi-backup-$transaction_id"; mv "$image_skill_path" "$image_skill_backup_path"; fi
+if [ "$auth_mutation" = write ] && [ "$had_auth" -eq 1 ]; then auth_backup_path="$auth_path.madapi-backup-$transaction_id"; cp "$auth_path" "$auth_backup_path"; fi
+history_backup_path="$codex_home/madapi-install-history-backup-$transaction_id"
+MADAPI_HISTORY_PROVIDER="$provider_id" MADAPI_HISTORY_BACKUP_DIR="$history_backup_path" /bin/sh "$temp_history_path"
+mkdir -p "$managed_backup_path"
+if [ -f "$refresh_script_path" ]; then cp -p "$refresh_script_path" "$managed_backup_path/madapi-refresh-model-catalog.sh"; had_refresh_script=1; fi
+if [ -f "$history_script_path" ]; then cp -p "$history_script_path" "$managed_backup_path/madapi-restore-history.sh"; had_history_script=1; fi
+if [ -f "$catalog_path" ]; then cp -p "$catalog_path" "$managed_backup_path/madapi-cockpit-model-catalog.json"; had_catalog=1; fi
+managed_files_backed_up=1
 mv "$temp_path" "$config_path"
 config_installed=1
 chmod 600 "$config_path"
@@ -280,6 +343,12 @@ mv "$temp_history_path" "$history_script_path"
 chmod 700 "$history_script_path"
 mv "$temp_catalog_path" "$catalog_path"
 chmod 600 "$catalog_path"
+mv "$temp_key_path" "$key_path"
+chmod 600 "$key_path"
+key_installed=1
+mv "$temp_image_skill_path" "$image_skill_path"
+image_skill_installed=1
+if [ "$auth_mutation" = write ]; then mv "$temp_auth_path" "$auth_path"; chmod 600 "$auth_path"; auth_changed=1; fi
 if [ "$test_mode" != 1 ]; then
     launch_agents="$HOME/Library/LaunchAgents"
     plist_path="$launch_agents/me.madapi.codex-model-catalog.plist"
@@ -306,8 +375,6 @@ EOF
     /bin/launchctl setenv "$gateway_key_env_name" "$api_key"
 fi
 rm -f "$models_cache_path"
-history_backup_path="$codex_home/madapi-install-history-backup-$transaction_id"
-MADAPI_HISTORY_PROVIDER="$provider_id" MADAPI_HISTORY_BACKUP_DIR="$history_backup_path" /bin/sh "$history_script_path"
 success=1
 
 printf 'MadAPI Codex desktop configuration installed: %s\n' "$config_path"
@@ -317,7 +384,7 @@ printf 'MadAPI Codex desktop configuration installed: %s\n' "$config_path"
 if [ "$requested_login_mode" = oauth ] && [ "$existing_auth_kind" != oauth ]; then
   printf '%s\n' 'MadAPI installed. Sign in with ChatGPT after Codex restarts to keep an OAuth account connected.'
 elif [ "$requested_login_mode" = apikey ]; then
-  printf '%s\n' 'MadAPI API Key mode installed without changing Codex account state.'
+  printf '%s\n' 'MadAPI API Key sign-in configured.'
 elif [ "$auth_kind" = 'oauth' ]; then
   printf '%s\n' 'Existing ChatGPT OAuth session preserved.'
 elif [ "$auth_kind" = 'apikey' ]; then

@@ -321,7 +321,12 @@ func (c *coordinator) InterceptRequestBeforeAuth(ctx context.Context, request pl
 	}
 	headers := make(http.Header)
 	headers.Set(dispatchIDHeader, request.RequestID)
-	return pluginapi.RequestInterceptResponse{Headers: headers}
+	body, err := rewriteDispatchModel(input.body, dispatch.Model)
+	if err != nil {
+		c.finalizeRequest(request.RequestID, "failed", usagePayload{})
+		return terminateRequest(err, http.StatusBadGateway)
+	}
+	return pluginapi.RequestInterceptResponse{Headers: headers, Body: body}
 }
 
 func (c *coordinator) InterceptRequestAfterAuth(_ context.Context, request pluginapi.RequestInterceptRequest) pluginapi.RequestInterceptResponse {
@@ -462,11 +467,28 @@ func terminateRequest(err error, status int) pluginapi.RequestInterceptResponse 
 }
 
 func copyClientCredentials(dst, src http.Header) {
-	for _, name := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key"} {
+	for _, name := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key", "X-MadAPI-Codex-Login-Mode"} {
 		if value := strings.TrimSpace(src.Get(name)); value != "" {
 			dst.Set(name, value)
 		}
 	}
+}
+
+func rewriteDispatchModel(raw []byte, model string) ([]byte, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil, errors.New("NewAPI dispatch omitted model")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("decode CPA request for model dispatch: %w", err)
+	}
+	payload["model"], _ = json.Marshal(model)
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode CPA request for model dispatch: %w", err)
+	}
+	return rewritten, nil
 }
 
 func metadataString(metadata map[string]any, key string) string {

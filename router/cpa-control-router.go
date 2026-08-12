@@ -17,6 +17,7 @@ func SetCPAControlRouter(router *gin.Engine) {
 		control.POST("/dispatch",
 			middleware.TokenAuth(),
 			middleware.CPAControlRequestPath(),
+			middleware.CPAControlModelSlots(),
 			middleware.Distribute(),
 			controller.CPAControlDispatch,
 		)

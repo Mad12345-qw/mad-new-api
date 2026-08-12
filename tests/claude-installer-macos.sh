@@ -74,7 +74,7 @@ JXA
 [ -f "$tool/widget.html" ]
 [ "$(grep -c '/mad-home/' "$tool/widget.html" || true)" -eq 0 ]
 [ -f "$tool/cache/keep-image.png" ]
-grep -Fq '"$baseUrl/v1/models"' "$installer" || {
+grep -Fq '"$base_url/v1/models"' "$installer" || {
   printf '%s\n' 'Models endpoint does not use /v1/models.' >&2
   exit 1
 }

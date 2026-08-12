@@ -47,6 +47,7 @@ import {
   getMinTopupAmount,
   dispatchSelectedPayment,
 } from './lib'
+import { getRechargePromotionQuote } from './types'
 import type {
   UserWalletData,
   PaymentMethod,
@@ -274,6 +275,10 @@ export function Wallet(props: WalletProps) {
   const getDiscountRate = useCallback(() => {
     return topupInfo?.discount?.[topupAmount] || DEFAULT_DISCOUNT_RATE
   }, [topupInfo, topupAmount])
+  const rechargePromotion = getRechargePromotionQuote(
+    topupInfo?.recharge_promotion,
+    topupAmount
+  )
 
   const handleSubscriptionAvailabilityChange = useCallback(
     (available: boolean) => {
@@ -363,6 +368,7 @@ export function Wallet(props: WalletProps) {
         processing={processing || waffoProcessing || pancakeProcessing}
         discountRate={getDiscountRate()}
         usdExchangeRate={effectiveUsdExchangeRate}
+        promotion={rechargePromotion}
       />
 
       <TransferDialog

@@ -34,7 +34,10 @@ import { formatLocalCurrencyAmount } from '@/lib/currency'
 
 import { DEFAULT_DISCOUNT_RATE } from '../../constants'
 import { formatCurrency, getPaymentIcon } from '../../lib'
-import type { PaymentMethod } from '../../types'
+import type {
+  PaymentMethod,
+  RechargePromotionQuote,
+} from '../../types'
 
 interface PaymentConfirmDialogProps {
   open: boolean
@@ -47,6 +50,7 @@ interface PaymentConfirmDialogProps {
   processing: boolean
   discountRate?: number
   usdExchangeRate?: number
+  promotion?: RechargePromotionQuote | null
 }
 
 export function PaymentConfirmDialog({
@@ -60,6 +64,7 @@ export function PaymentConfirmDialog({
   processing,
   discountRate = DEFAULT_DISCOUNT_RATE,
   usdExchangeRate = 1,
+  promotion,
 }: PaymentConfirmDialogProps) {
   const { t } = useTranslation()
   const hasDiscount = discountRate > 0 && discountRate < 1 && paymentAmount > 0
@@ -118,6 +123,36 @@ export function PaymentConfirmDialog({
                 <span className='text-muted-foreground'>{t('You save')}</span>
                 <span className='font-semibold text-green-600'>
                   {formatCurrency(discountAmount)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {promotion?.promotional && (
+            <div className='rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900 dark:bg-emerald-950/30'>
+              <div className='flex items-center justify-between text-sm'>
+                <span className='text-muted-foreground'>
+                  {t('Recharge bonus')}
+                </span>
+                <span className='font-semibold text-emerald-600'>
+                  {t('Bonus {{rate}}%', {
+                    rate: promotion.bonusRatePercent,
+                  })}{' '}
+                  {formatLocalCurrencyAmount(
+                    promotion.bonusAmount * usdExchangeRate,
+                    { digitsLarge: 2, digitsSmall: 2, abbreviate: false }
+                  )}
+                </span>
+              </div>
+              <div className='mt-1 flex items-center justify-between text-sm'>
+                <span className='text-muted-foreground'>
+                  {t('Expected arrival')}
+                </span>
+                <span className='font-semibold'>
+                  {formatLocalCurrencyAmount(
+                    promotion.creditedAmount * usdExchangeRate,
+                    { digitsLarge: 2, digitsSmall: 2, abbreviate: false }
+                  )}
                 </span>
               </div>
             </div>

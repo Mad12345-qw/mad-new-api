@@ -72,6 +72,9 @@ jobs:
           bun install --frozen-lockfile
           bun run typecheck
           bun run build
+          bun test \
+            src/features/keys/lib/__tests__/agent-access-config.test.ts \
+            src/features/wallet/types.test.ts
 
       - name: Validate Claude and homepage assets
         shell: bash
@@ -116,6 +119,7 @@ jobs:
         shell: bash
         run: |
           /bin/sh tests/codex-installer-macos.sh web/public/mad-codex/install.sh
+          /bin/sh tests/codex-image-skill-macos.sh web/public/mad-codex/image-skill/scripts/generate.sh
           /bin/sh tests/claude-installer-macos.sh web/public/mad-claude/install.sh web/public/mad-claude/image-tool
           MADAPI_CLAUDE_LANGUAGE_DRY_RUN=1 /bin/sh web/public/mad-claude/install-language.sh
 
@@ -153,6 +157,8 @@ jobs:
           for script in ops/release/*.sh ops/disaster-recovery/*.sh ops/docker-disk-guard/*.sh; do
             bash -n "$script"
           done
+          ops/release/validate-unified-orchestration.sh
+          python3 ops/release/test-patch-nginx-unified-route.py
           python3 -m unittest discover -s ops/disaster-recovery -p 'test_*.py'
           python3 -m unittest discover -s ops/mad-api-error-alert -p 'test_*.py'
           python3 -m pip install -r ops/model-detector/requirements.txt

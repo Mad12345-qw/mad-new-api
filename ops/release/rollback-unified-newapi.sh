@@ -17,7 +17,11 @@ old_control_present="$(get_value MADAPI_UNIFIED_OLD_CONTROL_PRESENT)"
 old_port="$(get_value MADAPI_UNIFIED_OLD_PORT)"
 candidate_new="$(get_value MADAPI_UNIFIED_CANDIDATE_NEW_API)"
 candidate_cpa="$(get_value MADAPI_UNIFIED_CANDIDATE_CPA)"
-for value in "$old_new" "$candidate_new" "$candidate_cpa"; do [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]; done
+deployed_new_backup="$(get_value MADAPI_UNIFIED_DEPLOYED_NEW_BACKUP)"
+deployed_cpa_backup="$(get_value MADAPI_UNIFIED_DEPLOYED_CPA_BACKUP)"
+image_gateway_dropin="$(get_value MADAPI_UNIFIED_IMAGE_GATEWAY_DROPIN)"
+image_gateway_service="$(get_value MADAPI_UNIFIED_IMAGE_GATEWAY_SERVICE)"
+for value in "$old_new" "$candidate_new" "$candidate_cpa" "$deployed_new_backup" "$deployed_cpa_backup"; do [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]; done
 docker inspect "$old_new" >/dev/null
 [[ "$old_cpa_present" == 0 || "$old_cpa_present" == 1 ]]
 [[ "$old_control_present" == 0 || "$old_control_present" == 1 ]]
@@ -26,12 +30,19 @@ docker inspect "$old_new" >/dev/null
 
 # Stop the current writers before the old pair reopens the same SQLite database.
 docker stop "$candidate_new" "$candidate_cpa" >/dev/null
+docker rename "$candidate_new" "$deployed_new_backup"
+docker rename "$candidate_cpa" "$deployed_cpa_backup"
 docker rename "$old_new" new-api
 [[ "$old_cpa_present" == 0 ]] || docker rename "$old_cpa" cpa-official-gateway
 [[ "$old_control_present" == 0 ]] || docker rename "$old_control" new-api-codex-control
 docker start new-api >/dev/null
 [[ "$old_cpa_present" == 0 ]] || docker start cpa-official-gateway >/dev/null
 [[ "$old_control_present" == 0 ]] || docker start new-api-codex-control >/dev/null
+[[ -f "$backup_dir/image-gateway-upstream.before.conf" && -f "$image_gateway_dropin" ]]
+cp -a "$backup_dir/image-gateway-upstream.before.conf" "$image_gateway_dropin"
+systemctl daemon-reload
+systemctl restart "$image_gateway_service"
+systemctl is-active --quiet "$image_gateway_service"
 
 new_status=""; cpa_status="not-present"
 for _ in $(seq 1 "$health_attempts"); do
@@ -47,7 +58,12 @@ if [[ "$new_status" != 200 || ( "$old_cpa_present" == 1 && "$cpa_status" != 200 
   docker rename new-api "$old_new" >/dev/null 2>&1 || true
   [[ "$old_cpa_present" == 0 ]] || docker rename cpa-official-gateway "$old_cpa" >/dev/null 2>&1 || true
   [[ "$old_control_present" == 0 ]] || docker rename new-api-codex-control "$old_control" >/dev/null 2>&1 || true
+  docker rename "$deployed_new_backup" "$candidate_new" >/dev/null 2>&1 || true
+  docker rename "$deployed_cpa_backup" "$candidate_cpa" >/dev/null 2>&1 || true
   docker start "$candidate_cpa" "$candidate_new" >/dev/null 2>&1 || true
+  cp -a "$backup_dir/image-gateway-upstream.candidate.conf" "$image_gateway_dropin" >/dev/null 2>&1 || true
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl restart "$image_gateway_service" >/dev/null 2>&1 || true
   echo "rollback target health failed; candidate restarted and Nginx was not changed" >&2
   exit 69
 fi

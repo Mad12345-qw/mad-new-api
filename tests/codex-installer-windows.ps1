@@ -85,6 +85,7 @@ try {
     Assert-True (-not $result.Contains('env_key = "MADAPI_API_KEY"')) 'OAuth config incorrectly uses API env_key.'
     Assert-True ($result.Contains('x-openai-actor-authorization')) 'Gateway actor header is missing.'
     Assert-True ($result.Contains('image_generation = true')) 'Image generation was not enabled.'
+    Assert-True ($result.Contains('localeOverride = "zh-CN"')) 'Chinese Codex interface was not enabled.'
     Assert-True ($result.Contains('network_access = true')) 'Image skill network access was not enabled.'
     Assert-True ($result.Contains('path = "') -and $result.Contains('madapi-imagegen')) 'Image skill path was not registered.'
     Assert-True (([regex]::Matches($result, '(?m)^\[features\]\r?$')).Count -eq 1) 'Features table was duplicated.'
@@ -107,6 +108,9 @@ try {
     Assert-True ($repeat.Contains('requires_openai_auth = false')) 'API gateway auth mode is missing.'
     Assert-True ($repeat.Contains('env_key = "MADAPI_API_KEY"')) 'API gateway env_key is missing.'
     Assert-True (-not $repeat.Contains('experimental_bearer_token')) 'API config contains OAuth bearer authentication.'
+    Assert-True ($repeat.Contains('image_generation = true')) 'API image generation was not enabled.'
+    Assert-True ($repeat.Contains('localeOverride = "zh-CN"')) 'API Chinese Codex interface was not enabled.'
+    Assert-True ($repeat.Contains('network_access = true')) 'API image skill network access was not enabled.'
     $apiAuth = Get-Content -LiteralPath $authPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-True ([string]$apiAuth.auth_mode -eq 'apikey' -and [string]$apiAuth.OPENAI_API_KEY -eq 'sk-clean-api-installer') 'API authentication state was not configured.'
     $apiCatalog = Get-Content -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json

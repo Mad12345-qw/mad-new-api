@@ -24,12 +24,14 @@ import {
   mergePresetAmounts,
   getMinTopupAmount,
 } from '../lib'
+import { RECHARGE_PROMOTION_AMOUNT_OPTIONS } from '../types'
 import type {
   TopupInfo,
   PresetAmount,
   CreemProduct,
   PaymentMethod,
   WaffoPayMethod,
+  RechargePromotion,
 } from '../types'
 
 // ============================================================================
@@ -163,6 +165,23 @@ function parseDiscountMap(data: unknown): Record<number, number> {
   )
 }
 
+function parseRechargePromotion(data: unknown): RechargePromotion | undefined {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined
+  const value = data as Record<string, unknown>
+  const configured = parseJsonArray(value.amount_options)
+    .map((item) => Number(item))
+    .filter((item) => RECHARGE_PROMOTION_AMOUNT_OPTIONS.includes(item))
+  if (!configured.length) return undefined
+  const amountOptions = RECHARGE_PROMOTION_AMOUNT_OPTIONS.filter((item) =>
+    configured.includes(item)
+  )
+
+  return {
+    new_user_six_eligible: value.new_user_six_eligible !== false,
+    amount_options: amountOptions,
+  }
+}
+
 export function useTopupInfo() {
   const [topupInfo, setTopupInfo] = useState<TopupInfo | null>(null)
   const [presetAmounts, setPresetAmounts] = useState<PresetAmount[]>([])
@@ -188,6 +207,9 @@ export function useTopupInfo() {
         ),
         amount_options: parseAmountOptions(response.data.amount_options),
         discount: parseDiscountMap(response.data.discount),
+        recharge_promotion: parseRechargePromotion(
+          response.data.recharge_promotion
+        ),
         creem_products: parseCreemProducts(response.data.creem_products),
         waffo_pay_methods: parseWaffoPayMethods(
           response.data.waffo_pay_methods
@@ -196,7 +218,12 @@ export function useTopupInfo() {
 
       setTopupInfo(processedData)
 
-      if (processedData.amount_options.length > 0) {
+      const promotionAmounts = processedData.recharge_promotion?.amount_options
+      if (promotionAmounts?.length) {
+        setPresetAmounts(
+          mergePresetAmounts(promotionAmounts, processedData.discount || {})
+        )
+      } else if (processedData.amount_options.length > 0) {
         const customPresets = mergePresetAmounts(
           processedData.amount_options,
           processedData.discount || {}

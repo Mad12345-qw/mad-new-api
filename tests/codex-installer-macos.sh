@@ -70,6 +70,8 @@ grep -Fq 'requires_openai_auth = true' "$config" || fail 'OAuth gateway auth mod
 grep -Fq 'experimental_bearer_token = ' "$config" || fail 'OAuth bearer token is missing.'
 ! grep -Fq 'env_key = "MADAPI_API_KEY"' "$config" || fail 'OAuth config incorrectly uses API env_key.'
 grep -Fq 'image_generation = true' "$config" || fail 'Image generation was not enabled.'
+grep -Fq 'localeOverride = "zh-CN"' "$config" || fail 'Chinese Codex interface was not enabled.'
+grep -Fq 'network_access = true' "$config" || fail 'Image skill network access was not enabled.'
 grep -Fq 'sk-clean-macos-test' "$config" || fail 'OAuth bearer token was not written for the mature OAuth path.'
 [ "$(shasum -a 256 "$auth" | awk '{print $1}')" = "$auth_hash" ] || fail 'OAuth state changed.'
 [ "$(shasum -a 256 "$session" | awk '{print $1}')" = "$session_hash" ] || fail 'Session data changed.'
@@ -116,6 +118,9 @@ MADAPI_IMAGE_SKILL_SOURCE_DIR="$asset_root/image-skill" \
 grep -Fq 'requires_openai_auth = false' "$api_home/config.toml" || fail 'API gateway auth mode is missing.'
 grep -Fq 'env_key = "MADAPI_API_KEY"' "$api_home/config.toml" || fail 'API gateway env_key is missing.'
 ! grep -Fq 'experimental_bearer_token' "$api_home/config.toml" || fail 'API config contains OAuth bearer authentication.'
+grep -Fq 'image_generation = true' "$api_home/config.toml" || fail 'API image generation was not enabled.'
+grep -Fq 'localeOverride = "zh-CN"' "$api_home/config.toml" || fail 'API Chinese Codex interface was not enabled.'
+grep -Fq 'network_access = true' "$api_home/config.toml" || fail 'API image skill network access was not enabled.'
 api_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.models.length))' "$api_home/madapi-cockpit-model-catalog.json")
 [ "$api_count" = 8 ] || fail 'API catalog does not contain exactly eight models.'
 

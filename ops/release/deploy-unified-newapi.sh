@@ -11,6 +11,7 @@ git_sha="$2"
 network="${MADAPI_DOCKER_NETWORK:-new-api_default}"
 env_file="${MADAPI_ENV_FILE:-/opt/madapi-releases/7c90de45/production-runtime/production.env}"
 data_dir="${MADAPI_DATA_DIR:-/opt/new-api/data}"
+database="${MADAPI_SQLITE_DATABASE:-$data_dir/one-api.db}"
 log_dir="${MADAPI_LOG_DIR:-/opt/new-api/logs}"
 old_port="${MADAPI_NEW_API_PORT:-3001}"
 candidate_port="${MADAPI_CANDIDATE_NEW_API_PORT:-13001}"
@@ -23,7 +24,8 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 
 [[ $(id -u) -eq 0 ]]
 [[ "$git_sha" =~ ^[0-9a-f]{40}$ ]]
-[[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$env_file" && -f "$site" && -d "$data_dir" ]]
+[[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$env_file" && -f "$site" && -d "$data_dir" && -f "$database" ]]
+[[ "$(dirname "$database")" == "$data_dir" ]]
 for value in "$old_port" "$candidate_port" "$image_port" "$health_attempts"; do [[ "$value" =~ ^[1-9][0-9]*$ ]]; done
 [[ "$old_port" != "$candidate_port" ]]
 for command in docker gzip curl nginx sha256sum python3 flock cp; do command -v "$command" >/dev/null; done
@@ -57,9 +59,24 @@ docker inspect cpa-official-gateway >"$backup_dir/cpa-official-gateway.inspect.j
 docker inspect new-api-codex-control >"$backup_dir/new-api-codex-control.inspect.json" 2>/dev/null || true
 cp -a "$env_file" "$backup_dir/production.env"
 cp -a "$site" "$backup_dir/nginx.site.before.conf"
-cp -a "$data_dir/." "$snapshot_data/"
-if [[ -f "$data_dir/new-api.db" ]]; then
-  python3 - "$data_dir/new-api.db" "$snapshot_data/new-api.db" <<'PY'
+database_name="$(basename "$database")"
+python3 - "$data_dir" "$snapshot_data" "$database_name" <<'PY'
+import os
+import shutil
+import sys
+
+source_root, target_root, database_name = sys.argv[1:]
+excluded = {database_name, database_name + "-wal", database_name + "-shm"}
+for entry in os.scandir(source_root):
+    if entry.name in excluded:
+        continue
+    destination = os.path.join(target_root, entry.name)
+    if entry.is_dir(follow_symlinks=False):
+        shutil.copytree(entry.path, destination, symlinks=True, dirs_exist_ok=True)
+    else:
+        shutil.copy2(entry.path, destination, follow_symlinks=False)
+PY
+python3 - "$database" "$snapshot_data/$database_name" <<'PY'
 import sqlite3
 import sys
 
@@ -67,11 +84,11 @@ source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True, timeout=30)
 target = sqlite3.connect(sys.argv[2], timeout=30)
 with target:
     source.backup(target)
+if target.execute("pragma integrity_check").fetchone()[0] != "ok":
+    raise SystemExit("SQLite online backup failed integrity_check")
 target.close()
 source.close()
 PY
-  rm -f "$snapshot_data/new-api.db-wal" "$snapshot_data/new-api.db-shm"
-fi
 nginx -T >"$backup_dir/nginx.before.txt" 2>&1
 
 old_cpa_present=0
@@ -150,11 +167,14 @@ check_pair
 docker rm -f "$candidate_new" "$candidate_cpa" >/dev/null
 
 # Final pair is the only writer after all old application writers stop.
-docker stop new-api >/dev/null
+if docker inspect new-api-codex-control >/dev/null 2>&1; then old_control_present=1; fi
+old_writers=(new-api)
+[[ "$old_control_present" -eq 0 ]] || old_writers+=(new-api-codex-control)
+docker stop "${old_writers[@]}" >/dev/null
+old_stopped=1
 docker rename new-api "$old_new_backup"
 if docker inspect cpa-official-gateway >/dev/null 2>&1; then docker stop cpa-official-gateway >/dev/null; docker rename cpa-official-gateway "$old_cpa_backup"; old_cpa_present=1; fi
-if docker inspect new-api-codex-control >/dev/null 2>&1; then docker stop new-api-codex-control >/dev/null; docker rename new-api-codex-control "$old_control_backup"; old_control_present=1; fi
-old_stopped=1
+[[ "$old_control_present" -eq 0 ]] || docker rename new-api-codex-control "$old_control_backup"
 start_pair "$data_dir" "$log_dir"
 final_started=1
 check_pair

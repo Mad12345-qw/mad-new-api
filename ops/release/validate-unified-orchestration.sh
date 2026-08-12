@@ -35,7 +35,14 @@ if "new-api-codex-control" in compose:
 
 deploy = (Path(sys.argv[1]).parent / "deploy-unified-newapi.sh").read_text(encoding="utf-8")
 rollback = (Path(sys.argv[1]).parent / "rollback-unified-newapi.sh").read_text(encoding="utf-8")
-for marker in ("source.backup(target)", "sqlite_single_writer=true", "check_pair", "candidate-data"):
+for marker in (
+    'database="${MADAPI_SQLITE_DATABASE:-$data_dir/one-api.db}"',
+    "source.backup(target)",
+    'docker stop "${old_writers[@]}"',
+    "sqlite_single_writer=true",
+    "check_pair",
+    "candidate-data",
+):
     if marker not in deploy:
         raise SystemExit(f"SQLite single-writer deploy gate is missing: {marker}")
 for marker in ("docker stop \"$candidate_new\" \"$candidate_cpa\"", "cpa_status", "sqlite_single_writer=true"):

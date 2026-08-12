@@ -147,12 +147,13 @@ try {
     $finalOutput = [IO.Path]::ChangeExtension($requestedOutput, $extension)
     if (Test-Path -LiteralPath $finalOutput) { throw 'Output file already exists.' }
     Move-Item -LiteralPath $temporaryOutput -Destination $finalOutput
+    $previewPath = $finalOutput.Replace('\', '/')
     [pscustomobject]@{
         ok = $true
         model = 'gpt-image-2'
         path = $finalOutput
         source_url = $imageUrl
-        preview_markdown = if ([string]::IsNullOrWhiteSpace($imageUrl)) { '' } else { '![Generated image](' + $imageUrl + ')' }
+        preview_markdown = '![Generated image](' + $previewPath + ')'
         download_markdown = if ([string]::IsNullOrWhiteSpace($imageUrl)) { '' } else { '[Open or download original](' + $imageUrl + ')' }
         bytes = $bytes.Length
     } | ConvertTo-Json -Compress

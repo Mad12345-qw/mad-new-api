@@ -51,5 +51,5 @@ PATH_VALUE="$output" URL_VALUE="$image_url" /usr/bin/osascript -l JavaScript <<'
 var env = $.NSProcessInfo.processInfo.environment
 var path = ObjC.unwrap(env.objectForKey('PATH_VALUE'))
 var url = ObjC.unwrap(env.objectForKey('URL_VALUE'))
-JSON.stringify({ok:true,model:'gpt-image-2',path:path,source_url:url,preview_markdown:'![Generated image]('+url+')',download_markdown:'[Open or download original]('+url+')'})
+JSON.stringify({ok:true,model:'gpt-image-2',path:path,source_url:url,preview_markdown:'![Generated image]('+path+')',download_markdown:'[Open or download original]('+url+')'})
 JXA

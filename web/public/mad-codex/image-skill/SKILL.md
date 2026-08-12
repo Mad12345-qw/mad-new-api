@@ -34,8 +34,8 @@ codex_home=${CODEX_HOME:-"$HOME/.codex"}
 ```
 
 5. Parse the returned JSON. A successful result contains `ok=true` and an absolute `path`.
-6. Render `source_url` exactly once with Markdown image syntax. Do not render both `source_url` and `path` as separate images.
-7. Add one clickable `source_url` link for opening or downloading the original, then mention the saved absolute local path. Do not place a Windows backslash path inside Markdown image syntax.
+6. Render the generated local file exactly once with Markdown image syntax using its absolute `path`. On Windows, replace backslashes with forward slashes in the Markdown image target. Do not render `source_url` as a second image.
+7. Add one clickable `source_url` link for opening or downloading the original, then mention the saved absolute local path.
 
 The script reads the existing MadAPI key locally, calls `gpt-image-2` through MadAPI's standard Images API, requests a URL first, downloads the original image to the current task's `outputs` directory, validates PNG/JPEG/WebP, and never prints the key.
 

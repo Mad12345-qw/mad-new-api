@@ -358,8 +358,12 @@ $configLines.Add('[' + $targetProviderSection + ']')
 $configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
 $configLines.Add('base_url = ' + (ConvertTo-TomlBasicString $codexBaseUrl))
 $configLines.Add('wire_api = "responses"')
-$configLines.Add('requires_openai_auth = false')
-$configLines.Add('env_key = ' + (ConvertTo-TomlBasicString $gatewayKeyEnvName))
+$configLines.Add('requires_openai_auth = ' + $(if ($authKind -eq 'oauth') { 'true' } else { 'false' }))
+if ($authKind -eq 'oauth') {
+    $configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
+} else {
+    $configLines.Add('env_key = ' + (ConvertTo-TomlBasicString $gatewayKeyEnvName))
+}
 $configLines.Add('http_headers = { "x-openai-actor-authorization" = "madapi-gateway", "x-madapi-codex-login-mode" = ' + (ConvertTo-TomlBasicString $authKind) + ' }')
 $configLines.Add('supports_websockets = false')
 $configLines.Add('stream_idle_timeout_ms = 360000')

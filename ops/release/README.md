@@ -145,6 +145,10 @@ The production database defaults to `$MADAPI_DATA_DIR/one-api.db`. Override it
 with `MADAPI_SQLITE_DATABASE` only when the active SQLite file has a different
 name; the deploy refuses paths outside the mounted data directory.
 
+GitHub release archives contain the two images under their `latest` build
+tags. The deploy verifies `release-manifest.json` against the requested commit
+before adding immutable local commit tags and starting either candidate.
+
 After a successful deployment, use the recorded backup directory with
 rollback-unified-newapi.sh stops the candidate writers before reopening the
 same SQLite database with the old NewAPI and CPA, validates both old services,

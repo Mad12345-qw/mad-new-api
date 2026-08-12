@@ -8,10 +8,21 @@ case "$api_key" in
   *) printf '%s\n' 'MADAPI_KEY is missing or invalid.' >&2; exit 1 ;;
 esac
 
-base_url=${MADAPI_CLAUDE_BASE_URL:-https://mad.myddns.me/v1}
-base_url=${base_url%/}
-public_base_url=${MADAPI_BASE_URL:-${base_url%/v1}}
-public_base_url=${public_base_url%/}
+normalize_root() {
+  value=$1
+  value=${value%/}
+  while :; do
+    case "$value" in
+      */v1) value=${value%/v1} ;;
+      *) break ;;
+    esac
+    value=${value%/}
+  done
+  printf '%s' "$value"
+}
+
+base_url=$(normalize_root "${MADAPI_CLAUDE_BASE_URL:-https://mad.myddns.me}")
+public_base_url=$(normalize_root "${MADAPI_BASE_URL:-$base_url}")
 test_mode=${MADAPI_INSTALL_TEST_MODE:-0}
 models='claude-fable-5 claude-opus-4-8 claude-opus-5 claude-sonnet-5 claude-haiku-4-5'
 
@@ -32,7 +43,7 @@ else
   curl -fsS --max-time 30 \
     -H "x-api-key: $api_key" \
     -H 'Accept: application/json' \
-    "$base_url/models" -o "$models_path"
+    "$base_url/v1/models" -o "$models_path"
 fi
 
 MADAPI_MODELS_PATH="$models_path" MADAPI_EXPECTED_MODELS="$models" /usr/bin/osascript -l JavaScript <<'JXA'

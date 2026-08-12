@@ -78,6 +78,8 @@ $environmentNames = @(
     'MADAPI_CLAUDE_SKIP_LANGUAGE',
     'MADAPI_CLAUDE_INSTALL_LANGUAGE',
     'MADAPI_CLAUDE_LANGUAGE_INSTALLER_PATH'
+    'MADAPI_CLAUDE_BASE_URL'
+    'MADAPI_BASE_URL'
 )
 foreach ($name in $environmentNames) {
     $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -91,6 +93,8 @@ try {
     $env:MADAPI_CLAUDE_THREEP_DIR = $threep
     $env:MADAPI_CLAUDE_TOOL_DIR = $tool
     $env:MADAPI_CLAUDE_IMAGE_SOURCE_DIR = $imageSource
+    $env:MADAPI_CLAUDE_BASE_URL = 'https://mad.myddns.me/v1/'
+    $env:MADAPI_BASE_URL = 'https://mad.myddns.me/v1'
     & $InstallerPath | Out-Host
     & $InstallerPath | Out-Host
 
@@ -115,6 +119,11 @@ try {
     Assert-True (($actualModels -join '|') -eq ($expectedModels -join '|')) 'Gateway model list is incorrect.'
     Assert-True (@($metaResult.entries | Where-Object { $_.name -eq 'MadAPI' }).Count -eq 1) 'Repeated install created duplicate MadAPI entries.'
     Assert-True (@($metaResult.entries | Where-Object { $_.name -eq 'Existing' }).Count -eq 1) 'Existing config library entry was lost.'
+    Assert-True ([string]$gateway.inferenceGatewayBaseUrl -eq 'https://mad.myddns.me') 'Gateway base URL was not normalized to the root.'
+    $installerText = [IO.File]::ReadAllText($InstallerPath, [Text.Encoding]::UTF8)
+    $serverText = [IO.File]::ReadAllText((Join-Path $ImageToolPath 'server.mjs'), [Text.Encoding]::UTF8)
+    Assert-True ($installerText.Contains('($baseUrl + ''/v1/models'')')) 'Models endpoint does not use /v1/models.'
+    Assert-True ($serverText.Contains('${baseUrl}/v1/images/generations')) 'Image endpoint does not use /v1/images/generations.'
 
     $languageFailure = Join-Path $root 'language-failure.ps1'
     [IO.File]::WriteAllText(

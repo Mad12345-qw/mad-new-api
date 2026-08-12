@@ -91,6 +91,7 @@ type AppHeaderProps = {
    * @default true
    */
   showProfileDropdown?: boolean
+  scrolled?: boolean
 }
 
 export function AppHeader({
@@ -102,6 +103,7 @@ export function AppHeader({
   showNotifications = true,
   showConfigDrawer = true,
   showProfileDropdown = true,
+  scrolled = false,
 }: AppHeaderProps) {
   // Prioritize dynamically generated links from backend
   const dynamicLinks = useTopNavLinks()
@@ -112,7 +114,7 @@ export function AppHeader({
 
   return (
     <>
-      <Header>
+      <Header scrolled={scrolled}>
         <SystemBrand variant='inline' />
 
         {leftContent ? (

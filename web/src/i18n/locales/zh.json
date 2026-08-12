@@ -5277,6 +5277,25 @@
     "Operating System": "操作系统",
     "Login Mode": "登录模式",
     "Install Chinese Interface": "安装中文界面",
-    "Install Command": "安装指令"
+    "Install Command": "安装指令",
+    "Lifetime Usage": "使用额度",
+    "Last 7 Days": "7 天用量",
+    "Recharge more to receive a larger bonus": "充值档位越高，加赠额度越多",
+    "New user bonus": "新客体验",
+    "New user bonus used": "体验礼已使用",
+    "Most popular": "最受欢迎",
+    "Best value": "最划算",
+    "No bonus": "无赠送",
+    "Recharge suggestion": "升档建议",
+    "Choose a promotional tier to receive a bonus": "选择活动档位可获得额外赠送",
+    "Next tier: {{amount}}": "下一档 {{amount}}",
+    "Highest bonus tier unlocked": "已解锁最高加赠档位",
+    "Recharge now": "立即充值",
+    "Language installation is separate and cannot roll back Claude access": "中文界面为独立可选安装，不会回退 Claude 接入配置",
+    "Backs up the original configuration": "自动备份原有配置",
+    "Updates the MadAPI provider safely": "安全更新 MadAPI 接入配置",
+    "Installs five Claude models": "安装 5 个 Claude 模型",
+    "Installs the image generation tool": "安装图片生成工具",
+    "Keeps plugins and MCP settings": "保留插件和 MCP 设置"
   }
 }

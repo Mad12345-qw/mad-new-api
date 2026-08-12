@@ -75,6 +75,7 @@ grep -Fq 'sk-clean-macos-test' "$config" || fail 'OAuth bearer token was not wri
 [ "$(shasum -a 256 "$session" | awk '{print $1}')" = "$session_hash" ] || fail 'Session data changed.'
 
 MADAPI_API_KEY='sk-refresh-macos' \
+MADAPI_CODEX_AUTH_KIND=apikey \
 MADAPI_REFRESH_RESPONSE_FILE="$repo_root/tests/fixtures/newapi-models.json" \
 MADAPI_CODEX_TEMPLATE_FILE="$templates" \
 CODEX_HOME="$codex_home" \

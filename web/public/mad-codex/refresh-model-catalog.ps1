@@ -17,11 +17,25 @@ $baseUrl = ([string]$env:MADAPI_BASE_URL).Trim().TrimEnd('/')
 if ([string]::IsNullOrWhiteSpace($baseUrl)) { $baseUrl = 'https://mad.myddns.me' }
 $catalogPath = Join-Path $CodexHome 'madapi-cockpit-model-catalog.json'
 $modelsCachePath = Join-Path $CodexHome 'models_cache.json'
+$authPath = Join-Path $CodexHome 'auth.json'
+
+$authKind = ([string]$env:MADAPI_CODEX_AUTH_KIND).Trim().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($authKind)) {
+    $authKind = 'oauth'
+    if (Test-Path -LiteralPath $authPath) {
+        try { $auth = Get-Content -LiteralPath $authPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+        catch { throw 'Codex Desktop authentication state is unreadable.' }
+        if ([string]$auth.auth_mode -eq 'apikey' -or -not [string]::IsNullOrWhiteSpace([string]$auth.OPENAI_API_KEY)) {
+            $authKind = 'apikey'
+        }
+    }
+}
+if (@('oauth', 'apikey') -notcontains $authKind) { throw 'MADAPI_CODEX_AUTH_KIND is invalid.' }
 
 if (-not [string]::IsNullOrWhiteSpace([string]$env:MADAPI_REFRESH_RESPONSE_FILE)) {
     $availablePayload = Get-Content -LiteralPath ([string]$env:MADAPI_REFRESH_RESPONSE_FILE) -Raw -Encoding UTF8 | ConvertFrom-Json
 } else {
-    $availablePayload = Invoke-RestMethod -UseBasicParsing -Uri ($baseUrl + '/codex/v1/models') -Headers @{ Authorization = 'Bearer ' + $apiKey } -Method Get -TimeoutSec 30
+    $availablePayload = Invoke-RestMethod -UseBasicParsing -Uri ($baseUrl + '/v1/models') -Headers @{ Authorization = 'Bearer ' + $apiKey } -Method Get -TimeoutSec 30
 }
 
 if (-not [string]::IsNullOrWhiteSpace([string]$env:MADAPI_CODEX_TEMPLATE_FILE)) {
@@ -53,6 +67,35 @@ if ($null -ne $availablePayload.PSObject.Properties['data']) {
     }
 }
 
+$apiModelIds = @(
+    'claude-fable-5',
+    'claude-opus-5',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'grok-4.5',
+    'gpt-5.6-sol-pro',
+    'gpt-5.6-terra-pro'
+)
+$apiModelSlots = [ordered]@{
+    'claude-fable-5' = [ordered]@{ Shell = 'gpt-5.5'; Profile = 'gpt-5.5' }
+    'claude-opus-5' = [ordered]@{ Shell = 'gpt-5.4'; Profile = 'gpt-5.4' }
+    'gpt-5.6-sol' = [ordered]@{ Shell = 'gpt-5.6-sol'; Profile = 'gpt-5.6-sol' }
+    'gpt-5.6-terra' = [ordered]@{ Shell = 'gpt-5.6-terra'; Profile = 'gpt-5.6-terra' }
+    'gpt-5.6-luna' = [ordered]@{ Shell = 'gpt-5.6-luna'; Profile = 'gpt-5.6-luna' }
+    'grok-4.5' = [ordered]@{ Shell = 'gpt-5.4-mini'; Profile = 'gpt-5.4-mini' }
+    'gpt-5.6-sol-pro' = [ordered]@{ Shell = 'gpt-5.3-codex'; Profile = 'gpt-5.6-sol' }
+    'gpt-5.6-terra-pro' = [ordered]@{ Shell = 'gpt-5.2'; Profile = 'gpt-5.6-terra' }
+}
+if ($authKind -eq 'apikey') {
+    $availableLookup = @{}
+    foreach ($id in $availableIds) { $availableLookup[$id.ToLowerInvariant()] = $id }
+    $missing = @($apiModelIds | Where-Object { -not $availableLookup.ContainsKey($_) })
+    if ($missing.Count -gt 0) { throw ('MadAPI API catalog is missing required models: ' + ($missing -join ', ')) }
+    $availableIds = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($id in $apiModelIds) { $availableIds.Add($availableLookup[$id]) }
+}
+
 $result = New-Object 'System.Collections.Generic.List[object]'
 $seen = @{}
 $priority = 1
@@ -62,17 +105,24 @@ foreach ($id in $availableIds) {
     $seen[$lower] = $true
     if ($lower -match '(?:^|[-_.])(image|video|seedance|sora|veo|kling|hailuo)(?:$|[-_.])') { continue }
 
-    $source = $templateBySlug[$lower]
-    if ($null -eq $source -and $lower.EndsWith('-pro')) {
-        $source = $templateBySlug[$lower.Substring(0, $lower.Length - 4)]
+    $catalogSlug = $id
+    $sourceSlug = $lower
+    if ($authKind -eq 'apikey') {
+        $slot = $apiModelSlots[$lower]
+        if ($null -eq $slot) { throw ('MadAPI API model slot is missing: ' + $id) }
+        $catalogSlug = [string]$slot.Shell
+        $sourceSlug = [string]$slot.Profile
     }
+    $source = $templateBySlug[$sourceSlug.ToLowerInvariant()]
     if ($null -eq $source) { $source = $defaultTemplate }
     $entry = (($source | ConvertTo-Json -Depth 100 -Compress) | ConvertFrom-Json)
-    $entry.slug = $id
+    $entry.slug = $catalogSlug
     $entry.display_name = $id
+    $entry.description = 'Available through MadAPI: ' + $id
     $entry.priority = $priority
     $entry.visibility = 'list'
     $entry.supported_in_api = $true
+    $entry | Add-Member -NotePropertyName prefer_websockets -NotePropertyValue $false -Force
     $result.Add($entry)
     $priority++
 }
@@ -88,4 +138,4 @@ try {
     if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force }
 }
 if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
-Write-Output ('MadAPI Codex model catalog refreshed: ' + $result.Count)
+Write-Output ('MadAPI Codex model catalog refreshed: ' + $authKind + ', ' + $result.Count)

@@ -265,3 +265,50 @@ func TestOaiResponsesStreamHandlerDoesNotCountPartialImageEvent(t *testing.T) {
 
 	assert.Equal(t, 0, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration].CallCount)
 }
+
+func TestOaiResponsesStreamHandlerExactUsageRejectsMissingUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\ndata: [DONE]\n\n"
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", nil)
+	c.Set(common.RequestIdKey, "exact-usage-missing")
+	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-terra"}}
+	resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
+
+	usage, apiErr := OaiResponsesStreamHandlerExactUsage(c, info, resp, nil)
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+}
+
+func TestOaiResponsesStreamHandlerExactUsageUsesCompletedEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	body := "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":11,\"output_tokens\":7,\"total_tokens\":18}}}\n\ndata: [DONE]\n\n"
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", nil)
+	c.Set(common.RequestIdKey, "exact-usage-present")
+	info := &relaycommon.RelayInfo{DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-terra"}}
+	resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
+
+	committed := false
+	usage, apiErr := OaiResponsesStreamHandlerExactUsage(c, info, resp, func(exact *dto.Usage) error {
+		require.NotContains(t, w.Body.String(), `response.completed`, "completed event was sent before billing callback")
+		committed = true
+		require.Equal(t, 11, exact.PromptTokens)
+		require.Equal(t, 7, exact.CompletionTokens)
+		return nil
+	})
+	require.Nil(t, apiErr)
+	require.True(t, committed)
+	require.Contains(t, w.Body.String(), `response.completed`, "completed event was not sent after billing callback")
+	require.Equal(t, 11, usage.PromptTokens)
+	require.Equal(t, 7, usage.CompletionTokens)
+	require.Equal(t, 18, usage.TotalTokens)
+}

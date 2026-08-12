@@ -1,0 +1,48 @@
+name: Build Codex control release
+
+on:
+  push:
+    branches:
+      - agent/official-control-plane-rebuild-20260812
+
+permissions:
+  contents: write
+
+concurrency:
+  group: madapi-codex-control-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Check out MadAPI
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Build Codex control image
+        run: |
+          docker build --tag "mad-new-api-codex-control:${GITHUB_SHA}" .
+
+      - name: Build CPA gateway image
+        run: |
+          docker build --tag "mad-cpa-official-gateway:${GITHUB_SHA}" ops/cpa-official-gateway
+
+      - name: Package Codex-only release
+        run: |
+          mkdir -p release
+          docker save "mad-new-api-codex-control:${GITHUB_SHA}" | gzip -1 > release/mad-new-api-codex-control.tar.gz
+          docker save "mad-cpa-official-gateway:${GITHUB_SHA}" | gzip -1 > release/mad-cpa-official-gateway.tar.gz
+          cp ops/release/deploy-codex-control-only.sh release/
+          cd release
+          sha256sum mad-new-api-codex-control.tar.gz mad-cpa-official-gateway.tar.gz deploy-codex-control-only.sh > SHA256SUMS
+
+      - name: Publish Codex-only release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete codex-control-latest --cleanup-tag --yes || true
+          gh release create codex-control-latest release/* \
+            --target "$GITHUB_SHA" \
+            --title "MadAPI Codex control release" \
+            --notes "Codex-only release. It must not replace the production /v1 container or image gateway."

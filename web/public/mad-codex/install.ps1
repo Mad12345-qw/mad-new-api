@@ -85,12 +85,81 @@ function Close-CodexDesktop {
 
 function Restore-HistoryBackup([string]$CodexHome, [string]$HistoryBackupPath) {
     if ([string]::IsNullOrWhiteSpace($HistoryBackupPath) -or -not (Test-Path -LiteralPath $HistoryBackupPath -PathType Container)) { return }
-    foreach ($name in @('session_index.jsonl', '.codex-global-state.json', 'state_5.sqlite', 'state_5.sqlite-wal', 'state_5.sqlite-shm')) {
-        $source = Join-Path $HistoryBackupPath $name
-        $destination = Join-Path $CodexHome $name
-        if (Test-Path -LiteralPath $source) { [IO.File]::Copy($source, $destination, $true) }
-        elseif (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Force }
+    $restoreMap = [ordered]@{
+        'session_index.jsonl.before' = 'session_index.jsonl'
+        '.codex-global-state.json.before' = '.codex-global-state.json'
+        'state_5.sqlite' = 'state_5.sqlite'
+        'state_5.sqlite-wal' = 'state_5.sqlite-wal'
+        'state_5.sqlite-shm' = 'state_5.sqlite-shm'
     }
+    foreach ($entry in $restoreMap.GetEnumerator()) {
+        $source = Join-Path $HistoryBackupPath $entry.Key
+        $destination = Join-Path $CodexHome $entry.Value
+        if (Test-Path -LiteralPath $source) { [IO.File]::Copy($source, $destination, $true) }
+    }
+}
+
+function Invoke-HistoryRecovery([string]$ScriptPath, [string]$CodexHome, [string]$ProviderId, [string]$BackupRoot) {
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $attemptBackup = if ($attempt -eq 1) { $BackupRoot } else { $BackupRoot + '-retry-' + $attempt }
+        $output = @(& "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -CodexHome $CodexHome -ProviderId $ProviderId -BackupPath $attemptBackup 2>&1)
+        $exitCode = $LASTEXITCODE
+        foreach ($line in $output) { Write-Host ([string]$line) }
+        if ($exitCode -eq 0) { return $attemptBackup }
+        Restore-HistoryBackup $CodexHome $attemptBackup
+        if ($attempt -lt 3) { Start-Sleep -Seconds $attempt }
+    }
+    throw 'MadAPI local history recovery did not complete after 3 attempts.'
+}
+
+function Backup-ManagedFiles([string]$BackupRoot, [string[]]$Paths) {
+    New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
+    foreach ($path in $Paths) {
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            [IO.File]::Copy($path, (Join-Path $BackupRoot ([IO.Path]::GetFileName($path))), $false)
+        }
+    }
+}
+
+function Restore-ManagedFiles([string]$BackupRoot, [string[]]$Paths) {
+    if ([string]::IsNullOrWhiteSpace($BackupRoot) -or -not (Test-Path -LiteralPath $BackupRoot -PathType Container)) { return }
+    foreach ($path in $Paths) {
+        $source = Join-Path $BackupRoot ([IO.Path]::GetFileName($path))
+        if (Test-Path -LiteralPath $source -PathType Leaf) { [IO.File]::Copy($source, $path, $true) }
+        elseif (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+    }
+}
+
+function Remove-ManagedSkillConfigEntries([string[]]$Lines, [string[]]$ManagedPaths) {
+    $managedPathLines = @{}
+    foreach ($path in $ManagedPaths) {
+        $managedPathLines['path = ' + (ConvertTo-TomlBasicString $path)] = $true
+    }
+
+    $result = New-Object 'System.Collections.Generic.List[string]'
+    $index = 0
+    while ($index -lt $Lines.Count) {
+        if ($Lines[$index] -notmatch '^\s*\[\[\s*skills\.config\s*\]\]\s*(?:#.*)?$') {
+            $result.Add($Lines[$index])
+            $index++
+            continue
+        }
+
+        $end = $index + 1
+        while ($end -lt $Lines.Count -and $Lines[$end] -notmatch '^\s*\[{1,2}[^]]+\]{1,2}\s*(?:#.*)?$') { $end++ }
+        $managed = $false
+        for ($entryIndex = $index + 1; $entryIndex -lt $end; $entryIndex++) {
+            if ($managedPathLines.ContainsKey($Lines[$entryIndex].Trim())) {
+                $managed = $true
+                break
+            }
+        }
+        if (-not $managed) {
+            for ($entryIndex = $index; $entryIndex -lt $end; $entryIndex++) { $result.Add($Lines[$entryIndex]) }
+        }
+        $index = $end
+    }
+    return @($result)
 }
 
 $apiKey = [string]$env:MADAPI_KEY
@@ -107,6 +176,7 @@ if ([string]::IsNullOrWhiteSpace($requestedLoginMode)) { $requestedLoginMode = '
 if (@('auto', 'oauth', 'apikey') -notcontains $requestedLoginMode) {
     throw 'MADAPI_CODEX_LOGIN_MODE must be auto, oauth, or apikey.'
 }
+$testMode = [string]$env:MADAPI_INSTALL_TEST_MODE -eq '1'
 
 $userHome = [Environment]::GetFolderPath('UserProfile')
 $codexHome = if ([string]::IsNullOrWhiteSpace([string]$env:CODEX_HOME)) { Join-Path $userHome '.codex' } else { [string]$env:CODEX_HOME }
@@ -117,6 +187,16 @@ $catalogPath = Join-Path $codexHome 'madapi-cockpit-model-catalog.json'
 $refreshScriptPath = Join-Path $codexHome 'madapi-refresh-model-catalog.ps1'
 $refreshLauncherPath = Join-Path $codexHome 'madapi-refresh-model-catalog.vbs'
 $historyScriptPath = Join-Path $codexHome 'madapi-restore-history.ps1'
+$keyPath = Join-Path $codexHome 'madapi.key'
+$legacySkillsPath = Join-Path $codexHome 'skills'
+$userSkillsPath = if ($testMode) {
+    Join-Path (Join-Path (Split-Path -Parent $codexHome) '.agents') 'skills'
+} else {
+    Join-Path (Join-Path $userHome '.agents') 'skills'
+}
+$imageSkillPath = Join-Path $userSkillsPath 'madapi-imagegen'
+$legacyImageSkillPath = Join-Path $legacySkillsPath 'madapi-imagegen'
+$systemImageSkillPath = Join-Path (Join-Path $legacySkillsPath '.system') 'imagegen'
 $transactionId = [guid]::NewGuid().ToString('N')
 $tempConfigPath = Join-Path $codexHome ("config.toml.madapi.$transactionId.tmp")
 $tempRefreshPath = Join-Path $codexHome ("madapi-refresh-model-catalog.$transactionId.ps1")
@@ -124,14 +204,23 @@ $tempRefreshLauncherPath = Join-Path $codexHome ("madapi-refresh-model-catalog.$
 $tempHistoryPath = Join-Path $codexHome ("madapi-restore-history.$transactionId.ps1")
 $tempCatalogPath = Join-Path $codexHome ("madapi-cockpit-model-catalog.$transactionId.tmp")
 $tempAuthPath = Join-Path $codexHome ("auth.json.madapi.$transactionId.tmp")
+$tempKeyPath = Join-Path $codexHome ("madapi.key.$transactionId.tmp")
+$tempImageSkillPath = Join-Path $codexHome ("madapi-imagegen.$transactionId.tmp")
+$managedFileBackupRoot = Join-Path $codexHome ("madapi-install-managed-backup-$transactionId")
+$imageSkillBackupRoot = Join-Path (Join-Path $codexHome 'madapi-skill-backups') $transactionId
 $backupPath = $null
 $authBackupPath = $null
 $historyBackupPath = $null
+$keyBackupPath = $null
+$imageSkillBackups = @()
 $hadConfig = Test-Path -LiteralPath $configPath
 $hadAuth = Test-Path -LiteralPath $authPath
 $configInstalled = $false
 $authChanged = $false
-$testMode = [string]$env:MADAPI_INSTALL_TEST_MODE -eq '1'
+$keyInstalled = $false
+$imageSkillInstalled = $false
+$managedFilesBackedUp = $false
+$managedFilePaths = @($refreshScriptPath, $refreshLauncherPath, $catalogPath, $historyScriptPath)
 
 if (-not $testMode) { Close-CodexDesktop }
 
@@ -165,13 +254,38 @@ $existingAuthKind = $authKind
 $authMutation = 'none'
 if ($requestedLoginMode -eq 'oauth') {
     $authKind = 'oauth'
+    if ($existingAuthKind -ne 'oauth') {
+        $oauthBackupPath = $null
+        foreach ($candidate in @(Get-ChildItem -LiteralPath $codexHome -Filter 'auth.json.madapi-backup-*' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
+            try {
+                $candidateAuth = [IO.File]::ReadAllText($candidate.FullName, $utf8Strict) | ConvertFrom-Json
+                $candidateTokens = $candidateAuth.PSObject.Properties['tokens']
+                if ($null -eq $candidateTokens) { continue }
+                $candidateAccess = $candidateTokens.Value.PSObject.Properties['access_token']
+                $candidateRefresh = $candidateTokens.Value.PSObject.Properties['refresh_token']
+                if ($null -ne $candidateAccess -and $null -ne $candidateRefresh -and
+                    -not [string]::IsNullOrWhiteSpace([string]$candidateAccess.Value) -and
+                    -not [string]::IsNullOrWhiteSpace([string]$candidateRefresh.Value)) {
+                    $oauthBackupPath = $candidate.FullName
+                    break
+                }
+            } catch { continue }
+        }
+        if ([string]::IsNullOrWhiteSpace($oauthBackupPath)) {
+            throw 'OAuth mode was requested, but no existing ChatGPT OAuth session or MadAPI OAuth backup was found. Sign in with ChatGPT in Codex first, then run this installer again. No files were changed.'
+        }
+        $authMutation = 'restore-oauth'
+    }
 } elseif ($requestedLoginMode -eq 'apikey') {
     $authKind = 'apikey'
+    $authMutation = 'write'
 }
 
 New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
+New-Item -ItemType Directory -Path $userSkillsPath -Force | Out-Null
 $sourceLines = @()
 if ($hadConfig) { $sourceLines = @([IO.File]::ReadAllLines($configPath, $utf8Strict)) }
+$sourceLines = @(Remove-ManagedSkillConfigEntries $sourceLines @($systemImageSkillPath, $imageSkillPath, $legacyImageSkillPath))
 
 $providerSourceLines = $sourceLines
 $providerId = Get-RootTomlString $sourceLines 'model_provider'
@@ -199,8 +313,10 @@ $keptLines = New-Object 'System.Collections.Generic.List[string]'
 $currentSection = ''
 $skipSection = $false
 $featuresSectionFound = $false
+$desktopSectionFound = $false
+$sandboxWorkspaceWriteSectionFound = $false
 foreach ($line in $sourceLines) {
-    if ($line -match '^\s*\[([^]]+)\]\s*(?:#.*)?$') {
+    if ($line -match '^\s*\[\[?([^]]+)\]\]?\s*(?:#.*)?$') {
         $currentSection = $Matches[1].Trim()
         $skipSection = $currentSection -eq 'model_providers.madapi' -or $currentSection.StartsWith('model_providers.madapi.') -or $currentSection -eq $targetProviderSection -or $currentSection.StartsWith($targetProviderSection + '.')
         if ($skipSection) { continue }
@@ -210,9 +326,23 @@ foreach ($line in $sourceLines) {
             $keptLines.Add('image_generation = true')
             continue
         }
+        if ($currentSection -eq 'desktop') {
+            $desktopSectionFound = $true
+            $keptLines.Add($line)
+            $keptLines.Add('localeOverride = "zh-CN"')
+            continue
+        }
+        if ($currentSection -eq 'sandbox_workspace_write') {
+            $sandboxWorkspaceWriteSectionFound = $true
+            $keptLines.Add($line)
+            $keptLines.Add('network_access = true')
+            continue
+        }
     }
     if ($skipSection) { continue }
     if ($currentSection -eq 'features' -and $line -match '^\s*image_generation\s*=') { continue }
+    if ($currentSection -eq 'desktop' -and $line -match '^\s*localeOverride\s*=') { continue }
+    if ($currentSection -eq 'sandbox_workspace_write' -and $line -match '^\s*network_access\s*=') { continue }
     if ($currentSection -eq '') {
         $assignmentIndex = $line.IndexOf('=')
         if ($assignmentIndex -ge 0) {
@@ -239,21 +369,69 @@ if (-not $featuresSectionFound) {
     $configLines.Add('image_generation = true')
     $configLines.Add('')
 }
+if (-not $desktopSectionFound) {
+    $configLines.Add('[desktop]')
+    $configLines.Add('localeOverride = "zh-CN"')
+    $configLines.Add('')
+}
+if (-not $sandboxWorkspaceWriteSectionFound) {
+    $configLines.Add('[sandbox_workspace_write]')
+    $configLines.Add('network_access = true')
+    $configLines.Add('')
+}
 $configLines.Add('')
 $configLines.Add('[' + $targetProviderSection + ']')
 $configLines.Add('name = ' + (ConvertTo-TomlBasicString $providerDisplayName))
 $configLines.Add('base_url = ' + (ConvertTo-TomlBasicString $codexBaseUrl))
 $configLines.Add('wire_api = "responses"')
-$configLines.Add('requires_openai_auth = false')
-$configLines.Add('env_key = ' + (ConvertTo-TomlBasicString $gatewayKeyEnvName))
-$configLines.Add('http_headers = { "x-openai-actor-authorization" = "madapi-gateway" }')
+$configLines.Add('requires_openai_auth = ' + $(if ($authKind -eq 'oauth') { 'true' } else { 'false' }))
+if ($authKind -eq 'oauth') {
+    $configLines.Add('experimental_bearer_token = ' + (ConvertTo-TomlBasicString $apiKey))
+} else {
+    $configLines.Add('env_key = ' + (ConvertTo-TomlBasicString $gatewayKeyEnvName))
+}
+$configLines.Add('http_headers = { "x-openai-actor-authorization" = "madapi-gateway", "x-madapi-codex-login-mode" = ' + (ConvertTo-TomlBasicString $authKind) + ' }')
 $configLines.Add('supports_websockets = false')
 $configLines.Add('stream_idle_timeout_ms = 360000')
 $configLines.Add('request_max_retries = 3')
 $configLines.Add('context_window_override = 1048576')
+$configLines.Add('')
+$configLines.Add('[[skills.config]]')
+$configLines.Add('path = ' + (ConvertTo-TomlBasicString $systemImageSkillPath))
+$configLines.Add('enabled = false')
+$configLines.Add('')
+$configLines.Add('[[skills.config]]')
+$configLines.Add('path = ' + (ConvertTo-TomlBasicString $imageSkillPath))
+$configLines.Add('enabled = true')
 
 try {
     [IO.File]::WriteAllText($tempConfigPath, (($configLines -join [Environment]::NewLine).Trim() + [Environment]::NewLine), $utf8NoBom)
+    [IO.File]::WriteAllText($tempKeyPath, ($apiKey + [Environment]::NewLine), $utf8NoBom)
+    if ($authMutation -eq 'write') {
+        [IO.File]::WriteAllText($tempAuthPath, (([ordered]@{ auth_mode = 'apikey'; OPENAI_API_KEY = $apiKey }) | ConvertTo-Json -Compress), $utf8NoBom)
+    } elseif ($authMutation -eq 'restore-oauth') {
+        [IO.File]::WriteAllBytes($tempAuthPath, [IO.File]::ReadAllBytes($oauthBackupPath))
+    }
+    New-Item -ItemType Directory -Path (Join-Path $tempImageSkillPath 'scripts') -Force | Out-Null
+    $imageSkillSource = [string]$env:MADAPI_IMAGE_SKILL_SOURCE_DIR
+    if ([string]::IsNullOrWhiteSpace($imageSkillSource) -and -not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        $candidateImageSkillSource = Join-Path $PSScriptRoot 'image-skill'
+        if (Test-Path -LiteralPath $candidateImageSkillSource -PathType Container) { $imageSkillSource = $candidateImageSkillSource }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($imageSkillSource)) {
+        [IO.File]::Copy((Join-Path $imageSkillSource 'SKILL.md'), (Join-Path $tempImageSkillPath 'SKILL.md'), $true)
+        [IO.File]::Copy((Join-Path $imageSkillSource 'scripts\generate.ps1'), (Join-Path $tempImageSkillPath 'scripts\generate.ps1'), $true)
+    } elseif ($testMode) {
+        throw 'MADAPI_IMAGE_SKILL_SOURCE_DIR is required in installer test mode.'
+    } else {
+        Invoke-WebRequest -UseBasicParsing -Uri ($madapiBaseUrl + '/mad-codex/image-skill/SKILL.md') -OutFile (Join-Path $tempImageSkillPath 'SKILL.md')
+        Invoke-WebRequest -UseBasicParsing -Uri ($madapiBaseUrl + '/mad-codex/image-skill/scripts/generate.ps1') -OutFile (Join-Path $tempImageSkillPath 'scripts\generate.ps1')
+    }
+    foreach ($requiredImageSkillFile in @((Join-Path $tempImageSkillPath 'SKILL.md'), (Join-Path $tempImageSkillPath 'scripts\generate.ps1'))) {
+        if (-not (Test-Path -LiteralPath $requiredImageSkillFile) -or (Get-Item -LiteralPath $requiredImageSkillFile).Length -lt 100) {
+            throw 'The MadAPI image generation skill is invalid.'
+        }
+    }
     $refreshSource = [string]$env:MADAPI_REFRESH_SCRIPT_SOURCE
     if ([string]::IsNullOrWhiteSpace($refreshSource) -and -not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
         $candidateSource = Join-Path $PSScriptRoot 'refresh-model-catalog.ps1'
@@ -285,48 +463,92 @@ try {
         throw 'The MadAPI history restore script is invalid.'
     }
     Write-HiddenRefreshLauncher $tempRefreshLauncherPath $refreshScriptPath
-    if ($testMode) {
-        [IO.File]::WriteAllText($tempCatalogPath, '{"models":[{"slug":"gpt-5.6-sol","display_name":"gpt-5.6-sol"}]}', $utf8NoBom)
-    } else {
-        $stagingHome = Join-Path $codexHome ('madapi-catalog-stage-' + $transactionId)
-        New-Item -ItemType Directory -Path $stagingHome -Force | Out-Null
+    $stagingHome = Join-Path $codexHome ('madapi-catalog-stage-' + $transactionId)
+    New-Item -ItemType Directory -Path $stagingHome -Force | Out-Null
+    try {
+        [IO.File]::Copy($tempConfigPath, (Join-Path $stagingHome 'config.toml'), $true)
+        $oldGatewayKey = [string]$env:MADAPI_API_KEY
+        $oldBaseUrl = [string]$env:MADAPI_BASE_URL
+        $oldAuthKind = [string]$env:MADAPI_CODEX_AUTH_KIND
         try {
-            [IO.File]::Copy($tempConfigPath, (Join-Path $stagingHome 'config.toml'), $true)
-            $oldGatewayKey = [string]$env:MADAPI_API_KEY
-            $oldBaseUrl = [string]$env:MADAPI_BASE_URL
-            try {
-                $env:MADAPI_API_KEY = $apiKey
-                $env:MADAPI_BASE_URL = $madapiBaseUrl
-                & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tempRefreshPath -CodexHome $stagingHome
-            } finally {
-                $env:MADAPI_API_KEY = $oldGatewayKey
-                $env:MADAPI_BASE_URL = $oldBaseUrl
-            }
-            if ($LASTEXITCODE -ne 0) { throw 'Unable to download the initial MadAPI model catalog.' }
-            Move-Item -LiteralPath (Join-Path $stagingHome 'madapi-cockpit-model-catalog.json') -Destination $tempCatalogPath -Force
+            $env:MADAPI_API_KEY = $apiKey
+            $env:MADAPI_BASE_URL = $madapiBaseUrl
+            $env:MADAPI_CODEX_AUTH_KIND = $authKind
+            & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tempRefreshPath -CodexHome $stagingHome
         } finally {
-            if (Test-Path -LiteralPath $stagingHome) { Remove-Item -LiteralPath $stagingHome -Recurse -Force }
+            $env:MADAPI_API_KEY = $oldGatewayKey
+            $env:MADAPI_BASE_URL = $oldBaseUrl
+            $env:MADAPI_CODEX_AUTH_KIND = $oldAuthKind
         }
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to download the initial MadAPI model catalog.' }
+        Move-Item -LiteralPath (Join-Path $stagingHome 'madapi-cockpit-model-catalog.json') -Destination $tempCatalogPath -Force
+    } finally {
+        if (Test-Path -LiteralPath $stagingHome) { Remove-Item -LiteralPath $stagingHome -Recurse -Force }
     }
     if ($hadConfig) {
         $backupPath = '{0}.madapi-backup-{1}' -f $configPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
         [IO.File]::Copy($configPath, $backupPath, $false)
     }
+    if (Test-Path -LiteralPath $keyPath) {
+        $keyBackupPath = $keyPath + '.madapi-backup-' + $transactionId
+        [IO.File]::Copy($keyPath, $keyBackupPath, $false)
+    }
+    $scanRoots = @($legacySkillsPath, $userSkillsPath) | Select-Object -Unique
+    foreach ($scanRoot in $scanRoots) {
+        if (-not (Test-Path -LiteralPath $scanRoot -PathType Container)) { continue }
+        $rootLabel = if ($scanRoot -eq $userSkillsPath) { 'agents' } else { 'codex' }
+        foreach ($existingSkill in @(Get-ChildItem -LiteralPath $scanRoot -Directory -Filter 'madapi-imagegen*' -ErrorAction SilentlyContinue)) {
+            $backupDirectory = Join-Path $imageSkillBackupRoot $rootLabel
+            New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+            $backupSkillPath = Join-Path $backupDirectory $existingSkill.Name
+            Move-Item -LiteralPath $existingSkill.FullName -Destination $backupSkillPath
+            $imageSkillBackups += [pscustomobject]@{ Original = $existingSkill.FullName; Backup = $backupSkillPath }
+        }
+    }
+    if ($authMutation -ne 'none' -and $hadAuth) {
+        $authBackupPath = '{0}.madapi-backup-{1}' -f $authPath, (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
+        [IO.File]::Copy($authPath, $authBackupPath, $false)
+    }
+    Backup-ManagedFiles $managedFileBackupRoot $managedFilePaths
+    $managedFilesBackedUp = $true
     Move-Item -LiteralPath $tempConfigPath -Destination $configPath -Force
     $configInstalled = $true
     Move-Item -LiteralPath $tempRefreshPath -Destination $refreshScriptPath -Force
     Move-Item -LiteralPath $tempRefreshLauncherPath -Destination $refreshLauncherPath -Force
     Move-Item -LiteralPath $tempCatalogPath -Destination $catalogPath -Force
     Move-Item -LiteralPath $tempHistoryPath -Destination $historyScriptPath -Force
+    Move-Item -LiteralPath $tempKeyPath -Destination $keyPath -Force
+    $keyInstalled = $true
+    Move-Item -LiteralPath $tempImageSkillPath -Destination $imageSkillPath
+    $imageSkillInstalled = $true
+    if ($authMutation -ne 'none') {
+        Move-Item -LiteralPath $tempAuthPath -Destination $authPath -Force
+        $authChanged = $true
+    }
     if (-not $testMode) { [Environment]::SetEnvironmentVariable($gatewayKeyEnvName, $apiKey, 'User') }
     $env:MADAPI_API_KEY = $apiKey
     if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
     if (-not $testMode) { Register-CatalogRefreshTask $refreshLauncherPath }
     $historyBackupPath = Join-Path $codexHome ('madapi-install-history-backup-' + $transactionId)
-    & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $historyScriptPath -CodexHome $codexHome -ProviderId $providerId -BackupPath $historyBackupPath
-    if ($LASTEXITCODE -ne 0) { throw 'MadAPI local history recovery did not complete.' }
+    try {
+        $historyBackupPath = Invoke-HistoryRecovery $historyScriptPath $codexHome $providerId $historyBackupPath
+    } catch {
+        Restore-HistoryBackup $codexHome $historyBackupPath
+        Write-Warning ('MadAPI local history recovery was skipped; the Codex installation remains active. ' + $_.Exception.Message)
+        $historyBackupPath = $null
+    }
 } catch {
     Restore-HistoryBackup $codexHome $historyBackupPath
+    if ($managedFilesBackedUp) { Restore-ManagedFiles $managedFileBackupRoot $managedFilePaths }
+    if ($imageSkillInstalled -and (Test-Path -LiteralPath $imageSkillPath)) { Remove-Item -LiteralPath $imageSkillPath -Recurse -Force }
+    foreach ($imageSkillBackup in @($imageSkillBackups)) {
+        if (Test-Path -LiteralPath $imageSkillBackup.Backup) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $imageSkillBackup.Original) -Force | Out-Null
+            Move-Item -LiteralPath $imageSkillBackup.Backup -Destination $imageSkillBackup.Original
+        }
+    }
+    if ($keyInstalled -and (Test-Path -LiteralPath $keyPath)) { Remove-Item -LiteralPath $keyPath -Force }
+    if ($null -ne $keyBackupPath -and (Test-Path -LiteralPath $keyBackupPath)) { [IO.File]::Copy($keyBackupPath, $keyPath, $true) }
     if ($authChanged) {
         if ($hadAuth -and $null -ne $authBackupPath -and (Test-Path -LiteralPath $authBackupPath)) { [IO.File]::Copy($authBackupPath, $authPath, $true) }
         elseif (-not $hadAuth -and (Test-Path -LiteralPath $authPath)) { Remove-Item -LiteralPath $authPath -Force }
@@ -343,14 +565,16 @@ try {
     if (Test-Path -LiteralPath $tempHistoryPath) { Remove-Item -LiteralPath $tempHistoryPath -Force }
     if (Test-Path -LiteralPath $tempCatalogPath) { Remove-Item -LiteralPath $tempCatalogPath -Force }
     if (Test-Path -LiteralPath $tempAuthPath) { Remove-Item -LiteralPath $tempAuthPath -Force }
+    if (Test-Path -LiteralPath $tempKeyPath) { Remove-Item -LiteralPath $tempKeyPath -Force }
+    if (Test-Path -LiteralPath $tempImageSkillPath) { Remove-Item -LiteralPath $tempImageSkillPath -Recurse -Force }
+    if (Test-Path -LiteralPath $managedFileBackupRoot) { Remove-Item -LiteralPath $managedFileBackupRoot -Recurse -Force }
 }
-
 Write-Host "MadAPI Codex desktop configuration installed: $configPath"
 if ($null -ne $backupPath) { Write-Host "Backup created: $backupPath" }
 if ($null -ne $authBackupPath) { Write-Host "Authentication backup created: $authBackupPath" }
 if ($null -ne $historyBackupPath) { Write-Host "History backup created: $historyBackupPath" }
-if ($requestedLoginMode -eq 'oauth' -and $existingAuthKind -ne 'oauth') { Write-Host 'MadAPI installed. Sign in with ChatGPT after Codex restarts to keep an OAuth account connected.' }
-elseif ($requestedLoginMode -eq 'apikey') { Write-Host 'MadAPI API Key mode installed without changing Codex account state.' }
+if ($requestedLoginMode -eq 'oauth' -and $existingAuthKind -ne 'oauth') { Write-Host 'Existing ChatGPT OAuth session restored from the latest MadAPI backup.' }
+elseif ($requestedLoginMode -eq 'apikey') { Write-Host 'MadAPI API Key sign-in configured.' }
 elseif ($authKind -eq 'oauth') { Write-Host 'Existing ChatGPT OAuth session preserved.' }
 elseif ($authKind -eq 'apikey') { Write-Host 'Existing Codex Desktop API Key sign-in preserved.' }
 else { Write-Host 'Codex Desktop sign-in was not changed. Choose ChatGPT OAuth or API Key when Codex opens.' }

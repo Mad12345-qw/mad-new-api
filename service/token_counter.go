@@ -181,7 +181,6 @@ func EstimateRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *rela
 	if !constant.CountToken {
 		return 0, nil
 	}
-
 	if meta == nil {
 		return 0, errors.New("token count meta is nil")
 	}

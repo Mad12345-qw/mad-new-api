@@ -79,6 +79,24 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Relay(c, types.RelayFormatOpenAIRealtime)
 		})
 	}
+
+	// Codex keeps NewAPI's authentication, routing and billing lifecycle while
+	// delegating protocol execution to the official CPA handler.
+	codexV1Router := router.Group("/codex/v1")
+	codexV1Router.Use(middleware.RouteTag("relay"))
+	codexV1Router.Use(middleware.SystemPerformanceCheck())
+	codexV1Router.Use(middleware.TokenAuth())
+	codexV1Router.Use(middleware.ModelRequestRateLimit())
+	codexV1Router.Use(middleware.MarkCodexRoute())
+	codexV1Router.Use(middleware.Distribute())
+	{
+		codexV1Router.POST("/responses", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIResponses)
+		})
+		codexV1Router.POST("/responses/compact", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
+		})
+	}
 	{
 		//http router
 		httpRouter := relayV1Router.Group("")

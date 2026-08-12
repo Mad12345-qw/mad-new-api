@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	cliproxyusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -18,6 +19,57 @@ func TestBootstrapKeepsOfficialImageGenerationEnabled(t *testing.T) {
 	config := bootstrapConfig(18317, t.TempDir())
 	if !strings.Contains(config, "disable-image-generation: false") {
 		t.Fatalf("official image generation default is not enabled: %s", config)
+	}
+}
+
+func TestSynchronousDispatchNeverCallsLegacySettlement(t *testing.T) {
+	var settlements atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/settle" {
+			settlements.Add(1)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	dispatch, executeID, err := prepareExecuteDispatch(executeMeta{
+		Provider: "openai-compatibility", ChannelID: 3, UserID: 7,
+		BaseURL: "https://example.com/v1", APIKey: "upstream-key",
+		Model: "gpt-5.6-terra", OriginalModel: "gpt-5.6-terra",
+		RequestPath: "/v1/responses",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coord := &coordinator{
+		control:  &controlClient{baseURL: server.URL, token: strings.Repeat("x", 32), http: server.Client()},
+		prepared: make(map[string]*preparedDispatch), preloaded: map[string]*preparedDispatch{executeID: dispatch},
+		requests: make(map[string]requestTicket), finalized: make(map[string]struct{}),
+	}
+	headers := make(http.Header)
+	headers.Set(executeIDHeader, executeID)
+	intercept := coord.InterceptRequestBeforeAuth(context.Background(), pluginapi.RequestInterceptRequest{
+		RequestID: "sync-request", Headers: headers,
+		Body: []byte(`{"model":"shell","input":"hello"}`), Metadata: map[string]any{"request_path": "/v1/responses"},
+	})
+	if intercept.Terminate {
+		t.Fatalf("synchronous dispatch terminated: %s", intercept.ResponseBody)
+	}
+	coord.HandleUsage(context.Background(), cliproxyusage.Record{APIKey: executeID, Detail: cliproxyusage.Detail{InputTokens: 4, OutputTokens: 2, TotalTokens: 6}})
+	coord.CompleteRequest(context.Background(), pluginapi.RequestCompletion{RequestID: "sync-request", Outcome: pluginapi.RequestCompletionSucceeded})
+	usage, err := coord.waitSynchronousUsage(context.Background(), dispatch, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coord.cleanupSynchronousByPointer(dispatch)
+	if settlements.Load() != 0 {
+		t.Fatalf("legacy settlements = %d, want 0", settlements.Load())
+	}
+	if usage.InputTokens != 4 || usage.OutputTokens != 2 {
+		t.Fatalf("synchronous usage = %+v", usage)
+	}
+	if _, ok := coord.prepared["sync-request"]; ok {
+		t.Fatal("synchronous request was not cleaned up")
 	}
 }
 

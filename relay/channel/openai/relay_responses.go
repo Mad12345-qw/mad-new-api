@@ -73,6 +73,16 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 }
 
 func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	return oaiResponsesStreamHandler(c, info, resp, false, nil)
+}
+
+// OaiResponsesStreamHandlerExactUsage disables local token estimation. It is
+// reserved for routes whose billing contract requires upstream usage.
+func OaiResponsesStreamHandlerExactUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response, onUsage func(*dto.Usage) error) (*dto.Usage, *types.NewAPIError) {
+	return oaiResponsesStreamHandler(c, info, resp, true, onUsage)
+}
+
+func oaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response, requireExactUsage bool, onUsage func(*dto.Usage) error) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		logger.LogError(c, "invalid response or response body")
 		return nil, types.NewError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse)
@@ -81,6 +91,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	defer service.CloseResponseBodyGracefully(resp)
 
 	var usage = &dto.Usage{}
+	exactUsage := false
+	usageCommitted := false
 	var responseTextBuilder strings.Builder
 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
 	imageCommitted := false
@@ -94,11 +106,14 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+		if !requireExactUsage {
+			sendResponsesStreamData(c, streamResponse, data)
+		}
 		switch streamResponse.Type {
 		case "response.completed", "response.done":
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {
+					exactUsage = true
 					if streamResponse.Response.Usage.InputTokens != 0 {
 						usage.PromptTokens = streamResponse.Response.Usage.InputTokens
 					}
@@ -111,6 +126,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					if streamResponse.Response.Usage.InputTokensDetails != nil {
 						usage.PromptTokensDetails.CachedTokens = streamResponse.Response.Usage.InputTokensDetails.CachedTokens
 						usage.PromptTokensDetails.CacheWriteTokens = streamResponse.Response.Usage.InputTokensDetails.CacheWriteTokens
+					}
+					if requireExactUsage && !usageCommitted && onUsage != nil {
+						if err := onUsage(usage); err != nil {
+							sr.Error(err)
+							return
+						}
+						usageCommitted = true
 					}
 				}
 				if !imageCommitted {
@@ -156,9 +178,15 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				}
 			}
 		}
+		if requireExactUsage && !sr.IsStopped() {
+			sendResponsesStreamData(c, streamResponse, data)
+		}
 	})
+	if requireExactUsage && !exactUsage {
+		return nil, types.NewError(fmt.Errorf("upstream response omitted usage"), types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
+	}
 
-	if usage.CompletionTokens == 0 {
+	if !requireExactUsage && usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量
 		tempStr := responseTextBuilder.String()
 		if len(tempStr) > 0 {
@@ -168,7 +196,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	}
 
-	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
+	if !requireExactUsage && usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
 		usage.PromptTokens = info.GetEstimatePromptTokens()
 	}
 

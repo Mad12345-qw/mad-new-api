@@ -1,0 +1,50 @@
+# Unified production shape: one NewAPI instance plus the independent official
+# CPA gateway. Database and Redis remain owned by the existing Compose project.
+services:
+  new-api:
+    image: ${MADAPI_NEW_API_IMAGE:?MADAPI_NEW_API_IMAGE is required}
+    container_name: new-api
+    restart: unless-stopped
+    command: ["--log-dir", "/app/logs"]
+    ports:
+      - "127.0.0.1:${MADAPI_NEW_API_PORT:-3001}:3000"
+    env_file:
+      - ${MADAPI_ENV_FILE:?MADAPI_ENV_FILE is required}
+    environment:
+      TZ: Asia/Shanghai
+      NODE_NAME: new-api-unified
+      MADAPI_CPA_CONTROL_TOKEN: ${MADAPI_CPA_CONTROL_TOKEN:?MADAPI_CPA_CONTROL_TOKEN is required}
+      MADAPI_CPA_HANDLER_URL: http://cpa-official-gateway:18417/execute
+    volumes:
+      - ${MADAPI_DATA_DIR:?MADAPI_DATA_DIR is required}:/data
+      - ${MADAPI_LOG_DIR:?MADAPI_LOG_DIR is required}:/app/logs
+    networks:
+      madapi:
+        aliases:
+          - new-api
+
+  cpa-official-gateway:
+    image: ${MADAPI_CPA_IMAGE:?MADAPI_CPA_IMAGE is required}
+    container_name: cpa-official-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MADAPI_CPA_PORT:-8330}:18317"
+    expose:
+      - "18417"
+    env_file:
+      - ${MADAPI_ENV_FILE:?MADAPI_ENV_FILE is required}
+    environment:
+      TZ: Asia/Shanghai
+      MADAPI_NEWAPI_CONTROL_URL: http://new-api:3000/internal/madapi/cpa
+      MADAPI_CPA_CONTROL_TOKEN: ${MADAPI_CPA_CONTROL_TOKEN:?MADAPI_CPA_CONTROL_TOKEN is required}
+      MADAPI_CPA_EXECUTE_PORT: "18417"
+    depends_on:
+      new-api:
+        condition: service_started
+    networks:
+      - madapi
+
+networks:
+  madapi:
+    external: true
+    name: ${MADAPI_DOCKER_NETWORK:-new-api_default}

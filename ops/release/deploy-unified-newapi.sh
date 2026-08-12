@@ -24,7 +24,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 
 [[ $(id -u) -eq 0 ]]
 [[ "$git_sha" =~ ^[0-9a-f]{40}$ ]]
-[[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$env_file" && -f "$site" && -d "$data_dir" && -f "$database" ]]
+[[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$release_dir/release-manifest.json" && -f "$env_file" && -f "$site" && -d "$data_dir" && -f "$database" ]]
 [[ "$(dirname "$database")" == "$data_dir" ]]
 for value in "$old_port" "$candidate_port" "$image_port" "$health_attempts"; do [[ "$value" =~ ^[1-9][0-9]*$ ]]; done
 [[ "$old_port" != "$candidate_port" ]]
@@ -128,6 +128,19 @@ gzip -dc "$release_dir/mad-new-api.tar.gz" | docker load >/dev/null
 gzip -dc "$release_dir/mad-cpa-official-gateway.tar.gz" | docker load >/dev/null
 new_api_image="mad-new-api:$git_sha"
 cpa_image="mad-cpa-official-gateway:$git_sha"
+manifest_commit="$(python3 - "$release_dir/release-manifest.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle).get("madapi_commit", ""))
+PY
+)"
+[[ "$manifest_commit" == "$git_sha" ]]
+docker image inspect mad-new-api:latest >/dev/null
+docker image inspect mad-cpa-official-gateway:latest >/dev/null
+docker tag mad-new-api:latest "$new_api_image"
+docker tag mad-cpa-official-gateway:latest "$cpa_image"
 docker image inspect "$new_api_image" >/dev/null
 docker image inspect "$cpa_image" >/dev/null
 docker network inspect "$network" >/dev/null

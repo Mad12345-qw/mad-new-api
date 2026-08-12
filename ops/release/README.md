@@ -124,3 +124,27 @@ production image and database clone, then run `verify-sqlite-image-compat.sh`.
 The test starts the current image, the candidate image, and the current image
 again against the candidate-migrated clone. It also verifies that users,
 channels, tokens, and options keep identical value-safe fingerprints.
+
+## Unified NewAPI orchestration
+
+The unified candidate shape is defined in docker-compose.unified.yml: exactly
+one new-api service and one independent cpa-official-gateway service. CPA
+points at the main NewAPI private control endpoint through the shared Docker
+network. Ordinary /v1 continues to point at NewAPI; /codex/v1 continues to
+point at the official CPA gateway.
+
+The deploy entrypoint is deploy-unified-newapi.sh. It snapshots the current
+containers, environment, and Nginx site before switching. The previous
+new-api-codex-control container is stopped and renamed, not deleted. The old
+deploy-codex-control-only.sh definition remains unchanged as the emergency
+legacy deployment path.
+
+After a successful deployment, use the recorded backup directory with
+rollback-unified-newapi.sh to restore the previous containers and Nginx
+configuration. Do not remove the timestamped rollback containers until the
+observation window is complete.
+
+Run the offline orchestration gate with:
+
+    ops/release/validate-unified-orchestration.sh
+    python3 ops/release/test-patch-nginx-unified-route.py

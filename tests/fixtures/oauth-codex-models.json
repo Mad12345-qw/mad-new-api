@@ -17,6 +17,7 @@
     { "id": "deepseek-v4-flash", "object": "model" },
     { "id": "gemini-3.6-flash", "object": "model" },
     { "id": "grok-4.5", "object": "model" },
+    { "id": "grok-4.6", "object": "model" },
     { "id": "gpt-image-2", "object": "model" },
     { "id": "seedance-2.0-fast", "object": "model" }
   ]

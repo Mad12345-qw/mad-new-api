@@ -58,14 +58,14 @@ templates.forEach(function (item) {
 var fallback = bySlug['gpt-5.5'] || templates[0]
 var sourceModels = Array.isArray(available.data) ? available.data : (Array.isArray(available.models) ? available.models : [])
 var authKind = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('AUTH_KIND'))
-var apiIds = ['claude-fable-5','claude-opus-5','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','grok-4.5','gpt-5.6-sol-pro','gpt-5.6-terra-pro']
+var apiIds = ['claude-fable-5','claude-opus-5','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','grok-4.6','gpt-5.6-sol-pro','gpt-5.6-terra-pro']
 var apiSlots = {
   'claude-fable-5': {shell: 'gpt-5.5', profile: 'gpt-5.5'},
   'claude-opus-5': {shell: 'gpt-5.4', profile: 'gpt-5.4'},
   'gpt-5.6-sol': {shell: 'gpt-5.6-sol', profile: 'gpt-5.6-sol'},
   'gpt-5.6-terra': {shell: 'gpt-5.6-terra', profile: 'gpt-5.6-terra'},
   'gpt-5.6-luna': {shell: 'gpt-5.6-luna', profile: 'gpt-5.6-luna'},
-  'grok-4.5': {shell: 'gpt-5.4-mini', profile: 'gpt-5.4-mini'},
+  'grok-4.6': {shell: 'gpt-5.4-mini', profile: 'gpt-5.4-mini'},
   'gpt-5.6-sol-pro': {shell: 'gpt-5.3-codex', profile: 'gpt-5.6-sol'},
   'gpt-5.6-terra-pro': {shell: 'gpt-5.2', profile: 'gpt-5.6-terra'}
 }
@@ -88,7 +88,7 @@ sourceModels.forEach(function (item) {
   if (!id || seen[lower] || /(?:^|[-_.])(image|video|seedance|sora|veo|kling|hailuo)(?:$|[-_.])/.test(lower)) return
   seen[lower] = true
   var slot = authKind === 'apikey' ? apiSlots[lower] : null
-  var sourceSlug = slot ? slot.profile : lower
+  var sourceSlug = slot ? slot.profile : (lower === 'grok-4.6' ? 'gpt-5.4-mini' : lower)
   var source = bySlug[sourceSlug]
   if (!source && /-pro$/.test(sourceSlug)) source = bySlug[sourceSlug.slice(0, -4)]
   source = source || fallback

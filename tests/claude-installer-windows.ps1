@@ -33,6 +33,7 @@ $threePConfig = Join-Path $threep 'claude_desktop_config.json'
 $metaPath = Join-Path $library '_meta.json'
 $modelsPath = Join-Path $root 'models.json'
 $imageSource = Join-Path $root 'image-source'
+$languageInstaller = Join-Path (Split-Path -Parent $InstallerPath) 'install-language.ps1'
 New-Item -ItemType Directory -Path $imageSource -Force | Out-Null
 [IO.File]::Copy((Join-Path $ImageToolPath 'server.mjs'), (Join-Path $imageSource 'server.mjs'), $true)
 $injectedWidget = [IO.File]::ReadAllText((Join-Path $ImageToolPath 'widget.html'), [Text.Encoding]::UTF8)
@@ -121,9 +122,16 @@ try {
     Assert-True (@($metaResult.entries | Where-Object { $_.name -eq 'Existing' }).Count -eq 1) 'Existing config library entry was lost.'
     Assert-True ([string]$gateway.inferenceGatewayBaseUrl -eq 'https://mad.myddns.me') 'Gateway base URL was not normalized to the root.'
     $installerText = [IO.File]::ReadAllText($InstallerPath, [Text.Encoding]::UTF8)
+    $languageInstallerText = [IO.File]::ReadAllText($languageInstaller, [Text.Encoding]::UTF8)
     $serverText = [IO.File]::ReadAllText((Join-Path $ImageToolPath 'server.mjs'), [Text.Encoding]::UTF8)
     Assert-True ($installerText.Contains('($baseUrl + ''/v1/models'')')) 'Models endpoint does not use /v1/models.'
     Assert-True ($serverText.Contains('${baseUrl}/v1/images/generations')) 'Image endpoint does not use /v1/images/generations.'
+    Assert-True ($languageInstallerText.Contains('-PassThru')) 'Claude language installer does not capture a child process exit code.'
+    Assert-True ($languageInstallerText.Contains('return [int]$process.ExitCode')) 'Claude language installer can confuse output with the exit code.'
+    Assert-True (-not $languageInstallerText.Contains('return $LASTEXITCODE')) 'Claude language installer still relies on mixed pipeline output.'
+    Assert-True ($languageInstallerText.Contains("Join-Path `$env:LOCALAPPDATA 'Claude-3p\config.json'")) 'Claude 3p locale path is missing.'
+    Assert-True ($languageInstallerText.Contains('Claude_pzs8sxrjxfjjc\LocalCache\Roaming')) 'Claude Store locale paths are missing.'
+    Assert-True ($languageInstallerText.Contains('Stop-ClaudeDesktop')) 'Claude is not stopped before locale verification.'
 
     $languageFailure = Join-Path $root 'language-failure.ps1'
     [IO.File]::WriteAllText(

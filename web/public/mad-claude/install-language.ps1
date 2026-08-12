@@ -31,11 +31,33 @@ function Invoke-ElevatedLanguageScript {
     )
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        & powershell.exe @arguments
-        return $LASTEXITCODE
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList ($arguments -join ' ') -WindowStyle Hidden -Wait -PassThru
+        return [int]$process.ExitCode
     }
     $process = Start-Process -FilePath 'powershell.exe' -ArgumentList ($arguments -join ' ') -Verb RunAs -Wait -PassThru
-    return $process.ExitCode
+    return [int]$process.ExitCode
+}
+
+function Set-ClaudeLocale([string]$ConfigPath) {
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { return }
+    $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $property = $config.PSObject.Properties['locale']
+    if ($null -eq $property) { $config | Add-Member -NotePropertyName locale -NotePropertyValue 'zh-CN' }
+    else { $property.Value = 'zh-CN' }
+    $json = $config | ConvertTo-Json -Depth 50
+    [IO.File]::WriteAllText($ConfigPath, $json, (New-Object Text.UTF8Encoding($false)))
+}
+
+function Stop-ClaudeDesktop {
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        $processes = @(Get-Process -Name 'Claude' -ErrorAction SilentlyContinue)
+        if ($processes.Count -eq 0) { return }
+        $processes | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
+    if (Get-Process -Name 'Claude' -ErrorAction SilentlyContinue) {
+        throw 'Claude Desktop could not be closed before locale verification.'
+    }
 }
 
 New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
@@ -68,6 +90,7 @@ try {
         try { $null = Invoke-ElevatedLanguageScript $installer 'uninstall' } catch { }
         throw ('Claude Chinese safe-mode install failed with exit code ' + $exitCode + '.')
     }
+    Stop-ClaudeDesktop
 
     $resourcePaths = @()
     $package = Get-AppxPackage -Name Claude -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -89,17 +112,19 @@ try {
     $configPaths = @(
         (Join-Path $env:APPDATA 'Claude\config.json'),
         (Join-Path $env:APPDATA 'Claude-3p\config.json'),
-        (Join-Path $env:LOCALAPPDATA 'Claude-3p\config.json')
+        (Join-Path $env:LOCALAPPDATA 'Claude-3p\config.json'),
+        (Join-Path $env:LOCALAPPDATA 'Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\config.json'),
+        (Join-Path $env:LOCALAPPDATA 'Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude-3p\config.json')
     )
-    $localeVerified = $false
-    foreach ($configPath in $configPaths) {
-        if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { continue }
-        try {
-            $locale = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json).locale
-            if ([string]$locale -eq 'zh-CN') { $localeVerified = $true; break }
-        } catch { }
+    foreach ($configPath in $configPaths) { Set-ClaudeLocale $configPath }
+    $existingConfigs = @($configPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+    if ($existingConfigs.Count -lt 1) { throw 'Claude Chinese locale configuration is missing.' }
+    foreach ($configPath in $existingConfigs) {
+        $locale = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json).locale
+        if ([string]$locale -ne 'zh-CN') {
+            throw ('Claude Chinese locale verification failed: ' + $configPath)
+        }
     }
-    if (-not $localeVerified) { throw 'Claude Chinese locale verification failed.' }
     Write-Host 'Claude Chinese interface installed in safe mode.'
 } catch {
     $logRoot = Join-Path $env:LOCALAPPDATA 'MadAPI\claude-language-logs'

@@ -71,15 +71,51 @@ function Get-ProviderDisplayName([string[]]$Lines, [string]$ProviderId) {
 }
 
 function Close-CodexDesktop {
-    $processes = @(Get-Process -Name 'Codex' -ErrorAction SilentlyContinue)
+    $processes = @(
+        Get-Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                if ($_.ProcessName -notin @('ChatGPT', 'Codex')) { return $false }
+                try {
+                    return $_.Path -like '*\WindowsApps\OpenAI.Codex_*'
+                } catch {
+                    return $_.ProcessName -eq 'Codex'
+                }
+            }
+    )
     if ($processes.Count -eq 0) { return }
     foreach ($process in $processes) { [void]$process.CloseMainWindow() }
     $deadline = (Get-Date).AddSeconds(10)
-    while ((Get-Date) -lt $deadline -and @(Get-Process -Name 'Codex' -ErrorAction SilentlyContinue).Count -gt 0) { Start-Sleep -Milliseconds 250 }
-    $remaining = @(Get-Process -Name 'Codex' -ErrorAction SilentlyContinue)
+    do {
+        Start-Sleep -Milliseconds 250
+        $remaining = @(
+            Get-Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    if ($_.ProcessName -notin @('ChatGPT', 'Codex')) { return $false }
+                    try {
+                        return $_.Path -like '*\WindowsApps\OpenAI.Codex_*'
+                    } catch {
+                        return $_.ProcessName -eq 'Codex'
+                    }
+                }
+        )
+    } while ((Get-Date) -lt $deadline -and $remaining.Count -gt 0)
     if ($remaining.Count -gt 0) {
         $remaining | Stop-Process -Force
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Seconds 2
+    }
+    $stillRunning = @(
+        Get-Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                if ($_.ProcessName -notin @('ChatGPT', 'Codex')) { return $false }
+                try {
+                    return $_.Path -like '*\WindowsApps\OpenAI.Codex_*'
+                } catch {
+                    return $_.ProcessName -eq 'Codex'
+                }
+            }
+    )
+    if ($stillRunning.Count -gt 0) {
+        throw 'Codex Desktop could not be closed; local history was not changed.'
     }
 }
 

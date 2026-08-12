@@ -73,7 +73,7 @@ $apiModelIds = @(
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
-    'grok-4.5',
+    'grok-4.6',
     'gpt-5.6-sol-pro',
     'gpt-5.6-terra-pro'
 )
@@ -83,7 +83,7 @@ $apiModelSlots = [ordered]@{
     'gpt-5.6-sol' = [ordered]@{ Shell = 'gpt-5.6-sol'; Profile = 'gpt-5.6-sol' }
     'gpt-5.6-terra' = [ordered]@{ Shell = 'gpt-5.6-terra'; Profile = 'gpt-5.6-terra' }
     'gpt-5.6-luna' = [ordered]@{ Shell = 'gpt-5.6-luna'; Profile = 'gpt-5.6-luna' }
-    'grok-4.5' = [ordered]@{ Shell = 'gpt-5.4-mini'; Profile = 'gpt-5.4-mini' }
+    'grok-4.6' = [ordered]@{ Shell = 'gpt-5.4-mini'; Profile = 'gpt-5.4-mini' }
     'gpt-5.6-sol-pro' = [ordered]@{ Shell = 'gpt-5.3-codex'; Profile = 'gpt-5.6-sol' }
     'gpt-5.6-terra-pro' = [ordered]@{ Shell = 'gpt-5.2'; Profile = 'gpt-5.6-terra' }
 }
@@ -106,7 +106,7 @@ foreach ($id in $availableIds) {
     if ($lower -match '(?:^|[-_.])(image|video|seedance|sora|veo|kling|hailuo)(?:$|[-_.])') { continue }
 
     $catalogSlug = $id
-    $sourceSlug = $lower
+    $sourceSlug = if ($lower -eq 'grok-4.6') { 'gpt-5.4-mini' } else { $lower }
     if ($authKind -eq 'apikey') {
         $slot = $apiModelSlots[$lower]
         if ($null -eq $slot) { throw ('MadAPI API model slot is missing: ' + $id) }

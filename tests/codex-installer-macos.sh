@@ -88,6 +88,7 @@ grep -Fq '"slug": "gpt-5.2"' "$codex_home/madapi-cockpit-model-catalog.json" || 
 oauth_auth="$codex_home/auth.json"
 printf '%s' '{"auth_mode":"chatgpt","tokens":{"access_token":"oauth-access","refresh_token":"oauth-refresh"}}' > "$oauth_auth"
 MADAPI_CODEX_AUTH_KIND=oauth \
+MADAPI_API_KEY='sk-refresh-macos' \
 MADAPI_REFRESH_RESPONSE_FILE="$oauth_models" \
 MADAPI_CODEX_TEMPLATE_FILE="$repo_root/tests/fixtures/cpa-codex-templates.json" \
 CODEX_HOME="$codex_home" \

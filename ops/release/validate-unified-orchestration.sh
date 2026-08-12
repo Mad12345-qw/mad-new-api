@@ -25,6 +25,7 @@ for marker in (
     "  new-api:\n",
     "  cpa-official-gateway:\n",
     "MADAPI_NEWAPI_CONTROL_URL: http://new-api:3000/internal/madapi/cpa",
+    "MADAPI_CPA_HANDLER_URL: http://cpa-official-gateway:18417/execute",
     "name: ${MADAPI_DOCKER_NETWORK:-new-api_default}",
 ):
     if marker.replace("$", "$") not in compose:
@@ -32,11 +33,19 @@ for marker in (
 if "new-api-codex-control" in compose:
     raise SystemExit("unified compose still contains the retired second NewAPI")
 
+deploy = (Path(sys.argv[1]).parent / "deploy-unified-newapi.sh").read_text(encoding="utf-8")
+rollback = (Path(sys.argv[1]).parent / "rollback-unified-newapi.sh").read_text(encoding="utf-8")
+for marker in ("source.backup(target)", "sqlite_single_writer=true", "check_pair", "candidate-data"):
+    if marker not in deploy:
+        raise SystemExit(f"SQLite single-writer deploy gate is missing: {marker}")
+for marker in ("docker stop \"$candidate_new\" \"$candidate_cpa\"", "cpa_status", "sqlite_single_writer=true"):
+    if marker not in rollback:
+        raise SystemExit(f"SQLite single-writer rollback gate is missing: {marker}")
+
 for marker in (
     "location ^~ /v1/",
     "proxy_pass http://127.0.0.1:__NEW_API_PORT__;",
     "location ^~ /codex/v1/",
-    "proxy_pass http://127.0.0.1:__CPA_PORT__;",
     "location = /v1/images/generations",
     "proxy_pass http://127.0.0.1:__IMAGE_PORT__;",
 ):
@@ -51,9 +60,8 @@ PY
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
-"$script_dir/render-unified-route.sh" 3001 8330 3013 "$tmp_dir/route.conf"
+"$script_dir/render-unified-route.sh" 3001 3013 "$tmp_dir/route.conf"
 grep -Fq 'proxy_pass http://127.0.0.1:3001;' "$tmp_dir/route.conf"
-grep -Fq 'proxy_pass http://127.0.0.1:8330;' "$tmp_dir/route.conf"
 grep -Fq 'proxy_pass http://127.0.0.1:3013;' "$tmp_dir/route.conf"
 ! grep -Fq 'new-api-codex-control' "$tmp_dir/route.conf"
 echo "unified_orchestration_validation=passed"

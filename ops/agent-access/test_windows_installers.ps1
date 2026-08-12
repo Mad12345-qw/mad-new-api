@@ -18,7 +18,10 @@ function Invoke-CodexInstallerCase {
         [string]$Mode,
         [string]$Installer,
         [string]$RefreshScript,
-        [string]$HistoryScript
+        [string]$HistoryScript,
+        [string]$ModelsFixture,
+        [string]$TemplateFixture,
+        [string]$ImageSkillSource
     )
 
     $codexCaseHome = Join-Path $Root ('codex-' + $Mode)
@@ -47,18 +50,41 @@ function Invoke-CodexInstallerCase {
     $env:MADAPI_INSTALL_TEST_MODE = '1'
     $env:MADAPI_REFRESH_SCRIPT_SOURCE = $RefreshScript
     $env:MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE = $HistoryScript
+    $env:MADAPI_IMAGE_SKILL_SOURCE_DIR = $ImageSkillSource
+    $env:MADAPI_REFRESH_RESPONSE_FILE = $ModelsFixture
+    $env:MADAPI_CODEX_TEMPLATE_FILE = $TemplateFixture
     & $Installer | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Codex $Mode installer failed." }
 
     $config = [IO.File]::ReadAllText($configPath, [Text.Encoding]::UTF8)
     Assert-True ($config -match '(?m)^model_provider = "custom"\s*$') "Codex $Mode provider changed."
     Assert-True ($config -match '(?m)^base_url = "https://mad.test/codex/v1"\s*$') "Codex $Mode gateway URL is wrong."
-    Assert-True ($config -match '(?m)^env_key = "MADAPI_API_KEY"\s*$') "Codex $Mode env key is missing."
+    if ($Mode -eq 'oauth') {
+        Assert-True ($config -match '(?m)^requires_openai_auth = true\s*$') 'Codex OAuth auth mode is missing.'
+        Assert-True ($config -match '(?m)^experimental_bearer_token = ') 'Codex OAuth bearer configuration is missing.'
+        Assert-True ($config -notmatch '(?m)^env_key = "MADAPI_API_KEY"\s*$') 'Codex OAuth incorrectly uses API env_key.'
+        $catalog = Get-Content -LiteralPath (Join-Path $codexCaseHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True (@($catalog.models).Count -eq 16) 'Codex OAuth catalog is not 16 models.'
+    } else {
+        Assert-True ($config -match '(?m)^requires_openai_auth = false\s*$') 'Codex API auth mode is missing.'
+        Assert-True ($config -match '(?m)^env_key = "MADAPI_API_KEY"\s*$') "Codex $Mode env key is missing."
+        Assert-True ($config -notmatch 'experimental_bearer_token') 'Codex API config contains OAuth bearer configuration.'
+        $catalog = Get-Content -LiteralPath (Join-Path $codexCaseHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True (@($catalog.models).Count -eq 8) 'Codex API catalog is not 8 models.'
+    }
     Assert-True ($config -match '(?m)^image_generation = true\s*$') "Codex $Mode image feature is missing."
-    Assert-True ((Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash -eq $authHash) "Codex $Mode auth state changed."
+    Assert-True ($config -match '(?m)^network_access = true\s*$') "Codex $Mode image network access is missing."
+    if ($Mode -eq 'oauth') {
+        Assert-True ((Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash -eq $authHash) 'Codex OAuth state changed.'
+    } else {
+        $apiAuth = Get-Content -LiteralPath $authPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        Assert-True ([string]$apiAuth.auth_mode -eq 'apikey' -and [string]$apiAuth.OPENAI_API_KEY -eq 'sk-test-agent-access') 'Codex API authentication state was not configured.'
+    }
     Assert-True (Test-Path -LiteralPath (Join-Path $codexCaseHome 'madapi-cockpit-model-catalog.json')) "Codex $Mode catalog is missing."
     Assert-True (Test-Path -LiteralPath (Join-Path $codexCaseHome 'madapi-refresh-model-catalog.ps1')) "Codex $Mode refresh script is missing."
     Assert-True (Test-Path -LiteralPath (Join-Path $codexCaseHome 'madapi-restore-history.ps1')) "Codex $Mode history script is missing."
+    $imageSkill = Get-Content -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $codexCaseHome) '.agents') 'skills\madapi-imagegen\SKILL.md') -Raw -Encoding UTF8
+    Assert-True ($imageSkill.Contains('absolute `path`') -and $imageSkill.Contains('source_url')) "Codex $Mode image preview/download contract is missing."
 }
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -67,9 +93,11 @@ $claudeRoot = Join-Path $repo 'web\public\mad-claude'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('madapi-agent-access-' + [guid]::NewGuid().ToString('N'))
 $savedEnvironment = @{}
 $environmentNames = @(
-    'CODEX_HOME', 'MADAPI_KEY', 'MADAPI_BASE_URL', 'MADAPI_CODEX_LOGIN_MODE',
+    'CODEX_HOME', 'MADAPI_KEY', 'MADAPI_API_KEY', 'MADAPI_BASE_URL', 'MADAPI_CODEX_LOGIN_MODE', 'MADAPI_CODEX_AUTH_KIND',
     'MADAPI_INSTALL_TEST_MODE', 'MADAPI_REFRESH_SCRIPT_SOURCE',
-    'MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE', 'MADAPI_CLAUDE_BASE_URL',
+    'MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE', 'MADAPI_REFRESH_RESPONSE_FILE',
+    'MADAPI_CODEX_TEMPLATE_FILE', 'MADAPI_IMAGE_SKILL_SOURCE_DIR',
+    'MADAPI_CLAUDE_BASE_URL',
     'MADAPI_MODELS_FIXTURE_PATH', 'MADAPI_CLAUDE_NORMAL_DIR',
     'MADAPI_CLAUDE_THREEP_DIR', 'MADAPI_CLAUDE_TOOL_DIR',
     'MADAPI_CLAUDE_IMAGE_SOURCE_DIR', 'MADAPI_CLAUDE_INSTALL_LANGUAGE',
@@ -98,13 +126,19 @@ try {
         -Mode 'oauth' `
         -Installer (Join-Path $codexRoot 'install.ps1') `
         -RefreshScript (Join-Path $codexRoot 'refresh-model-catalog.ps1') `
-        -HistoryScript (Join-Path $codexRoot 'restore-history.ps1')
+        -HistoryScript (Join-Path $codexRoot 'restore-history.ps1') `
+        -ModelsFixture (Join-Path $repo 'tests\fixtures\oauth-codex-models.json') `
+        -TemplateFixture (Join-Path $repo 'tests\fixtures\cpa-codex-templates.json') `
+        -ImageSkillSource (Join-Path $codexRoot 'image-skill')
     Invoke-CodexInstallerCase `
         -Root $root `
         -Mode 'apikey' `
         -Installer (Join-Path $codexRoot 'install.ps1') `
         -RefreshScript (Join-Path $codexRoot 'refresh-model-catalog.ps1') `
-        -HistoryScript (Join-Path $codexRoot 'restore-history.ps1')
+        -HistoryScript (Join-Path $codexRoot 'restore-history.ps1') `
+        -ModelsFixture (Join-Path $repo 'tests\fixtures\newapi-models.json') `
+        -TemplateFixture (Join-Path $repo 'tests\fixtures\cpa-codex-templates.json') `
+        -ImageSkillSource (Join-Path $codexRoot 'image-skill')
 
     $fixture = Join-Path $root 'claude-models.json'
     Write-Utf8Json $fixture ([ordered]@{ data = @(

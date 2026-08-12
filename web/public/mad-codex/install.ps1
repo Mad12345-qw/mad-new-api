@@ -99,6 +99,19 @@ function Restore-HistoryBackup([string]$CodexHome, [string]$HistoryBackupPath) {
     }
 }
 
+function Invoke-HistoryRecovery([string]$ScriptPath, [string]$CodexHome, [string]$ProviderId, [string]$BackupRoot) {
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $attemptBackup = if ($attempt -eq 1) { $BackupRoot } else { $BackupRoot + '-retry-' + $attempt }
+        $output = @(& "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -CodexHome $CodexHome -ProviderId $ProviderId -BackupPath $attemptBackup 2>&1)
+        $exitCode = $LASTEXITCODE
+        foreach ($line in $output) { Write-Host ([string]$line) }
+        if ($exitCode -eq 0) { return $attemptBackup }
+        Restore-HistoryBackup $CodexHome $attemptBackup
+        if ($attempt -lt 3) { Start-Sleep -Seconds $attempt }
+    }
+    throw 'MadAPI local history recovery did not complete after 3 attempts.'
+}
+
 function Backup-ManagedFiles([string]$BackupRoot, [string[]]$Paths) {
     New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
     foreach ($path in $Paths) {
@@ -517,10 +530,11 @@ try {
     if (Test-Path -LiteralPath $modelsCachePath) { Remove-Item -LiteralPath $modelsCachePath -Force }
     if (-not $testMode) { Register-CatalogRefreshTask $refreshLauncherPath }
     $historyBackupPath = Join-Path $codexHome ('madapi-install-history-backup-' + $transactionId)
-    & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $historyScriptPath -CodexHome $codexHome -ProviderId $providerId -BackupPath $historyBackupPath
-    if ($LASTEXITCODE -ne 0) {
+    try {
+        $historyBackupPath = Invoke-HistoryRecovery $historyScriptPath $codexHome $providerId $historyBackupPath
+    } catch {
         Restore-HistoryBackup $codexHome $historyBackupPath
-        Write-Warning 'MadAPI local history recovery was skipped; the Codex installation remains active.'
+        Write-Warning ('MadAPI local history recovery was skipped; the Codex installation remains active. ' + $_.Exception.Message)
         $historyBackupPath = $null
     }
 } catch {

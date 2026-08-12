@@ -35,7 +35,6 @@ with tempfile.TemporaryDirectory() as directory:
     output.write_text(module.patch(site, snippet), encoding="utf-8")
     result = output.read_text(encoding="utf-8")
 assert "proxy_pass http://127.0.0.1:__NEW_API_PORT__;" in result
-assert "proxy_pass http://127.0.0.1:__CPA_PORT__;" in result
 assert "proxy_pass http://127.0.0.1:__IMAGE_PORT__;" in result
 assert "location /health" in result
 assert "proxy_pass http://old-v1;" not in result

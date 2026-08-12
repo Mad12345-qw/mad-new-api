@@ -35,6 +35,12 @@ import (
 
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
+	if middleware.IsCodexRoute(c) {
+		switch info.RelayMode {
+		case relayconstant.RelayModeResponses, relayconstant.RelayModeResponsesCompact:
+			return relay.CPAHandlerHelper(c, info)
+		}
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
 		err = relay.ImageHelper(c, info)

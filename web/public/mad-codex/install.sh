@@ -245,8 +245,13 @@ trap 'exit 1' HUP INT TERM
   printf 'name = %s\n' "$(toml_string "$provider_name")"
   printf 'base_url = %s\n' "$(toml_string "$codex_base_url")"
   printf '%s\n' 'wire_api = "responses"'
-  printf '%s\n' 'requires_openai_auth = false'
-  printf 'env_key = %s\n' "$(toml_string "$gateway_key_env_name")"
+  if [ "$auth_kind" = oauth ]; then
+    printf '%s\n' 'requires_openai_auth = true'
+    printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
+  else
+    printf '%s\n' 'requires_openai_auth = false'
+    printf 'env_key = %s\n' "$(toml_string "$gateway_key_env_name")"
+  fi
   printf 'http_headers = { "x-openai-actor-authorization" = "madapi-gateway", "x-madapi-codex-login-mode" = %s }\n' "$(toml_string "$auth_kind")"
   printf '%s\n' 'supports_websockets = false'
   printf '%s\n' 'stream_idle_timeout_ms = 360000'

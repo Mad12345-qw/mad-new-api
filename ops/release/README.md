@@ -5,11 +5,10 @@ relay behavior or CPA protocol behavior.
 
 ## Codex route boundary
 
-The public `/codex/v1` route terminates at the official CPA gateway. CPA owns
-the complete Codex HTTP, SSE, WebSocket, session, tool, reasoning, compact, and
-image protocol path. The gateway calls private NewAPI control endpoints for
-token authentication, channel selection, pre-consumption, settlement, refunds,
-and logs. Ordinary `/v1` continues to terminate at NewAPI.
+The public `/codex/v1` route terminates at the same NewAPI instance as `/v1`.
+NewAPI owns authentication, channel selection, retries, billing, refunds, and
+logs. After channel selection, NewAPI calls the private official CPA Handler;
+CPA owns the Codex protocol, tools, reasoning, Compact, and streaming behavior.
 
 The embedded official CPA configuration uses:
 
@@ -130,19 +129,22 @@ channels, tokens, and options keep identical value-safe fingerprints.
 The unified candidate shape is defined in docker-compose.unified.yml: exactly
 one new-api service and one independent cpa-official-gateway service. CPA
 points at the main NewAPI private control endpoint through the shared Docker
-network. Ordinary /v1 continues to point at NewAPI; /codex/v1 continues to
-point at the official CPA gateway.
+network. Ordinary `/v1` and `/codex/v1` both point at the unified NewAPI;
+only the private synchronous execution hop points at the official CPA gateway.
 
-The deploy entrypoint is deploy-unified-newapi.sh. It snapshots the current
-containers, environment, and Nginx site before switching. The previous
-new-api-codex-control container is stopped and renamed, not deleted. The old
-deploy-codex-control-only.sh definition remains unchanged as the emergency
+The deploy entrypoint is deploy-unified-newapi.sh. For SQLite production it
+first creates an online SQLite backup and validates candidate NewAPI and CPA
+against that private snapshot. After preflight passes, it stops every old
+application writer, starts the final pair as the sole writer of the real data
+directory, validates NewAPI, CPA health, and the private execute endpoint, then
+switches Nginx. Timestamped old containers remain available for rollback. The
+old deploy-codex-control-only.sh definition remains unchanged as the emergency
 legacy deployment path.
 
 After a successful deployment, use the recorded backup directory with
-rollback-unified-newapi.sh to restore the previous containers and Nginx
-configuration. Do not remove the timestamped rollback containers until the
-observation window is complete.
+rollback-unified-newapi.sh stops the candidate writers before reopening the
+same SQLite database with the old NewAPI and CPA, validates both old services,
+and changes Nginx only after that validation succeeds.
 
 Run the offline orchestration gate with:
 

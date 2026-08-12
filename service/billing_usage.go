@@ -24,6 +24,10 @@ func effectiveBillingUsage(usage *dto.Usage) *dto.Usage {
 	return usage
 }
 
+func ValidEffectiveUsage(usage *dto.Usage) bool {
+	return ValidUsage(effectiveBillingUsage(usage))
+}
+
 func usageBillingPathForLog(isLocalCountTokens bool, usage *dto.Usage) string {
 	effectiveUsage, ok := usageFromBillingUsage(usage)
 	if !ok {

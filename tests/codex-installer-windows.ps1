@@ -12,19 +12,20 @@ $assetRoot = Split-Path -Parent $InstallerPath
 $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $assetRoot))
 $fixtureRoot = Join-Path $repoRoot 'tests\fixtures'
 $modelsFixture = Join-Path $fixtureRoot 'newapi-models.json'
+$oauthModelsFixture = Join-Path $fixtureRoot 'oauth-codex-models.json'
 $templateFixture = Join-Path $fixtureRoot 'cpa-codex-templates.json'
 $refreshScript = Join-Path $assetRoot 'refresh-model-catalog.ps1'
 $historyScript = Join-Path $assetRoot 'restore-history.ps1'
 
 $installer = [IO.File]::ReadAllText($InstallerPath)
-Assert-True ($installer.Contains('requires_openai_auth = false')) 'Official custom gateway authentication is missing.'
-Assert-True ($installer.Contains('env_key = ')) 'Official custom gateway env_key is missing.'
+Assert-True ($installer.Contains('requires_openai_auth')) 'Login-mode authentication branch is missing.'
+Assert-True ($installer.Contains('experimental_bearer_token')) 'OAuth bearer configuration is missing.'
+Assert-True ($installer.Contains('env_key = ')) 'API key configuration is missing.'
 Assert-True ($installer.Contains('x-openai-actor-authorization')) 'Official gateway actor header is missing.'
 Assert-True ($installer.Contains('supports_websockets = false')) 'WebSocket opt-out is missing.'
 Assert-True ($installer.Contains('image_generation = true')) 'Codex image generation feature is missing.'
 Assert-True ($installer.Contains('/codex/v1')) 'Dedicated NewAPI-CPA route is missing.'
 Assert-True (-not $installer.Contains('/codex/cockpit/v1')) 'Legacy API compatibility route remains.'
-Assert-True (-not $installer.Contains('experimental_bearer_token')) 'Token is still written into config.toml.'
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('madapi-clean-codex-' + [guid]::NewGuid().ToString('N'))
 $codexHome = Join-Path $root '.codex'
@@ -53,7 +54,7 @@ enabled = true
 $oauth = '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"access_token":"oauth-access-token","refresh_token":"oauth-refresh-token","id_token":"oauth-id-token"}}'
 
 $oldEnvironment = @{}
-$environmentNames = @('CODEX_HOME', 'MADAPI_KEY', 'MADAPI_API_KEY', 'MADAPI_BASE_URL', 'MADAPI_CODEX_LOGIN_MODE', 'MADAPI_INSTALL_TEST_MODE', 'MADAPI_REFRESH_SCRIPT_SOURCE', 'MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE', 'MADAPI_REFRESH_RESPONSE_FILE', 'MADAPI_CODEX_TEMPLATE_FILE')
+$environmentNames = @('CODEX_HOME', 'MADAPI_KEY', 'MADAPI_API_KEY', 'MADAPI_BASE_URL', 'MADAPI_CODEX_LOGIN_MODE', 'MADAPI_CODEX_AUTH_KIND', 'MADAPI_INSTALL_TEST_MODE', 'MADAPI_REFRESH_SCRIPT_SOURCE', 'MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE', 'MADAPI_REFRESH_RESPONSE_FILE', 'MADAPI_CODEX_TEMPLATE_FILE', 'MADAPI_IMAGE_SKILL_SOURCE_DIR')
 foreach ($name in $environmentNames) { $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 
 try {
@@ -71,48 +72,76 @@ try {
     $env:MADAPI_INSTALL_TEST_MODE = '1'
     $env:MADAPI_REFRESH_SCRIPT_SOURCE = $refreshScript
     $env:MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE = $historyScript
+    $env:MADAPI_IMAGE_SKILL_SOURCE_DIR = Join-Path $assetRoot 'image-skill'
+    $env:MADAPI_REFRESH_RESPONSE_FILE = $oauthModelsFixture
+    $env:MADAPI_CODEX_TEMPLATE_FILE = $templateFixture
     & $InstallerPath | Out-Host
 
     $result = [IO.File]::ReadAllText($configPath)
     Assert-True ($result.Contains('model_provider = "custom"')) 'Provider identity changed.'
     Assert-True ($result.Contains('base_url = "http://127.0.0.1:13016/codex/v1"')) 'Dedicated NewAPI-CPA route is missing.'
-    Assert-True ($result.Contains('requires_openai_auth = false')) 'Official gateway auth mode changed.'
-    Assert-True ($result.Contains('env_key = "MADAPI_API_KEY"')) 'Gateway env key is missing.'
-    Assert-True ($result.Contains('http_headers = { "x-openai-actor-authorization" = "madapi-gateway" }')) 'Gateway actor header is missing.'
+    Assert-True ($result.Contains('requires_openai_auth = true')) 'OAuth gateway auth mode changed.'
+    Assert-True ($result.Contains('experimental_bearer_token = ')) 'OAuth bearer token is missing.'
+    Assert-True (-not $result.Contains('env_key = "MADAPI_API_KEY"')) 'OAuth config incorrectly uses API env_key.'
+    Assert-True ($result.Contains('x-openai-actor-authorization')) 'Gateway actor header is missing.'
     Assert-True ($result.Contains('image_generation = true')) 'Image generation was not enabled.'
+    Assert-True ($result.Contains('network_access = true')) 'Image skill network access was not enabled.'
+    Assert-True ($result.Contains('path = "') -and $result.Contains('madapi-imagegen')) 'Image skill path was not registered.'
     Assert-True (([regex]::Matches($result, '(?m)^\[features\]\r?$')).Count -eq 1) 'Features table was duplicated.'
     Assert-True ($result.Contains('memories = true')) 'Existing feature setting changed.'
     Assert-True ($result.Contains('[plugins."documents@openai-primary-runtime"]')) 'Unrelated plugin setting changed.'
-    Assert-True (-not $result.Contains('sk-clean-installer-test')) 'MadAPI key leaked into config.toml.'
+    Assert-True ($result.Contains('experimental_bearer_token = "sk-clean-installer-test"')) 'OAuth bearer token is not bound to the configured MadAPI key.'
     Assert-True ((Hash $authPath) -eq $authHash) 'OAuth state changed.'
     Assert-True ((Hash $sessionPath) -eq $sessionHash) 'Session data changed.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $codexHome 'models_cache.json'))) 'Stale model cache remains.'
     Assert-True (Test-Path -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json')) 'Initial catalog is missing.'
+    $imageSkillText = [IO.File]::ReadAllText((Join-Path (Join-Path (Split-Path -Parent $codexHome) '.agents') 'skills\madapi-imagegen\SKILL.md'), [Text.Encoding]::UTF8)
+    Assert-True ($imageSkillText.Contains('absolute `path`') -and $imageSkillText.Contains('source_url')) 'Image preview/download contract is missing.'
 
-    $env:MADAPI_KEY = 'sk-clean-installer-repeat'
     $env:MADAPI_CODEX_LOGIN_MODE = 'apikey'
+    $env:MADAPI_KEY = 'sk-clean-api-installer'
+    $env:MADAPI_REFRESH_RESPONSE_FILE = $modelsFixture
     & $InstallerPath | Out-Host
     $repeat = [IO.File]::ReadAllText($configPath)
     Assert-True (([regex]::Matches($repeat, '(?m)^\[model_providers\.custom\]\r?$')).Count -eq 1) 'Provider table was duplicated.'
-    Assert-True (-not $repeat.Contains('sk-clean-installer-repeat')) 'Repeat-install key leaked into config.toml.'
-    Assert-True ((Hash $authPath) -eq $authHash) 'API mode overwrote OAuth state.'
+    Assert-True ($repeat.Contains('requires_openai_auth = false')) 'API gateway auth mode is missing.'
+    Assert-True ($repeat.Contains('env_key = "MADAPI_API_KEY"')) 'API gateway env_key is missing.'
+    Assert-True (-not $repeat.Contains('experimental_bearer_token')) 'API config contains OAuth bearer authentication.'
+    $apiAuth = Get-Content -LiteralPath $authPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ([string]$apiAuth.auth_mode -eq 'apikey' -and [string]$apiAuth.OPENAI_API_KEY -eq 'sk-clean-api-installer') 'API authentication state was not configured.'
+    $apiCatalog = Get-Content -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True (@($apiCatalog.models).Count -eq 8) 'API catalog does not contain exactly eight models.'
 
     $env:MADAPI_API_KEY = 'sk-refresh-test'
     $env:MADAPI_REFRESH_RESPONSE_FILE = $modelsFixture
     $env:MADAPI_CODEX_TEMPLATE_FILE = $templateFixture
-    & $refreshScript -CodexHome $codexHome | Out-Host
+    $env:MADAPI_CODEX_AUTH_KIND = 'apikey'
+& $refreshScript -CodexHome $codexHome | Out-Host
     $catalog = Get-Content -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $slugs = @($catalog.models | ForEach-Object { [string]$_.slug })
-    Assert-True ('gpt-5.6-sol-pro' -in $slugs) 'Sol Pro was not generated from the CPA Sol profile.'
-    Assert-True ('gpt-5.6-terra-pro' -in $slugs) 'Terra Pro was not generated from the CPA Terra profile.'
+    Assert-True ('gpt-5.3-codex' -in $slugs) 'Sol Pro CPA compatibility slug is missing.'
+    Assert-True ('gpt-5.2' -in $slugs) 'Terra Pro CPA compatibility slug is missing.'
     Assert-True ('gpt-image-2' -notin $slugs) 'Image-only model leaked into the conversation selector.'
     Assert-True ('seedance-2.0-fast' -notin $slugs) 'Video-only model leaked into the conversation selector.'
     $sol = @($catalog.models | Where-Object { $_.slug -eq 'gpt-5.6-sol' })[0]
-    $solPro = @($catalog.models | Where-Object { $_.slug -eq 'gpt-5.6-sol-pro' })[0]
+    $solPro = @($catalog.models | Where-Object { $_.slug -eq 'gpt-5.3-codex' })[0]
     Assert-True ($sol.default_reasoning_level -eq $solPro.default_reasoning_level) 'Sol Pro capability profile differs from Sol.'
     $terra = @($catalog.models | Where-Object { $_.slug -eq 'gpt-5.6-terra' })[0]
-    $terraPro = @($catalog.models | Where-Object { $_.slug -eq 'gpt-5.6-terra-pro' })[0]
+    $terraPro = @($catalog.models | Where-Object { $_.slug -eq 'gpt-5.2' })[0]
     Assert-True ($terra.default_reasoning_level -eq $terraPro.default_reasoning_level) 'Terra Pro capability profile differs from Terra.'
+
+    $apiSlugs = @($catalog.models | ForEach-Object { [string]$_.display_name })
+    $expectedApi = @('claude-fable-5','claude-opus-5','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','grok-4.5','gpt-5.6-sol-pro','gpt-5.6-terra-pro')
+    Assert-True (($apiSlugs -join '|') -eq ($expectedApi -join '|')) 'API catalog is not exactly the fixed eight models.'
+
+    $env:MADAPI_CODEX_AUTH_KIND = 'oauth'
+    $env:MADAPI_REFRESH_RESPONSE_FILE = $oauthModelsFixture
+    & $refreshScript -CodexHome $codexHome | Out-Host
+    $oauthCatalog = Get-Content -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $oauthSlugs = @($oauthCatalog.models | ForEach-Object { [string]$_.slug })
+    Assert-True ($oauthSlugs.Count -eq 16) 'OAuth catalog does not contain exactly 16 conversation models.'
+    Assert-True ('gpt-image-2' -notin $oauthSlugs -and 'seedance-2.0-fast' -notin $oauthSlugs) 'OAuth media model leaked into the conversation catalog.'
+    Assert-True ('gpt-5.6-sol' -in $oauthSlugs -and 'gpt-5.6-terra' -in $oauthSlugs) 'OAuth Pro/base model catalog is incomplete.'
 
     Write-Host 'Codex Windows clean gateway acceptance passed.'
 } finally {

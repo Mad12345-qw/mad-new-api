@@ -3,16 +3,22 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,14 +32,21 @@ import (
 	cliproxyusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/tidwall/gjson"
 )
 
 const (
-	controlTokenHeader = "X-MadAPI-CPA-Control-Token"
-	requestPathHeader  = "X-MadAPI-CPA-Request-Path"
-	dispatchIDHeader   = "X-MadAPI-CPA-Dispatch-ID"
-	defaultControlURL  = "http://new-api:3000/internal/madapi/cpa"
-	defaultPort        = 18317
+	controlTokenHeader  = "X-MadAPI-CPA-Control-Token"
+	requestPathHeader   = "X-MadAPI-CPA-Request-Path"
+	dispatchIDHeader    = "X-MadAPI-CPA-Dispatch-ID"
+	executeTokenHeader  = "X-MadAPI-CPA-Execute-Token"
+	executeIDHeader     = "X-MadAPI-CPA-Execute-ID"
+	executeUsageTrailer = "X-MadAPI-CPA-Usage"
+	defaultControlURL   = "http://new-api:3000/internal/madapi/cpa"
+	defaultPort         = 18317
+	defaultExecutePort  = 18417
+	executeMetaLimit    = 1 << 20
+	executeBodyLimit    = 64 << 20
 )
 
 type controlClient struct {
@@ -71,13 +84,53 @@ type usagePayload struct {
 }
 
 type preparedDispatch struct {
-	raw       []byte
-	ticket    string
-	authID    string
-	request   controlDispatchRequest
-	prepared  time.Time
-	usage     usagePayload
-	completed string
+	raw         []byte
+	ticket      string
+	authID      string
+	request     controlDispatchRequest
+	prepared    time.Time
+	usage       usagePayload
+	completed   string
+	synchronous bool
+	notify      chan struct{}
+}
+
+type executeMeta struct {
+	Provider      string      `json:"provider"`
+	ChannelID     int         `json:"channel_id"`
+	UserID        int         `json:"user_id"`
+	BaseURL       string      `json:"base_url"`
+	APIKey        string      `json:"api_key"`
+	Model         string      `json:"model"`
+	OriginalModel string      `json:"original_model"`
+	Headers       http.Header `json:"headers,omitempty"`
+	RequestPath   string      `json:"request_path"`
+}
+
+type executeAuthRecord struct {
+	ID         string            `json:"id"`
+	Provider   string            `json:"provider"`
+	Status     string            `json:"status"`
+	Attributes map[string]string `json:"attributes"`
+	Metadata   map[string]any    `json:"metadata,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
+}
+
+type executeDispatchResponse struct {
+	Ticket        string            `json:"ticket"`
+	Model         string            `json:"model"`
+	Provider      string            `json:"provider"`
+	AuthIndex     string            `json:"auth_index"`
+	UserAPIKey    string            `json:"user_api_key"`
+	OriginalAlias string            `json:"original_alias,omitempty"`
+	ForceMapping  bool              `json:"force_mapping,omitempty"`
+	Auth          executeAuthRecord `json:"auth"`
+}
+
+type codexOAuthKey struct {
+	AccessToken string `json:"access_token"`
+	AccountID   string `json:"account_id"`
 }
 
 type controlDispatchRequest struct {
@@ -94,15 +147,20 @@ type requestTicket struct {
 type coordinator struct {
 	control *controlClient
 
-	mu        sync.Mutex
-	prepared  map[string]*preparedDispatch
-	requests  map[string]requestTicket
-	finalized map[string]struct{}
+	mu           sync.Mutex
+	prepared     map[string]*preparedDispatch
+	preloaded    map[string]*preparedDispatch
+	requests     map[string]requestTicket
+	finalized    map[string]struct{}
+	executeToken string
 }
 
 type newAPIAccessProvider struct {
-	control *controlClient
+	control       *controlClient
+	internalToken string
 }
+
+var executeSequence atomic.Uint64
 
 func main() {
 	controlToken := strings.TrimSpace(os.Getenv("MADAPI_CPA_CONTROL_TOKEN"))
@@ -125,10 +183,12 @@ func main() {
 		}},
 	}
 	coord := &coordinator{
-		control:   client,
-		prepared:  make(map[string]*preparedDispatch),
-		requests:  make(map[string]requestTicket),
-		finalized: make(map[string]struct{}),
+		control:      client,
+		prepared:     make(map[string]*preparedDispatch),
+		preloaded:    make(map[string]*preparedDispatch),
+		requests:     make(map[string]requestTicket),
+		finalized:    make(map[string]struct{}),
+		executeToken: controlToken,
 	}
 	if err := runGateway(coord); err != nil {
 		panic(err)
@@ -155,7 +215,7 @@ func runGateway(coord *coordinator) error {
 		return err
 	}
 
-	provider := &newAPIAccessProvider{control: coord.control}
+	provider := &newAPIAccessProvider{control: coord.control, internalToken: coord.executeToken}
 	sdkaccess.RegisterProvider("madapi-newapi", provider)
 	sdkaccess.SetExclusiveProvider("madapi-newapi")
 	accessManager := sdkaccess.NewManager()
@@ -198,11 +258,243 @@ func runGateway(coord *coordinator) error {
 	case <-time.After(20 * time.Second):
 		return errors.New("CPA official gateway startup timed out")
 	}
-	return <-errCh
+	executeServer := newExecuteServer(coord, port)
+	executeErrCh := make(chan error, 1)
+	go func() { executeErrCh <- executeServer.ListenAndServe() }()
+	select {
+	case err = <-errCh:
+		return err
+	case err = <-executeErrCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
 }
 
 func staticWatcherFactory(_, _ string, _ func(*sdkconfig.Config)) (*cliproxy.WatcherWrapper, error) {
 	return &cliproxy.WatcherWrapper{}, nil
+}
+
+func newExecuteServer(coord *coordinator, cpaPort int) *http.Server {
+	port := envPort("MADAPI_CPA_EXECUTE_PORT", defaultExecutePort)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"runtime":"official-cpa-handler-v7.2.128"}`))
+	})
+	mux.Handle("/execute", executeHandler(coord, cpaPort))
+	return &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    64 << 10,
+	}
+}
+
+func executeHandler(coord *coordinator, cpaPort int) http.Handler {
+	client := &http.Client{Transport: &http.Transport{
+		Proxy:                 nil,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   256,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	}}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !privateRemote(r.RemoteAddr) || !constantTimeToken(coord.executeToken, r.Header.Get(executeTokenHeader)) {
+			http.NotFound(w, r)
+			return
+		}
+		meta, payload, err := readExecuteFrame(r.Body)
+		if err != nil {
+			writeExecuteError(w, http.StatusBadRequest, err)
+			return
+		}
+		prepared, executeID, err := prepareExecuteDispatch(meta)
+		if err != nil {
+			writeExecuteError(w, http.StatusBadRequest, err)
+			return
+		}
+		coord.mu.Lock()
+		coord.preloaded[executeID] = prepared
+		coord.mu.Unlock()
+		defer func() {
+			coord.mu.Lock()
+			delete(coord.preloaded, executeID)
+			coord.mu.Unlock()
+		}()
+
+		requestURL := fmt.Sprintf("http://127.0.0.1:%d%s", cpaPort, meta.RequestPath)
+		request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, requestURL, bytes.NewReader(payload))
+		if err != nil {
+			writeExecuteError(w, http.StatusInternalServerError, err)
+			return
+		}
+		copyEndToEndHeaders(request.Header, meta.Headers)
+		request.Header.Set("Authorization", "Bearer "+coord.executeToken)
+		request.Header.Set(executeIDHeader, executeID)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		if err != nil {
+			writeExecuteError(w, http.StatusBadGateway, err)
+			return
+		}
+		defer response.Body.Close()
+		copyEndToEndHeaders(w.Header(), response.Header)
+		streaming := gjson.GetBytes(payload, "stream").Bool()
+		w.Header().Add("Trailer", executeUsageTrailer)
+		w.WriteHeader(response.StatusCode)
+		_, _ = io.Copy(w, response.Body)
+		if !streaming {
+			usage, usageErr := coord.waitSynchronousUsage(r.Context(), prepared, 15*time.Second)
+			if usageErr != nil {
+				coord.cleanupSynchronousByPointer(prepared)
+				return
+			}
+			if encoded, encodeErr := json.Marshal(usage); encodeErr == nil {
+				w.Header().Set(executeUsageTrailer, hex.EncodeToString(encoded))
+			}
+		} else if usage := coord.synchronousUsage(prepared); usage.hasUsage() {
+			if encoded, encodeErr := json.Marshal(usage); encodeErr == nil {
+				w.Header().Set(executeUsageTrailer, hex.EncodeToString(encoded))
+			}
+		}
+		coord.cleanupSynchronousByPointer(prepared)
+	})
+}
+
+func readExecuteFrame(body io.Reader) (executeMeta, []byte, error) {
+	var meta executeMeta
+	var prefix [4]byte
+	if _, err := io.ReadFull(body, prefix[:]); err != nil {
+		return meta, nil, fmt.Errorf("read execute metadata length: %w", err)
+	}
+	metadataLength := int(binary.BigEndian.Uint32(prefix[:]))
+	if metadataLength < 2 || metadataLength > executeMetaLimit {
+		return meta, nil, fmt.Errorf("invalid execute metadata length %d", metadataLength)
+	}
+	metadata := make([]byte, metadataLength)
+	if _, err := io.ReadFull(body, metadata); err != nil {
+		return meta, nil, fmt.Errorf("read execute metadata: %w", err)
+	}
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		return meta, nil, fmt.Errorf("decode execute metadata: %w", err)
+	}
+	payload, err := io.ReadAll(io.LimitReader(body, executeBodyLimit+1))
+	if err != nil {
+		return meta, nil, err
+	}
+	if len(payload) == 0 || len(payload) > executeBodyLimit {
+		return meta, nil, fmt.Errorf("invalid execute payload length %d", len(payload))
+	}
+	return meta, payload, nil
+}
+
+func prepareExecuteDispatch(meta executeMeta) (*preparedDispatch, string, error) {
+	meta.Provider = strings.TrimSpace(meta.Provider)
+	meta.Model = strings.TrimSpace(meta.Model)
+	meta.BaseURL = strings.TrimRight(strings.TrimSpace(meta.BaseURL), "/")
+	meta.APIKey = strings.TrimSpace(meta.APIKey)
+	switch meta.RequestPath {
+	case "/v1/responses", "/v1/responses/compact", "/v1/images/generations", "/v1/images/edits":
+	default:
+		return nil, "", fmt.Errorf("unsupported CPA execute path %q", meta.RequestPath)
+	}
+	if meta.Provider == "" || meta.Model == "" || meta.APIKey == "" {
+		return nil, "", errors.New("provider, model and API key are required")
+	}
+	auth, err := executeAuth(meta)
+	if err != nil {
+		return nil, "", err
+	}
+	now := time.Now().UTC()
+	executeID := fmt.Sprintf("sync-%d", executeSequence.Add(1))
+	dispatch := executeDispatchResponse{
+		Ticket: executeID, Model: meta.Model, Provider: meta.Provider,
+		AuthIndex: strconv.Itoa(meta.ChannelID), UserAPIKey: executeID,
+		OriginalAlias: meta.OriginalModel, ForceMapping: meta.OriginalModel != "" && meta.OriginalModel != meta.Model,
+		Auth: executeAuthRecord{ID: auth.ID, Provider: auth.Provider, Status: string(auth.Status), Attributes: auth.Attributes, Metadata: auth.Metadata, CreatedAt: now, UpdatedAt: now},
+	}
+	raw, err := json.Marshal(dispatch)
+	if err != nil {
+		return nil, "", err
+	}
+	return &preparedDispatch{raw: raw, ticket: executeID, authID: auth.ID, synchronous: true, notify: make(chan struct{}, 1)}, executeID, nil
+}
+
+func executeAuth(meta executeMeta) (*cliproxyauth.Auth, error) {
+	attributes := map[string]string{"api_key": meta.APIKey, "auth_kind": "api-key", "runtime_only": "true"}
+	if meta.BaseURL != "" {
+		attributes["base_url"] = meta.BaseURL
+	}
+	var metadata map[string]any
+	if meta.Provider == "xai" {
+		attributes["using_api"] = "true"
+	}
+	if meta.Provider == "codex" && strings.HasPrefix(meta.APIKey, "{") {
+		var key codexOAuthKey
+		if err := json.Unmarshal([]byte(meta.APIKey), &key); err != nil {
+			return nil, errors.New("invalid Codex OAuth channel credential")
+		}
+		key.AccessToken = strings.TrimSpace(key.AccessToken)
+		key.AccountID = strings.TrimSpace(key.AccountID)
+		if key.AccessToken == "" || key.AccountID == "" {
+			return nil, errors.New("incomplete Codex OAuth channel credential")
+		}
+		delete(attributes, "api_key")
+		attributes["auth_kind"] = "oauth"
+		metadata = map[string]any{"access_token": key.AccessToken, "account_id": key.AccountID}
+	}
+	for name, values := range meta.Headers {
+		if len(values) > 0 && strings.TrimSpace(name) != "" {
+			attributes["header:"+name] = strings.TrimSpace(values[len(values)-1])
+		}
+	}
+	sum := sha256.Sum256([]byte(meta.Provider + "\x00" + strconv.Itoa(meta.ChannelID) + "\x00" + meta.BaseURL + "\x00" + meta.APIKey))
+	return &cliproxyauth.Auth{ID: fmt.Sprintf("madapi-channel-%d-%s-%s", meta.ChannelID, meta.Provider, hex.EncodeToString(sum[:8])), Provider: meta.Provider, Status: cliproxyauth.StatusActive, Attributes: attributes, Metadata: metadata}, nil
+}
+
+func bearerToken(header http.Header) string {
+	value := strings.TrimSpace(header.Get("Authorization"))
+	if len(value) > 7 && strings.EqualFold(value[:7], "Bearer ") {
+		return strings.TrimSpace(value[7:])
+	}
+	return ""
+}
+
+func privateRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		host = strings.Trim(strings.TrimSpace(remoteAddr), "[]")
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
+}
+
+func constantTimeToken(expected, provided string) bool {
+	provided = strings.TrimSpace(provided)
+	return expected != "" && len(expected) == len(provided) && subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) == 1
+}
+
+func copyEndToEndHeaders(dst, src http.Header) {
+	for name, values := range src {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "authorization", "x-api-key", "x-goog-api-key", "host", "connection", "content-length", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade":
+			continue
+		}
+		for _, value := range values {
+			dst.Add(name, value)
+		}
+	}
+}
+
+func writeExecuteError(w http.ResponseWriter, status int, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "cpa_handler_error", "message": err.Error()}})
 }
 
 func (p *newAPIAccessProvider) Identifier() string { return "madapi-newapi" }
@@ -210,6 +502,9 @@ func (p *newAPIAccessProvider) Identifier() string { return "madapi-newapi" }
 func (p *newAPIAccessProvider) Authenticate(ctx context.Context, request *http.Request) (*sdkaccess.Result, *sdkaccess.AuthError) {
 	if request == nil {
 		return nil, sdkaccess.NewNoCredentialsError()
+	}
+	if privateRemote(request.RemoteAddr) && bearerToken(request.Header) == p.internalToken {
+		return &sdkaccess.Result{Provider: p.Identifier(), Principal: "madapi-newapi-internal", Metadata: map[string]string{"source": "madapi-newapi-sync"}}, nil
 	}
 	result, status, err := p.control.authenticate(ctx, request.Header)
 	if err == nil && status == http.StatusOK && strings.TrimSpace(result.Principal) != "" {
@@ -305,6 +600,30 @@ func (c *coordinator) HasStreamInterceptors() bool  { return false }
 func (c *coordinator) InterceptRequestBeforeAuth(ctx context.Context, request pluginapi.RequestInterceptRequest) pluginapi.RequestInterceptResponse {
 	path := metadataString(request.Metadata, cliproxyexecutor.RequestPathMetadataKey)
 	input := controlDispatchRequest{path: path, headers: request.Headers.Clone(), body: bytes.Clone(request.Body)}
+	if executeID := strings.TrimSpace(request.Headers.Get(executeIDHeader)); executeID != "" {
+		c.mu.Lock()
+		prepared := c.preloaded[executeID]
+		delete(c.preloaded, executeID)
+		if prepared != nil {
+			prepared.request = input
+			prepared.prepared = time.Now()
+			prepared.synchronous = true
+			c.prepared[request.RequestID] = prepared
+			c.requests[request.RequestID] = requestTicket{ticket: prepared.ticket, authID: prepared.authID}
+		}
+		c.mu.Unlock()
+		if prepared == nil {
+			return terminateRequest(errors.New("CPA synchronous dispatch is unavailable"), http.StatusServiceUnavailable)
+		}
+		headers := make(http.Header)
+		headers.Set(dispatchIDHeader, request.RequestID)
+		body, err := rewriteDispatchModel(input.body, preparedModel(prepared.raw))
+		if err != nil {
+			c.cleanupSynchronous(request.RequestID)
+			return terminateRequest(err, http.StatusBadGateway)
+		}
+		return pluginapi.RequestInterceptResponse{Headers: headers, ClearHeaders: []string{executeIDHeader}, Body: body}
+	}
 	raw, dispatch, err := c.control.dispatch(ctx, input)
 	if err != nil {
 		return terminateRequest(err, http.StatusServiceUnavailable)
@@ -342,12 +661,27 @@ func (c *coordinator) InterceptStreamChunk(_ context.Context, request pluginapi.
 }
 
 func (c *coordinator) CompleteRequest(_ context.Context, completion pluginapi.RequestCompletion) {
+	c.mu.Lock()
+	prepared := c.prepared[completion.RequestID]
+	synchronous := prepared != nil && prepared.synchronous
+	if synchronous {
+		if completion.Outcome == pluginapi.RequestCompletionSucceeded {
+			prepared.completed = "succeeded"
+		} else {
+			prepared.completed = "failed"
+		}
+	}
+	c.mu.Unlock()
+	if synchronous {
+		notifyPrepared(prepared)
+		return
+	}
 	if completion.Outcome != pluginapi.RequestCompletionSucceeded {
 		c.finalizeRequest(completion.RequestID, "failed", usagePayload{})
 		return
 	}
 	c.mu.Lock()
-	prepared := c.prepared[completion.RequestID]
+	prepared = c.prepared[completion.RequestID]
 	if prepared != nil {
 		prepared.completed = "succeeded"
 	}
@@ -397,9 +731,17 @@ func (c *coordinator) HandleUsage(_ context.Context, record cliproxyusage.Record
 		return
 	}
 	requestID := ""
+	var synchronous *preparedDispatch
 	for candidateID, item := range c.requests {
 		if item.ticket == ticket {
 			prepared := c.prepared[candidateID]
+			if prepared != nil && prepared.synchronous {
+				if !record.Failed {
+					prepared.usage.add(usagePayloadFrom(record.Detail))
+				}
+				synchronous = prepared
+				break
+			}
 			if prepared != nil && !record.Failed {
 				prepared.usage.add(usagePayloadFrom(record.Detail))
 			}
@@ -414,9 +756,88 @@ func (c *coordinator) HandleUsage(_ context.Context, record cliproxyusage.Record
 		usage = prepared.usage
 	}
 	c.mu.Unlock()
+	if synchronous != nil {
+		notifyPrepared(synchronous)
+		return
+	}
 	if requestID != "" && completed == "succeeded" && usage.hasUsage() {
 		c.finalizeRequest(requestID, "succeeded", usage)
 	}
+}
+
+func (c *coordinator) cleanupSynchronous(requestID string) {
+	c.mu.Lock()
+	delete(c.requests, requestID)
+	delete(c.prepared, requestID)
+	c.mu.Unlock()
+}
+
+func notifyPrepared(prepared *preparedDispatch) {
+	if prepared == nil || prepared.notify == nil {
+		return
+	}
+	select {
+	case prepared.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (c *coordinator) waitSynchronousUsage(ctx context.Context, prepared *preparedDispatch, timeout time.Duration) (usagePayload, error) {
+	if prepared == nil {
+		return usagePayload{}, errors.New("CPA synchronous dispatch is unavailable")
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		c.mu.Lock()
+		usage, completed := prepared.usage, prepared.completed
+		c.mu.Unlock()
+		if usage.hasUsage() {
+			return usage, nil
+		}
+		if completed == "failed" {
+			return usagePayload{}, errors.New("CPA upstream request failed")
+		}
+		select {
+		case <-prepared.notify:
+		case <-timer.C:
+			return usagePayload{}, errors.New("CPA upstream usage was not reported before timeout")
+		case <-ctx.Done():
+			return usagePayload{}, ctx.Err()
+		}
+	}
+}
+
+func (c *coordinator) synchronousUsage(prepared *preparedDispatch) usagePayload {
+	if prepared == nil {
+		return usagePayload{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return prepared.usage
+}
+
+func (c *coordinator) cleanupSynchronousByPointer(prepared *preparedDispatch) {
+	if prepared == nil {
+		return
+	}
+	c.mu.Lock()
+	for requestID, candidate := range c.prepared {
+		if candidate == prepared {
+			delete(c.requests, requestID)
+			delete(c.prepared, requestID)
+			break
+		}
+	}
+	c.mu.Unlock()
+}
+
+func preparedModel(raw []byte) string {
+	var dispatch executeDispatchResponse
+	if json.Unmarshal(raw, &dispatch) != nil {
+		return ""
+	}
+	return dispatch.Model
 }
 
 func usagePayloadFrom(detail cliproxyusage.Detail) usagePayload {

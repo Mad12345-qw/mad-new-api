@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Deploy one NewAPI plus the independent official CPA gateway.
-# deploy-codex-control-only.sh remains the legacy emergency definition.
-
 if [[ $# -ne 2 ]]; then
   echo "usage: $0 <release-directory> <git-sha>" >&2
   exit 64
@@ -15,8 +12,8 @@ network="${MADAPI_DOCKER_NETWORK:-new-api_default}"
 env_file="${MADAPI_ENV_FILE:-/opt/madapi-releases/7c90de45/production-runtime/production.env}"
 data_dir="${MADAPI_DATA_DIR:-/opt/new-api/data}"
 log_dir="${MADAPI_LOG_DIR:-/opt/new-api/logs}"
-new_api_port="${MADAPI_NEW_API_PORT:-3001}"
-cpa_port="${MADAPI_CPA_PORT:-8330}"
+old_port="${MADAPI_NEW_API_PORT:-3001}"
+candidate_port="${MADAPI_CANDIDATE_NEW_API_PORT:-13001}"
 image_port="${MADAPI_IMAGE_PORT:-3013}"
 site="${MADAPI_NGINX_SITE:-/etc/nginx/sites-enabled/mad.myddns.me}"
 backup_root="${MADAPI_UNIFIED_BACKUP_ROOT:-/opt/madapi-release-backups}"
@@ -26,66 +23,89 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 
 [[ $(id -u) -eq 0 ]]
 [[ "$git_sha" =~ ^[0-9a-f]{40}$ ]]
-[[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$env_file" && -f "$site" ]]
-[[ "$new_api_port" =~ ^[0-9]+$ && "$cpa_port" =~ ^[0-9]+$ && "$image_port" =~ ^[0-9]+$ ]]
-[[ "$health_attempts" =~ ^[1-9][0-9]*$ ]]
-for command in docker gzip curl nginx sha256sum python3 flock; do
-  command -v "$command" >/dev/null || {
-    echo "required command is unavailable: $command" >&2
-    exit 69
-  }
-done
+[[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$env_file" && -f "$site" && -d "$data_dir" ]]
+for value in "$old_port" "$candidate_port" "$image_port" "$health_attempts"; do [[ "$value" =~ ^[1-9][0-9]*$ ]]; done
+[[ "$old_port" != "$candidate_port" ]]
+for command in docker gzip curl nginx sha256sum python3 flock cp; do command -v "$command" >/dev/null; done
+control_token="$(sed -n 's/^MADAPI_CPA_CONTROL_TOKEN=//p' "$env_file" | tail -n 1)"
+[[ ${#control_token} -ge 32 ]]
+if grep -Eq '^[[:space:]]*(SQL_DSN|DATABASE_URL)=' "$env_file"; then
+  echo "unified SQLite release script refuses a shared external database candidate" >&2
+  exit 78
+fi
 
 exec 9>"$lock_file"
-flock -n 9 || {
-  echo "another unified deployment is active" >&2
-  exit 75
-}
+flock -n 9 || { echo "another unified deployment is active" >&2; exit 75; }
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_dir="$backup_root/unified-$timestamp"
-mkdir -p "$backup_dir"
+snapshot_data="$backup_dir/candidate-data"
+snapshot_logs="$backup_dir/candidate-logs"
+candidate_new="new-api-candidate-$timestamp"
+candidate_cpa="cpa-official-gateway-candidate-$timestamp"
+candidate_new_alias="new-api-candidate-$timestamp"
+candidate_cpa_alias="cpa-candidate-$timestamp"
+old_new_backup="new-api-rollback-$timestamp"
+old_cpa_backup="cpa-official-gateway-rollback-$timestamp"
+old_control_backup="new-api-codex-control-rollback-$timestamp"
+mkdir -p "$backup_dir" "$snapshot_data" "$snapshot_logs"
 chmod 700 "$backup_dir"
 (cd "$release_dir" && sha256sum -c SHA256SUMS --ignore-missing)
-
-old_new_api_backup="new-api-unified-rollback-$timestamp"
-old_cpa_backup="cpa-official-gateway-unified-rollback-$timestamp"
-old_control_backup="new-api-codex-control-unified-rollback-$timestamp"
-old_control_present=0
-old_cpa_present=0
-new_api_replaced=0
-cpa_replaced=0
 
 docker inspect new-api >"$backup_dir/new-api.inspect.json"
 docker inspect cpa-official-gateway >"$backup_dir/cpa-official-gateway.inspect.json" 2>/dev/null || true
 docker inspect new-api-codex-control >"$backup_dir/new-api-codex-control.inspect.json" 2>/dev/null || true
 cp -a "$env_file" "$backup_dir/production.env"
 cp -a "$site" "$backup_dir/nginx.site.before.conf"
+cp -a "$data_dir/." "$snapshot_data/"
+if [[ -f "$data_dir/new-api.db" ]]; then
+  python3 - "$data_dir/new-api.db" "$snapshot_data/new-api.db" <<'PY'
+import sqlite3
+import sys
+
+source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True, timeout=30)
+target = sqlite3.connect(sys.argv[2], timeout=30)
+with target:
+    source.backup(target)
+target.close()
+source.close()
+PY
+  rm -f "$snapshot_data/new-api.db-wal" "$snapshot_data/new-api.db-shm"
+fi
 nginx -T >"$backup_dir/nginx.before.txt" 2>&1
 
-rollback() {
-  local status="$1"
+old_cpa_present=0
+old_control_present=0
+final_started=0
+old_stopped=0
+site_switched=0
+tmp_route="$(mktemp)"
+tmp_site="$(mktemp)"
+cleanup_files() { rm -f "$tmp_route" "$tmp_site"; }
+restore_old() {
   set +e
-  echo "unified deployment failed; restoring $backup_dir" >&2
-  if [[ "$new_api_replaced" -eq 1 ]]; then
-    docker rm -f new-api >/dev/null 2>&1 || true
-    docker rename "$old_new_api_backup" new-api >/dev/null 2>&1 || true
-    docker network connect "$network" new-api >/dev/null 2>&1 || true
+  docker rm -f "$candidate_new" "$candidate_cpa" >/dev/null 2>&1 || true
+  if [[ "$old_stopped" -eq 1 ]]; then
+    docker rename "$old_new_backup" new-api >/dev/null 2>&1 || true
+    [[ "$old_cpa_present" -eq 1 ]] && docker rename "$old_cpa_backup" cpa-official-gateway >/dev/null 2>&1 || true
+    [[ "$old_control_present" -eq 1 ]] && docker rename "$old_control_backup" new-api-codex-control >/dev/null 2>&1 || true
+    docker start new-api >/dev/null 2>&1 || true
+    [[ "$old_cpa_present" -eq 1 ]] && docker start cpa-official-gateway >/dev/null 2>&1 || true
+    [[ "$old_control_present" -eq 1 ]] && docker start new-api-codex-control >/dev/null 2>&1 || true
   fi
-  if [[ "$cpa_replaced" -eq 1 ]]; then
-    docker rm -f cpa-official-gateway >/dev/null 2>&1 || true
-    docker rename "$old_cpa_backup" cpa-official-gateway >/dev/null 2>&1 || true
+  if [[ "$site_switched" -eq 1 ]]; then
+    cp -a "$backup_dir/nginx.site.before.conf" "$site"
+    nginx -t >/dev/null 2>&1 && nginx -s reload >/dev/null 2>&1 || true
   fi
-  docker rename "$old_control_backup" new-api-codex-control >/dev/null 2>&1 || true
-  docker start new-api >/dev/null 2>&1 || true
-  docker start cpa-official-gateway >/dev/null 2>&1 || true
-  docker start new-api-codex-control >/dev/null 2>&1 || true
-  cp -a "$backup_dir/nginx.site.before.conf" "$site" >/dev/null 2>&1 || true
-  nginx -t >/dev/null 2>&1 && nginx -s reload >/dev/null 2>&1 || true
-  echo "rollback_attempted=$backup_dir" >&2
+}
+fail_deploy() {
+  status="$1"
+  restore_old
+  cleanup_files
+  echo "unified deployment failed; old production restored; backup=$backup_dir" >&2
   exit "$status"
 }
-trap 'status=$?; rollback "$status"' ERR INT TERM
+trap 'status=$?; fail_deploy "$status"' ERR INT TERM
 
 gzip -dc "$release_dir/mad-new-api.tar.gz" | docker load >/dev/null
 gzip -dc "$release_dir/mad-cpa-official-gateway.tar.gz" | docker load >/dev/null
@@ -95,88 +115,76 @@ docker image inspect "$new_api_image" >/dev/null
 docker image inspect "$cpa_image" >/dev/null
 docker network inspect "$network" >/dev/null
 
-tmp_route="$(mktemp)"
-tmp_site="$(mktemp)"
-trap 'rm -f "$tmp_route" "$tmp_site"' EXIT
-"$script_dir/render-unified-route.sh" "$new_api_port" "$cpa_port" "$image_port" "$tmp_route"
+start_pair() {
+  pair_data="$1"
+  pair_logs="$2"
+  docker run -d --name "$candidate_cpa" --network "$network" --network-alias "$candidate_cpa_alias" \
+    --memory 256m --memory-swap 384m --cpus 0.75 --pids-limit 128 --env-file "$env_file" \
+    -e TZ=Asia/Shanghai -e MADAPI_NEWAPI_CONTROL_URL="http://$candidate_new_alias:3000/internal/madapi/cpa" \
+    -e MADAPI_CPA_EXECUTE_PORT=18417 "$cpa_image" >/dev/null
+  docker run -d --name "$candidate_new" --network "$network" --network-alias "$candidate_new_alias" \
+    --memory 768m --memory-swap 1024m --cpus 1.25 --pids-limit 256 \
+    -p "127.0.0.1:$candidate_port:3000" --env-file "$env_file" \
+    -e TZ=Asia/Shanghai -e NODE_NAME=new-api-unified-candidate \
+    -e MADAPI_CPA_HANDLER_URL="http://$candidate_cpa_alias:18417/execute" \
+    -e MADAPI_GEMINI_IMAGE_CONCURRENCY=1 -e GOMEMLIMIT=512MiB -e GOGC=50 \
+    -v "$pair_data:/data" -v "$pair_logs:/app/logs" "$new_api_image" --log-dir /app/logs >/dev/null
+}
+
+check_pair() {
+  cpa_status=""; execute_status=""; new_status=""; codex_status=""
+  for _ in $(seq 1 "$health_attempts"); do
+    cpa_status="$(docker run --rm --network "$network" curlimages/curl:8.12.1 -sS -o /dev/null -w '%{http_code}' --max-time 3 "http://$candidate_cpa_alias:18417/healthz" || true)"
+    execute_status="$(docker run --rm --network "$network" curlimages/curl:8.12.1 -sS -o /dev/null -w '%{http_code}' --max-time 3 -X POST -H "X-MadAPI-CPA-Execute-Token: $control_token" --data-binary 'invalid-frame' "http://$candidate_cpa_alias:18417/execute" || true)"
+    new_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$candidate_port/api/status" || true)"
+    codex_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 -X POST -H 'Content-Type: application/json' -d '{}' "http://127.0.0.1:$candidate_port/codex/v1/responses" || true)"
+    [[ "$cpa_status" == 200 && "$execute_status" == 400 && "$new_status" == 200 && "$codex_status" =~ ^[34][0-9][0-9]$ ]] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+# Preflight uses a private SQLite snapshot; it cannot write production state.
+start_pair "$snapshot_data" "$snapshot_logs"
+check_pair
+docker rm -f "$candidate_new" "$candidate_cpa" >/dev/null
+
+# Final pair is the only writer after all old application writers stop.
+docker stop new-api >/dev/null
+docker rename new-api "$old_new_backup"
+if docker inspect cpa-official-gateway >/dev/null 2>&1; then docker stop cpa-official-gateway >/dev/null; docker rename cpa-official-gateway "$old_cpa_backup"; old_cpa_present=1; fi
+if docker inspect new-api-codex-control >/dev/null 2>&1; then docker stop new-api-codex-control >/dev/null; docker rename new-api-codex-control "$old_control_backup"; old_control_present=1; fi
+old_stopped=1
+start_pair "$data_dir" "$log_dir"
+final_started=1
+check_pair
+
+"$script_dir/render-unified-route.sh" "$candidate_port" "$image_port" "$tmp_route"
 python3 "$script_dir/patch-nginx-unified-route.py" "$site" "$tmp_route" "$tmp_site"
 cp -a "$tmp_site" "$site"
-if ! nginx -t >/dev/null 2>&1; then
-  cp -a "$backup_dir/nginx.site.before.conf" "$site"
-  rollback 78
-fi
-
-if docker inspect new-api >/dev/null 2>&1; then
-  docker stop new-api >/dev/null
-  docker rename new-api "$old_new_api_backup"
-  docker network disconnect "$network" "$old_new_api_backup" >/dev/null 2>&1 || true
-  new_api_replaced=1
-fi
-docker run -d \
-  --name new-api \
-  --restart unless-stopped \
-  --network "$network" \
-  --network-alias new-api \
-  --memory 768m --memory-swap 1024m --cpus 1.25 --pids-limit 256 \
-  -p "127.0.0.1:$new_api_port:3000" \
-  --env-file "$env_file" \
-  -e TZ=Asia/Shanghai \
-  -e NODE_NAME=new-api-unified \
-  -e MADAPI_GEMINI_IMAGE_CONCURRENCY=1 \
-  -e GOMEMLIMIT=512MiB -e GOGC=50 \
-  -v "$data_dir:/data" -v "$log_dir:/app/logs" \
-  "$new_api_image" --log-dir /app/logs >/dev/null || rollback 70
-
-status=""
-for _ in $(seq 1 "$health_attempts"); do
-  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
-    "http://127.0.0.1:$new_api_port/api/status" || true)"
-  [[ "$status" =~ ^2[0-9][0-9]$ ]] && break
-  sleep 0.5
-done
-[[ "$status" =~ ^2[0-9][0-9]$ ]] || rollback 69
-
-if docker inspect cpa-official-gateway >/dev/null 2>&1; then
-  docker stop cpa-official-gateway >/dev/null
-  docker rename cpa-official-gateway "$old_cpa_backup"
-  old_cpa_present=1
-  cpa_replaced=1
-fi
-docker run -d \
-  --name cpa-official-gateway \
-  --restart unless-stopped \
-  --network "$network" \
-  --memory 256m --memory-swap 384m --cpus 0.75 --pids-limit 128 \
-  -p "127.0.0.1:$cpa_port:18317" \
-  --env-file "$env_file" \
-  -e MADAPI_NEWAPI_CONTROL_URL=http://new-api:3000/internal/madapi/cpa \
-  "$cpa_image" >/dev/null || rollback 70
-
-sleep 2
-docker inspect cpa-official-gateway >/dev/null || rollback 69
-
+site_switched=1
+nginx -t
 nginx -s reload
 public_url="${MADAPI_PUBLIC_URL:-}"
 if [[ -n "$public_url" ]]; then
-  curl -fsS --max-time 15 "$public_url/api/status" >/dev/null || rollback 69
+  edge_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${public_url%/}/codex/v1" || true)"
+  [[ "$edge_status" =~ ^[234][0-9][0-9]$ ]]
 fi
 
-if docker inspect new-api-codex-control >/dev/null 2>&1; then
-  docker stop new-api-codex-control >/dev/null
-  docker rename new-api-codex-control "$old_control_backup"
-  old_control_present=1
-fi
-
-trap - ERR INT TERM
 cat >"$backup_dir/release.env" <<EOF
 MADAPI_UNIFIED_COMMIT=$git_sha
 MADAPI_UNIFIED_BACKUP=$backup_dir
-MADAPI_UNIFIED_OLD_NEW_API=$old_new_api_backup
+MADAPI_UNIFIED_OLD_NEW_API=$old_new_backup
 MADAPI_UNIFIED_OLD_CPA=$old_cpa_backup
 MADAPI_UNIFIED_OLD_CONTROL=$old_control_backup
 MADAPI_UNIFIED_OLD_CPA_PRESENT=$old_cpa_present
 MADAPI_UNIFIED_OLD_CONTROL_PRESENT=$old_control_present
+MADAPI_UNIFIED_OLD_PORT=$old_port
+MADAPI_UNIFIED_CANDIDATE_NEW_API=$candidate_new
+MADAPI_UNIFIED_CANDIDATE_CPA=$candidate_cpa
+MADAPI_UNIFIED_CANDIDATE_PORT=$candidate_port
 EOF
 chmod 600 "$backup_dir/release.env"
-printf 'unified_deployment=ok commit=%s backup=%s old_control_preserved=%s\n' \
-  "$git_sha" "$backup_dir" "$old_control_present"
+trap - ERR INT TERM
+cleanup_files
+printf 'unified_deployment=ok commit=%s backup=%s candidate_port=%s sqlite_single_writer=true\n' "$git_sha" "$backup_dir" "$candidate_port"

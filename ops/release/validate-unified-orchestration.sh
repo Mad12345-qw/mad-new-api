@@ -82,7 +82,7 @@ PY
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
-"$script_dir/render-unified-route.sh" 3001 3013 "$tmp_dir/route.conf"
+bash "$script_dir/render-unified-route.sh" 3001 3013 "$tmp_dir/route.conf"
 grep -Fq 'proxy_pass http://127.0.0.1:3001;' "$tmp_dir/route.conf"
 grep -Fq 'proxy_pass http://127.0.0.1:3013;' "$tmp_dir/route.conf"
 ! grep -Fq 'new-api-codex-control' "$tmp_dir/route.conf"

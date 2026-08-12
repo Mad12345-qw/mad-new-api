@@ -149,6 +149,13 @@ GitHub release archives contain the two images under their `latest` build
 tags. The deploy verifies `release-manifest.json` against the requested commit
 before adding immutable local commit tags and starting either candidate.
 
+The final pair uses Docker restart policies. Before the old SQLite writers are
+stopped, the deploy records and disables the legacy watchdog and auto-update
+timers so they cannot recreate a second writer. Automatic failure recovery and
+manual rollback restore the recorded timer states. The Nginx switch also moves
+the dashboard and legacy Codex cockpit locations while preserving their local
+headers, cache directives, and timeout settings.
+
 After a successful deployment, use the recorded backup directory with
 rollback-unified-newapi.sh stops the candidate writers before reopening the
 same SQLite database with the old NewAPI and CPA, validates both old services,

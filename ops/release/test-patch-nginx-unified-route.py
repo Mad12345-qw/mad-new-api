@@ -27,6 +27,14 @@ site = """server {
     location ^~ /mad-codex/ {
         proxy_pass http://old-assets;
     }
+    location ^~ /codex/cockpit/v1/ {
+        proxy_pass http://old-cockpit;
+        proxy_read_timeout 123s;
+    }
+    location / {
+        proxy_pass http://old-dashboard;
+        proxy_set_header X-Preserved yes;
+    }
 }
 """
 snippet = Path(__file__).with_name("nginx-unified-route.conf.template").read_text(encoding="utf-8")
@@ -41,5 +49,9 @@ assert "proxy_pass http://old-v1;" not in result
 assert "proxy_pass http://old-codex;" not in result
 assert "proxy_pass http://old-image;" not in result
 assert "proxy_pass http://old-assets;" not in result
+assert "proxy_pass http://old-cockpit;" not in result
+assert "proxy_pass http://old-dashboard;" not in result
+assert "proxy_read_timeout 123s;" in result
+assert "proxy_set_header X-Preserved yes;" in result
 assert "location /health" in result
 print("nginx_unified_patcher_test=passed")

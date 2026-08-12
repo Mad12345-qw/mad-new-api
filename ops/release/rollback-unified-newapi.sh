@@ -7,7 +7,7 @@ site="${MADAPI_NGINX_SITE:-/etc/nginx/sites-enabled/mad.myddns.me}"
 network="${MADAPI_DOCKER_NETWORK:-new-api_default}"
 health_attempts="${MADAPI_UNIFIED_HEALTH_ATTEMPTS:-120}"
 [[ -d "$backup_dir" && -f "$backup_dir/nginx.site.before.conf" && -f "$backup_dir/release.env" ]]
-for command in docker curl nginx sed; do command -v "$command" >/dev/null; done
+for command in docker curl nginx sed systemctl; do command -v "$command" >/dev/null; done
 get_value() { sed -n "s/^$1=//p" "$backup_dir/release.env" | tail -n 1; }
 old_new="$(get_value MADAPI_UNIFIED_OLD_NEW_API)"
 old_cpa="$(get_value MADAPI_UNIFIED_OLD_CPA)"
@@ -17,6 +17,12 @@ old_control_present="$(get_value MADAPI_UNIFIED_OLD_CONTROL_PRESENT)"
 old_port="$(get_value MADAPI_UNIFIED_OLD_PORT)"
 candidate_new="$(get_value MADAPI_UNIFIED_CANDIDATE_NEW_API)"
 candidate_cpa="$(get_value MADAPI_UNIFIED_CANDIDATE_CPA)"
+legacy_watchdog_timer="$(get_value MADAPI_UNIFIED_LEGACY_WATCHDOG_TIMER)"
+watchdog_enabled="$(get_value MADAPI_UNIFIED_LEGACY_WATCHDOG_ENABLED)"
+watchdog_active="$(get_value MADAPI_UNIFIED_LEGACY_WATCHDOG_ACTIVE)"
+legacy_autoupdate_timer="$(get_value MADAPI_UNIFIED_LEGACY_AUTOUPDATE_TIMER)"
+autoupdate_enabled="$(get_value MADAPI_UNIFIED_LEGACY_AUTOUPDATE_ENABLED)"
+autoupdate_active="$(get_value MADAPI_UNIFIED_LEGACY_AUTOUPDATE_ACTIVE)"
 for value in "$old_new" "$candidate_new" "$candidate_cpa"; do [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]; done
 docker inspect "$old_new" >/dev/null
 [[ "$old_cpa_present" == 0 || "$old_cpa_present" == 1 ]]
@@ -32,6 +38,11 @@ docker rename "$old_new" new-api
 docker start new-api >/dev/null
 [[ "$old_cpa_present" == 0 ]] || docker start cpa-official-gateway >/dev/null
 [[ "$old_control_present" == 0 ]] || docker start new-api-codex-control >/dev/null
+restore_timer_state() {
+  timer="$1"; enabled="$2"; active="$3"
+  [[ -z "$timer" || "$enabled" != enabled ]] || systemctl enable "$timer" >/dev/null 2>&1
+  [[ -z "$timer" || "$active" != active ]] || systemctl start "$timer" >/dev/null 2>&1
+}
 
 new_status=""; cpa_status="not-present"
 for _ in $(seq 1 "$health_attempts"); do
@@ -51,6 +62,9 @@ if [[ "$new_status" != 200 || ( "$old_cpa_present" == 1 && "$cpa_status" != 200 
   echo "rollback target health failed; candidate restarted and Nginx was not changed" >&2
   exit 69
 fi
+
+restore_timer_state "$legacy_watchdog_timer" "$watchdog_enabled" "$watchdog_active"
+restore_timer_state "$legacy_autoupdate_timer" "$autoupdate_enabled" "$autoupdate_active"
 
 cp -a "$backup_dir/nginx.site.before.conf" "$site"
 nginx -t

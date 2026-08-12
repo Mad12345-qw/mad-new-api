@@ -42,13 +42,16 @@ for marker in (
     'manifest_commit="$(python3',
     'docker tag mad-new-api:latest "$new_api_image"',
     'docker tag mad-cpa-official-gateway:latest "$cpa_image"',
+    '--restart unless-stopped',
+    'systemctl disable --now "$legacy_watchdog_timer" "$legacy_autoupdate_timer"',
+    'dashboard_status=',
     "sqlite_single_writer=true",
     "check_pair",
     "candidate-data",
 ):
     if marker not in deploy:
         raise SystemExit(f"SQLite single-writer deploy gate is missing: {marker}")
-for marker in ("docker stop \"$candidate_new\" \"$candidate_cpa\"", "cpa_status", "sqlite_single_writer=true"):
+for marker in ("docker stop \"$candidate_new\" \"$candidate_cpa\"", "restore_timer_state", "cpa_status", "sqlite_single_writer=true"):
     if marker not in rollback:
         raise SystemExit(f"SQLite single-writer rollback gate is missing: {marker}")
 

@@ -14,6 +14,11 @@ MANAGED = (
     "location ^~ /mad-codex/ {",
 )
 
+PROXY_ONLY = (
+    "location ^~ /codex/cockpit/v1/ {",
+    "location / {",
+)
+
 
 def block_end(lines: list[str], start: int) -> int:
     depth = 0
@@ -57,6 +62,31 @@ def patch(site: str, snippet: str) -> str:
         while start > 0 and not site_lines[start - 1].strip():
             start -= 1
         site_lines[start:end] = replacement
+
+    new_api_proxy = next(
+        (
+            line.strip()
+            for line in managed_blocks["location ^~ /v1/ {"]
+            if line.strip().startswith("proxy_pass ")
+        ),
+        None,
+    )
+    if new_api_proxy is None:
+        raise ValueError("unified snippet has no NewAPI proxy_pass")
+    for prefix in PROXY_ONLY:
+        start = find_block(site_lines, prefix)
+        if start is None:
+            raise ValueError(f"site is missing required NewAPI location: {prefix}")
+        end = block_end(site_lines, start)
+        proxy_lines = [
+            index
+            for index in range(start, end)
+            if site_lines[index].strip().startswith("proxy_pass ")
+        ]
+        if len(proxy_lines) != 1:
+            raise ValueError(f"expected one proxy_pass in {prefix}")
+        indentation = site_lines[proxy_lines[0]][: len(site_lines[proxy_lines[0]]) - len(site_lines[proxy_lines[0]].lstrip())]
+        site_lines[proxy_lines[0]] = indentation + new_api_proxy
 
     missing = [prefix for prefix in MANAGED if find_block(site_lines, prefix) is None]
     if missing:

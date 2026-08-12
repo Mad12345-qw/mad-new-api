@@ -20,6 +20,8 @@ site="${MADAPI_NGINX_SITE:-/etc/nginx/sites-enabled/mad.myddns.me}"
 backup_root="${MADAPI_UNIFIED_BACKUP_ROOT:-/opt/madapi-release-backups}"
 lock_file="${MADAPI_UNIFIED_LOCK_FILE:-/run/lock/madapi-unified-deploy.lock}"
 health_attempts="${MADAPI_UNIFIED_HEALTH_ATTEMPTS:-120}"
+legacy_watchdog_timer="${MADAPI_LEGACY_WATCHDOG_TIMER:-new-api-watchdog.timer}"
+legacy_autoupdate_timer="${MADAPI_LEGACY_AUTOUPDATE_TIMER:-new-api-autoupdate.timer}"
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 
 [[ $(id -u) -eq 0 ]]
@@ -28,7 +30,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 [[ "$(dirname "$database")" == "$data_dir" ]]
 for value in "$old_port" "$candidate_port" "$image_port" "$health_attempts"; do [[ "$value" =~ ^[1-9][0-9]*$ ]]; done
 [[ "$old_port" != "$candidate_port" ]]
-for command in docker gzip curl nginx sha256sum python3 flock cp; do command -v "$command" >/dev/null; done
+for command in docker gzip curl nginx sha256sum python3 flock cp systemctl; do command -v "$command" >/dev/null; done
 control_token="$(sed -n 's/^MADAPI_CPA_CONTROL_TOKEN=//p' "$env_file" | tail -n 1)"
 [[ ${#control_token} -ge 32 ]]
 if grep -Eq '^[[:space:]]*(SQL_DSN|DATABASE_URL)=' "$env_file"; then
@@ -96,9 +98,23 @@ old_control_present=0
 final_started=0
 old_stopped=0
 site_switched=0
+legacy_timers_changed=0
+watchdog_enabled=missing
+watchdog_active=missing
+autoupdate_enabled=missing
+autoupdate_active=missing
 tmp_route="$(mktemp)"
 tmp_site="$(mktemp)"
 cleanup_files() { rm -f "$tmp_route" "$tmp_site"; }
+unit_state() {
+  state="$(systemctl "$1" "$2" 2>/dev/null || true)"
+  printf '%s\n' "${state:-missing}"
+}
+restore_timer_state() {
+  timer="$1"; enabled="$2"; active="$3"
+  [[ "$enabled" == enabled ]] && systemctl enable "$timer" >/dev/null 2>&1 || true
+  [[ "$active" == active ]] && systemctl start "$timer" >/dev/null 2>&1 || true
+}
 restore_old() {
   set +e
   docker rm -f "$candidate_new" "$candidate_cpa" >/dev/null 2>&1 || true
@@ -113,6 +129,10 @@ restore_old() {
   if [[ "$site_switched" -eq 1 ]]; then
     cp -a "$backup_dir/nginx.site.before.conf" "$site"
     nginx -t >/dev/null 2>&1 && nginx -s reload >/dev/null 2>&1 || true
+  fi
+  if [[ "$legacy_timers_changed" -eq 1 ]]; then
+    restore_timer_state "$legacy_watchdog_timer" "$watchdog_enabled" "$watchdog_active"
+    restore_timer_state "$legacy_autoupdate_timer" "$autoupdate_enabled" "$autoupdate_active"
   fi
 }
 fail_deploy() {
@@ -148,11 +168,11 @@ docker network inspect "$network" >/dev/null
 start_pair() {
   pair_data="$1"
   pair_logs="$2"
-  docker run -d --name "$candidate_cpa" --network "$network" --network-alias "$candidate_cpa_alias" \
+  docker run -d --name "$candidate_cpa" --network "$network" --network-alias "$candidate_cpa_alias" --restart unless-stopped \
     --memory 256m --memory-swap 384m --cpus 0.75 --pids-limit 128 --env-file "$env_file" \
     -e TZ=Asia/Shanghai -e MADAPI_NEWAPI_CONTROL_URL="http://$candidate_new_alias:3000/internal/madapi/cpa" \
     -e MADAPI_CPA_EXECUTE_PORT=18417 "$cpa_image" >/dev/null
-  docker run -d --name "$candidate_new" --network "$network" --network-alias "$candidate_new_alias" \
+  docker run -d --name "$candidate_new" --network "$network" --network-alias "$candidate_new_alias" --restart unless-stopped \
     --memory 768m --memory-swap 1024m --cpus 1.25 --pids-limit 256 \
     -p "127.0.0.1:$candidate_port:3000" --env-file "$env_file" \
     -e TZ=Asia/Shanghai -e NODE_NAME=new-api-unified-candidate \
@@ -180,6 +200,12 @@ check_pair
 docker rm -f "$candidate_new" "$candidate_cpa" >/dev/null
 
 # Final pair is the only writer after all old application writers stop.
+watchdog_enabled="$(unit_state is-enabled "$legacy_watchdog_timer")"
+watchdog_active="$(unit_state is-active "$legacy_watchdog_timer")"
+autoupdate_enabled="$(unit_state is-enabled "$legacy_autoupdate_timer")"
+autoupdate_active="$(unit_state is-active "$legacy_autoupdate_timer")"
+systemctl disable --now "$legacy_watchdog_timer" "$legacy_autoupdate_timer" >/dev/null 2>&1 || true
+legacy_timers_changed=1
 if docker inspect new-api-codex-control >/dev/null 2>&1; then old_control_present=1; fi
 old_writers=(new-api)
 [[ "$old_control_present" -eq 0 ]] || old_writers+=(new-api-codex-control)
@@ -201,7 +227,8 @@ nginx -s reload
 public_url="${MADAPI_PUBLIC_URL:-}"
 if [[ -n "$public_url" ]]; then
   edge_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${public_url%/}/codex/v1" || true)"
-  [[ "$edge_status" =~ ^[234][0-9][0-9]$ ]]
+  dashboard_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${public_url%/}/api/status?release=$git_sha" || true)"
+  [[ "$edge_status" =~ ^[234][0-9][0-9]$ && "$dashboard_status" == 200 ]]
 fi
 
 cat >"$backup_dir/release.env" <<EOF
@@ -216,6 +243,12 @@ MADAPI_UNIFIED_OLD_PORT=$old_port
 MADAPI_UNIFIED_CANDIDATE_NEW_API=$candidate_new
 MADAPI_UNIFIED_CANDIDATE_CPA=$candidate_cpa
 MADAPI_UNIFIED_CANDIDATE_PORT=$candidate_port
+MADAPI_UNIFIED_LEGACY_WATCHDOG_TIMER=$legacy_watchdog_timer
+MADAPI_UNIFIED_LEGACY_WATCHDOG_ENABLED=$watchdog_enabled
+MADAPI_UNIFIED_LEGACY_WATCHDOG_ACTIVE=$watchdog_active
+MADAPI_UNIFIED_LEGACY_AUTOUPDATE_TIMER=$legacy_autoupdate_timer
+MADAPI_UNIFIED_LEGACY_AUTOUPDATE_ENABLED=$autoupdate_enabled
+MADAPI_UNIFIED_LEGACY_AUTOUPDATE_ACTIVE=$autoupdate_active
 EOF
 chmod 600 "$backup_dir/release.env"
 trap - ERR INT TERM

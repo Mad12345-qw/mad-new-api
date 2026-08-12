@@ -64,14 +64,47 @@ $payload = [ordered]@{
     response_format = 'url'
 }
 $json = $payload | ConvertTo-Json -Depth 8 -Compress
-$response = Invoke-RestMethod `
-    -UseBasicParsing `
-    -Uri $endpoint `
-    -Method Post `
-    -Headers @{ Authorization = 'Bearer ' + $apiKey } `
-    -ContentType 'application/json; charset=utf-8' `
-    -Body ([Text.Encoding]::UTF8.GetBytes($json)) `
-    -TimeoutSec 300
+$curl = Join-Path $env:WINDIR 'System32\curl.exe'
+if (-not (Test-Path -LiteralPath $curl)) { throw 'Windows curl.exe is unavailable.' }
+
+$requestId = [guid]::NewGuid().ToString('N')
+$requestPath = Join-Path $env:TEMP ('madapi-image-request-' + $requestId + '.json')
+$responsePath = Join-Path $env:TEMP ('madapi-image-response-' + $requestId + '.json')
+$headerPath = Join-Path $env:TEMP ('madapi-image-header-' + $requestId + '.txt')
+try {
+    [IO.File]::WriteAllText($requestPath, $json, (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText(
+        $headerPath,
+        'Authorization: Bearer ' + $apiKey + [Environment]::NewLine +
+        'Content-Type: application/json; charset=utf-8' + [Environment]::NewLine,
+        [Text.Encoding]::ASCII
+    )
+    $statusOutput = @(& $curl `
+        --silent `
+        --show-error `
+        --max-time 300 `
+        --output $responsePath `
+        --write-out '%{http_code}' `
+        --header ('@' + $headerPath) `
+        --data-binary ('@' + $requestPath) `
+        $endpoint 2>&1)
+    $curlExitCode = $LASTEXITCODE
+    $statusText = ($statusOutput -join '').Trim()
+    if ($curlExitCode -ne 0) {
+        throw ('MadAPI image request failed: curl exit ' + $curlExitCode + ', ' + $statusText)
+    }
+    if (-not (Test-Path -LiteralPath $responsePath)) { throw 'MadAPI returned no response body.' }
+    $responseText = [IO.File]::ReadAllText($responsePath, [Text.Encoding]::UTF8)
+    try { $response = $responseText | ConvertFrom-Json }
+    catch { throw ('MadAPI returned invalid JSON with HTTP status ' + $statusText + '.') }
+    if ($statusText -notmatch '^2[0-9][0-9]$') {
+        $message = [string]$response.error.message
+        if ([string]::IsNullOrWhiteSpace($message)) { $message = $responseText }
+        throw ('MadAPI image request returned HTTP ' + $statusText + ': ' + $message)
+    }
+} finally {
+    Remove-Item -LiteralPath $requestPath, $responsePath, $headerPath -Force -ErrorAction SilentlyContinue
+}
 
 $items = @($response.data)
 if ($items.Count -eq 0 -or $null -eq $items[0]) { throw 'MadAPI returned no image data.' }
@@ -81,8 +114,17 @@ $temporaryOutput = $requestedOutput + '.' + [guid]::NewGuid().ToString('N') + '.
 
 try {
     if (-not [string]::IsNullOrWhiteSpace($imageUrl)) {
-        $client = New-Object Net.WebClient
-        try { $client.DownloadFile($imageUrl, $temporaryOutput) } finally { $client.Dispose() }
+        $downloadOutput = @(& $curl `
+            --fail `
+            --location `
+            --silent `
+            --show-error `
+            --max-time 300 `
+            --output $temporaryOutput `
+            $imageUrl 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw ('MadAPI image download failed: ' + ($downloadOutput -join ' '))
+        }
     } elseif (-not [string]::IsNullOrWhiteSpace($base64Image)) {
         [IO.File]::WriteAllBytes($temporaryOutput, [Convert]::FromBase64String($base64Image))
     } else {

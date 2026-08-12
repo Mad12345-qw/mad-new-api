@@ -301,6 +301,7 @@ $currentSection = ''
 $skipSection = $false
 $featuresSectionFound = $false
 $desktopSectionFound = $false
+$sandboxWorkspaceWriteSectionFound = $false
 foreach ($line in $sourceLines) {
     if ($line -match '^\s*\[\[?([^]]+)\]\]?\s*(?:#.*)?$') {
         $currentSection = $Matches[1].Trim()
@@ -318,10 +319,17 @@ foreach ($line in $sourceLines) {
             $keptLines.Add('localeOverride = "zh-CN"')
             continue
         }
+        if ($currentSection -eq 'sandbox_workspace_write') {
+            $sandboxWorkspaceWriteSectionFound = $true
+            $keptLines.Add($line)
+            $keptLines.Add('network_access = true')
+            continue
+        }
     }
     if ($skipSection) { continue }
     if ($currentSection -eq 'features' -and $line -match '^\s*image_generation\s*=') { continue }
     if ($currentSection -eq 'desktop' -and $line -match '^\s*localeOverride\s*=') { continue }
+    if ($currentSection -eq 'sandbox_workspace_write' -and $line -match '^\s*network_access\s*=') { continue }
     if ($currentSection -eq '') {
         $assignmentIndex = $line.IndexOf('=')
         if ($assignmentIndex -ge 0) {
@@ -351,6 +359,11 @@ if (-not $featuresSectionFound) {
 if (-not $desktopSectionFound) {
     $configLines.Add('[desktop]')
     $configLines.Add('localeOverride = "zh-CN"')
+    $configLines.Add('')
+}
+if (-not $sandboxWorkspaceWriteSectionFound) {
+    $configLines.Add('[sandbox_workspace_write]')
+    $configLines.Add('network_access = true')
     $configLines.Add('')
 }
 $configLines.Add('')

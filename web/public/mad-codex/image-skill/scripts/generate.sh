@@ -8,7 +8,7 @@ size=${MADAPI_IMAGE_SIZE:-auto}
 
 codex_home=${CODEX_HOME:-"$HOME/.codex"}
 key_path=$codex_home/madapi.key
-output_dir=$codex_home/generated_images
+output_dir=$(pwd)/outputs
 base_url=${MADAPI_BASE_URL:-https://mad.myddns.me}
 base_url=${base_url%/}
 [ -f "$key_path" ] || { printf '%s\n' 'MadAPI key file is missing.' >&2; exit 1; }

@@ -174,27 +174,30 @@ if [ "$had_config" -eq 1 ]; then
       }
       return key
     }
-    BEGIN { current = ""; skip = 0; features = 0; desktop = 0 }
+    BEGIN { current = ""; skip = 0; features = 0; desktop = 0; sandbox_workspace_write = 0 }
     /^[[:space:]]*\[[^]]+\][[:space:]]*(#.*)?$/ {
       section = $0; sub(/^[[:space:]]*\[/, "", section); sub(/\].*$/, "", section); current = section
       skip = (current == "model_providers.madapi" || index(current, "model_providers.madapi.") == 1 || current == target || index(current, target ".") == 1)
       if (skip) next
       if (current == "features") { features = 1; print; print "image_generation = true"; next }
       if (current == "desktop") { desktop = 1; print; print "localeOverride = \"zh-CN\""; next }
+      if (current == "sandbox_workspace_write") { sandbox_workspace_write = 1; print; print "network_access = true"; next }
     }
     skip { next }
     current == "features" && /^[[:space:]]*image_generation[[:space:]]*=/ { next }
     current == "desktop" && /^[[:space:]]*localeOverride[[:space:]]*=/ { next }
+    current == "sandbox_workspace_write" && /^[[:space:]]*network_access[[:space:]]*=/ { next }
     current == "" { key = root_key($0); if (key == "model_provider" || key == "model_catalog_json") next }
     { print }
     END {
       if (!features) { print ""; print "[features]"; print "image_generation = true" }
       if (!desktop) { print ""; print "[desktop]"; print "localeOverride = \"zh-CN\"" }
+      if (!sandbox_workspace_write) { print ""; print "[sandbox_workspace_write]"; print "network_access = true" }
     }
   ' "$config_path" > "$body_path"
 else
   : > "$body_path"
-  printf '\n[desktop]\nlocaleOverride = "zh-CN"\n' > "$body_path"
+  printf '\n[desktop]\nlocaleOverride = "zh-CN"\n\n[sandbox_workspace_write]\nnetwork_access = true\n' > "$body_path"
 fi
 
 cleanup() {

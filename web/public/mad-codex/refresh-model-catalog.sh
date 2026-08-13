@@ -35,7 +35,7 @@ fi
 if [ -n "${MADAPI_CODEX_TEMPLATE_FILE:-}" ]; then
   cp "$MADAPI_CODEX_TEMPLATE_FILE" "$template_path"
 else
-  curl -fsS 'https://models.router-for.me/codex_client_models.json' -o "$template_path"
+  curl -fsS "$base_url/mad-codex/cpa-codex-templates.json" -o "$template_path"
 fi
 
 AVAILABLE_PATH="$available_path" TEMPLATE_PATH="$template_path" OUTPUT_PATH="$output_path" AUTH_KIND="$auth_kind" /usr/bin/osascript -l JavaScript <<'JXA'

@@ -200,6 +200,22 @@ export function DataTableRowActions<TData>({
 
   return (
     <div className='-ml-1.5 flex items-center gap-1'>
+      <Button
+        variant='outline'
+        size='sm'
+        onClick={handleOpenAgentAccess}
+        disabled={!isEnabled || isRealKeyLoading}
+        aria-label={t('Agent Access')}
+        className='h-8 min-w-24 shrink-0 gap-1.5 whitespace-nowrap px-3 text-xs font-medium'
+      >
+        {isRealKeyLoading ? (
+          <Loader2 className='size-3.5 animate-spin' />
+        ) : (
+          <Bot className='size-3.5' />
+        )}
+        {t('Agent Access')}
+      </Button>
+
       <Tooltip>
         <TooltipTrigger
           render={
@@ -239,23 +255,6 @@ export function DataTableRowActions<TData>({
           <Edit />
         </TooltipTrigger>
         <TooltipContent>{t('Edit')}</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant='ghost'
-              size='icon-sm'
-              onClick={handleOpenAgentAccess}
-              disabled={isRealKeyLoading}
-              aria-label={t('Agent Access')}
-            />
-          }
-        >
-          <Bot />
-        </TooltipTrigger>
-        <TooltipContent>{t('Agent Access')}</TooltipContent>
       </Tooltip>
 
       <DataTableRowActionMenu

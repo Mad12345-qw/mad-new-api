@@ -74,6 +74,7 @@ jobs:
           bun run build
           bun test \
             src/features/keys/lib/__tests__/agent-access-config.test.ts \
+            src/features/keys/lib/__tests__/v3-ui-parity.test.ts \
             src/features/wallet/types.test.ts
 
       - name: Validate Claude and homepage assets

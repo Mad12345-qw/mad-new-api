@@ -3677,7 +3677,7 @@
     "Recently launched models gaining traction": "近期发布并快速增长的模型",
     "Recharge": "充值",
     "Recharge bonus": "充值赠送",
-    "Bonus {{rate}}%": "赠送 {{rate}}%",
+    "Bonus {{rate}}%": "加赠 {{rate}}%",
     "Expected arrival": "预计到账",
     "Expected arrival: {{amount}}": "预计到账：{{amount}}",
     "Recharge Amount": "充值金额",
@@ -5270,7 +5270,7 @@
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
-    "Agent Access": "Agent 接入",
+    "Agent Access": "Agent接入",
     "Codex Access": "Codex 接入",
     "Claude Access": "Claude 接入",
     "Copy Command": "复制指令",
@@ -5278,7 +5278,7 @@
     "Login Mode": "登录模式",
     "Install Chinese Interface": "安装中文界面",
     "Install Command": "安装指令",
-    "Lifetime Usage": "使用额度",
+    "Lifetime Usage": "累计用量",
     "Last 7 Days": "7 天用量",
     "Recharge more to receive a larger bonus": "充值档位越高，加赠额度越多",
     "New user bonus": "新客体验",
@@ -5296,6 +5296,10 @@
     "Updates the MadAPI provider safely": "安全更新 MadAPI 接入配置",
     "Installs five Claude models": "安装 5 个 Claude 模型",
     "Installs the image generation tool": "安装图片生成工具",
-    "Keeps plugins and MCP settings": "保留插件和 MCP 设置"
+    "Keeps plugins and MCP settings": "保留插件和 MCP 设置",
+    "Copy the one-command setup below": "复制下方一键部署指令",
+    "Open PowerShell, paste the command, and press Enter": "打开 PowerShell，粘贴指令并按回车执行",
+    "Open Terminal, paste the command, and press Enter": "打开终端，粘贴指令并按回车执行",
+    "Restart {{agent}} and choose an available model": "重启 {{agent}}，然后选择可用模型"
   }
 }

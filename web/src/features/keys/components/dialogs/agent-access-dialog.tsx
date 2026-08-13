@@ -206,6 +206,38 @@ export function AgentAccessDialog({ open, onOpenChange, tokenKey }: Props) {
           />
         </div>
 
+        <div className='space-y-2.5 rounded-lg border p-3'>
+          <div className='text-sm font-medium'>{t('Setup Instructions')}</div>
+          <div className='space-y-2 text-xs'>
+            <div className='flex items-start gap-2'>
+              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>
+                1
+              </span>
+              <span>{t('Copy the one-command setup below')}</span>
+            </div>
+            <div className='flex items-start gap-2'>
+              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>
+                2
+              </span>
+              <span>
+                {platform === 'windows'
+                  ? t('Open PowerShell, paste the command, and press Enter')
+                  : t('Open Terminal, paste the command, and press Enter')}
+              </span>
+            </div>
+            <div className='flex items-start gap-2'>
+              <span className='bg-foreground text-background flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold'>
+                3
+              </span>
+              <span>
+                {t('Restart {{agent}} and choose an available model', {
+                  agent: agent === 'codex' ? 'Codex' : 'Claude',
+                })}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <div className='grid grid-cols-1 gap-2 text-xs sm:grid-cols-3'>
           <div className='flex items-center gap-1.5'>
             <ShieldCheck className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />

@@ -1,9 +1,12 @@
 package gemini
 
 import (
+	"net/http/httptest"
 	"testing"
 
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,4 +36,15 @@ func TestGeminiImagePreviewResolution(t *testing.T) {
 	require.Equal(t, "4K", geminiImageSize(dto.ImageRequest{Quality: "4K"}))
 	require.Equal(t, "2K", geminiImageSize(dto.ImageRequest{Quality: "high"}))
 	require.Equal(t, "1K", geminiImageSize(dto.ImageRequest{}))
+}
+
+func TestGeminiImageEditCannotBypassReferenceGateway(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/images/edits", nil)
+	_, err := (&Adaptor{}).ConvertImageRequest(c, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}, dto.ImageRequest{Prompt: "must preserve the reference image"})
+	require.EqualError(t, err, "Gemini image edits must pass through the reference-preserving image gateway")
 }

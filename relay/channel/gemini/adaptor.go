@@ -147,6 +147,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	if isGeminiImagePreviewModel(info.UpstreamModelName) {
+		if c != nil && c.Request != nil && strings.HasSuffix(c.Request.URL.Path, "/images/edits") {
+			return nil, errors.New("Gemini image edits must pass through the reference-preserving image gateway")
+		}
 		return convertGeminiImagePreviewRequest(request)
 	}
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {

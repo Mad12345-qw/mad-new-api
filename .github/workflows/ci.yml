@@ -50,6 +50,7 @@ jobs:
           go build ./...
           make test
           (cd ops/cpa-official-gateway && go test ./...)
+          (cd server/image-media-gateway && go test ./...)
 
   frontend:
     name: Frontend and product assets

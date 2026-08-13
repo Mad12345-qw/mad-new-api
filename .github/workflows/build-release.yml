@@ -76,6 +76,16 @@ jobs:
           test ${#sha} -eq 40
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            ops/cpa-official-gateway/go.sum
+            server/image-media-gateway/go.mod
+
       - name: Verify source boundaries
         shell: bash
         run: |
@@ -148,6 +158,17 @@ jobs:
           docker run --rm --entrypoint /bin/sh mad-cpa-official-gateway:latest \
             -c 'test -x /usr/local/bin/madapi-cpa-official-gateway'
 
+      - name: Build and verify reference-preserving image gateway
+        shell: bash
+        run: |
+          (
+            cd server/image-media-gateway
+            go test ./...
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+              go build -trimpath -ldflags="-s -w" \
+              -o "$GITHUB_WORKSPACE/image-media-gateway" .
+          )
+
       - name: Package release
         if: github.event_name != 'pull_request'
         shell: bash
@@ -162,6 +183,8 @@ jobs:
             ops/docker-disk-guard \
             ops/mad-api-error-alert
           cp ops/release/cpa-upstream-commit.txt release/cpa-upstream-commit.txt
+          cp image-media-gateway release/image-media-gateway
+          cp server/image-media-gateway/image-media-gateway.service release/image-media-gateway.service
           cat > release/release-manifest.json <<EOF
           {
             "release_format": 1,
@@ -182,6 +205,8 @@ jobs:
             mad-home.tar.gz \
             madapi-release-tools.tar.gz \
             cpa-upstream-commit.txt \
+            image-media-gateway \
+            image-media-gateway.service \
             release-manifest.json > SHA256SUMS
 
       - name: Publish build-latest release

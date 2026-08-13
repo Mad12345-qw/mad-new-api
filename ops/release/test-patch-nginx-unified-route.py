@@ -24,6 +24,9 @@ site = """server {
     location = /v1/images/generations {
         proxy_pass http://old-image;
     }
+    location = /v1/images/edits {
+        proxy_pass http://old-image-edits;
+    }
     location ^~ /mad-codex/ {
         proxy_pass http://old-assets;
     }
@@ -40,6 +43,9 @@ assert "location /health" in result
 assert "proxy_pass http://old-v1;" not in result
 assert "proxy_pass http://old-codex;" not in result
 assert "proxy_pass http://old-image;" not in result
+assert "proxy_pass http://old-image-edits;" not in result
+assert result.count("location = /v1/images/generations {") == 1
+assert result.count("location = /v1/images/edits {") == 1
 assert "proxy_pass http://old-assets;" not in result
 assert "location /health" in result
 print("nginx_unified_patcher_test=passed")

@@ -139,7 +139,7 @@ export function AgentAccessDialog({ open, onOpenChange, tokenKey }: Props) {
             value={platform}
             onValueChange={(value) => setPlatform(value as AgentPlatform)}
           >
-            <TabsList className='grid w-full grid-cols-2 sm:w-72'>
+            <TabsList className='grid w-full grid-cols-2'>
               <TabsTrigger value='windows'>
                 <Monitor />
                 Windows

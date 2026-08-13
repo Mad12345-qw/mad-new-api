@@ -287,6 +287,19 @@ export function RechargeFormCard({
                             : preset.value === 648
                               ? t('Best value')
                               : null
+                      const badgeLabel =
+                        badge &&
+                        promotion?.promotional &&
+                        (preset.value === 128 || preset.value === 648)
+                          ? `${badge} · ${t('Bonus {{rate}}%', {
+                              rate: promotion.bonusRatePercent,
+                            })}`
+                          : badge ||
+                            (promotion?.promotional
+                              ? t('Bonus {{rate}}%', {
+                                  rate: promotion.bonusRatePercent,
+                                })
+                              : null)
                       return (
                         <Button
                           key={preset.value}
@@ -313,17 +326,14 @@ export function RechargeFormCard({
                                 {t('You Pay')} ¥{formatCurrency(actualPrice)}
                               </div>
                             </div>
-                            {(badge || promotion?.promotional) && (
+                            {badgeLabel && (
                               <span
                                 className={cn(
                                   'min-h-[29px] shrink-0 whitespace-nowrap rounded-full border border-[#8b6a2c]/55 bg-[#17140f] px-3 py-[7px] text-[11px] leading-none font-semibold text-[#e0bd70]',
                                   selectedPreset === preset.value && 'mr-6'
                                 )}
                               >
-                                {badge ||
-                                  t('Bonus {{rate}}%', {
-                                    rate: promotion?.bonusRatePercent,
-                                  })}
+                                {badgeLabel}
                               </span>
                             )}
                           </div>

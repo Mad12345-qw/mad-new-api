@@ -5294,6 +5294,10 @@
     "Updates the MadAPI provider safely": "Updates the MadAPI provider safely",
     "Installs five Claude models": "Installs five Claude models",
     "Installs the image generation tool": "Installs the image generation tool",
-    "Keeps plugins and MCP settings": "Keeps plugins and MCP settings"
+    "Keeps plugins and MCP settings": "Keeps plugins and MCP settings",
+    "Copy the one-command setup below": "Copy the one-command setup below",
+    "Open PowerShell, paste the command, and press Enter": "Open PowerShell, paste the command, and press Enter",
+    "Open Terminal, paste the command, and press Enter": "Open Terminal, paste the command, and press Enter",
+    "Restart {{agent}} and choose an available model": "Restart {{agent}} and choose an available model"
   }
 }

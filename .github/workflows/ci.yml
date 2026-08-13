@@ -85,10 +85,12 @@ jobs:
           node tests/claude-image-cache-restart.mjs web/public/mad-claude/image-tool
           node tests/mad-home-default-theme.mjs product/mad-home/default-theme.js
           (cd product/frozen-v3-ui && sha256sum -c madapi-v3-ui.tar.gz.sha256)
-          tar -tzf product/frozen-v3-ui/madapi-v3-ui.tar.gz | grep -Fxq 'dist/index.html'
-          tar -xOf product/frozen-v3-ui/madapi-v3-ui.tar.gz dist/index.html | grep -Fq '<html lang="zh-CN">'
-          tar -xOf product/frozen-v3-ui/madapi-v3-ui.tar.gz dist/index.html | grep -Fq '<title>Mad API</title>'
-          ! tar -xOf product/frozen-v3-ui/madapi-v3-ui.tar.gz dist/index.html | grep -Fq '/mad-home/oauth-bridge-v3.js'
+          mkdir -p "$RUNNER_TEMP/frozen-v3-ui"
+          tar -xzf product/frozen-v3-ui/madapi-v3-ui.tar.gz -C "$RUNNER_TEMP/frozen-v3-ui"
+          test -s "$RUNNER_TEMP/frozen-v3-ui/dist/index.html"
+          grep -Fq '<html lang="zh-CN">' "$RUNNER_TEMP/frozen-v3-ui/dist/index.html"
+          grep -Fq '<title>Mad API</title>' "$RUNNER_TEMP/frozen-v3-ui/dist/index.html"
+          ! grep -Fq '/mad-home/oauth-bridge-v3.js' "$RUNNER_TEMP/frozen-v3-ui/dist/index.html"
 
   agent-installers:
     name: Agent installers (${{ matrix.os }})

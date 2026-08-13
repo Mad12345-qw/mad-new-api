@@ -117,7 +117,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		usage, err = openai.OpenaiImageHandler(c, info, resp)
 	case constant.RelayModeResponses:
 		if info.IsStream {
-			usage, err = openai.OaiResponsesStreamHandler(c, info, resp)
+			if relaycommon.IsNativeV1CodexClient(c) {
+				usage, err = openai.OaiResponsesStreamHandlerExactUsage(c, info, resp, nil)
+			} else {
+				usage, err = openai.OaiResponsesStreamHandler(c, info, resp)
+			}
 		} else {
 			usage, err = openai.OaiResponsesHandler(c, info, resp)
 		}

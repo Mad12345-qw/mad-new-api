@@ -25,7 +25,7 @@ Assert-True ($installer.Contains('x-openai-actor-authorization')) 'Official gate
 Assert-True ($installer.Contains('supports_websockets = false')) 'WebSocket opt-out is missing.'
 Assert-True ($installer.Contains('image_generation = true')) 'Codex image generation feature is missing.'
 Assert-True ($installer.Contains('/codex/v1')) 'Dedicated NewAPI-CPA route is missing.'
-Assert-True (-not $installer.Contains('/codex/cockpit/v1')) 'Legacy API compatibility route remains.'
+Assert-True ($installer.Contains('/codex/cockpit/v1')) 'API compatibility route is missing.'
 $refreshSource = [IO.File]::ReadAllText($refreshScript)
 Assert-True ($refreshSource.Contains('/mad-codex/cpa-codex-templates.json')) 'Self-hosted Codex model template is missing.'
 Assert-True (-not $refreshSource.Contains('models.router-for.me')) 'Codex model refresh still depends on a third-party host.'
@@ -113,7 +113,7 @@ try {
     Assert-True (-not $result.Contains('env_key = "MADAPI_API_KEY"')) 'OAuth config incorrectly uses API env_key.'
     Assert-True ($result.Contains('x-openai-actor-authorization')) 'Gateway actor header is missing.'
     Assert-True ($result.Contains('image_generation = true')) 'Image generation was not enabled.'
-    Assert-True ($result.Contains('localeOverride = "zh-CN"')) 'Chinese Codex interface was not enabled.'
+    Assert-True ($result.Contains('localeOverride = "zh-CN"')) 'Codex did not default to Chinese.'
     Assert-True ($result.Contains('network_access = true')) 'Image skill network access was not enabled.'
     Assert-True ($result.Contains('path = "') -and $result.Contains('madapi-imagegen')) 'Image skill path was not registered.'
     Assert-True (([regex]::Matches($result, '(?m)^\[features\]\r?$')).Count -eq 1) 'Features table was duplicated.'
@@ -138,11 +138,14 @@ try {
     $repeat = [IO.File]::ReadAllText($configPath)
     Assert-True (([regex]::Matches($repeat, '(?m)^\[model_providers\.custom\]\r?$')).Count -eq 1) 'Provider table was duplicated.'
     Assert-True ($repeat.Contains('requires_openai_auth = false')) 'API gateway auth mode is missing.'
+    Assert-True ($repeat.Contains('base_url = "http://127.0.0.1:13016/codex/cockpit/v1"')) 'API compatibility route is missing.'
     Assert-True ($repeat.Contains('env_key = "MADAPI_API_KEY"')) 'API gateway env_key is missing.'
     Assert-True (-not $repeat.Contains('experimental_bearer_token')) 'API config contains OAuth bearer authentication.'
     Assert-True ($repeat.Contains('image_generation = true')) 'API image generation was not enabled.'
-    Assert-True ($repeat.Contains('localeOverride = "zh-CN"')) 'API Chinese Codex interface was not enabled.'
+    Assert-True ($repeat.Contains('localeOverride = "zh-CN"')) 'API Codex did not default to Chinese.'
     Assert-True ($repeat.Contains('network_access = true')) 'API image skill network access was not enabled.'
+
+    Assert-True (-not $installer.Contains('MADAPI_CODEX_LANGUAGE')) 'Codex installer still exposes an English language option.'
     $apiAuth = Get-Content -LiteralPath $authPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-True ([string]$apiAuth.auth_mode -eq 'apikey' -and [string]$apiAuth.OPENAI_API_KEY -eq 'sk-clean-api-installer') 'API authentication state was not configured.'
     $apiCatalog = Get-Content -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json

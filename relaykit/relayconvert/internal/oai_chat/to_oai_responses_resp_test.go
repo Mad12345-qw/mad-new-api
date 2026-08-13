@@ -4,10 +4,33 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChatCompletionsResponseToResponsesRestoresCustomTool(t *testing.T) {
+	info := &convmeta.Values{}
+	info.MarkResponsesCustomTool("apply_patch")
+	chat := &dto.OpenAITextResponse{
+		Model: "provider-model",
+		Choices: []dto.OpenAITextResponseChoice{{
+			Message: assistantMessageWithTool("", "call_1", "apply_patch", `{"input":"patch body"}`),
+			FinishReason: "tool_calls",
+		}},
+		Usage: dto.Usage{PromptTokens: 2, CompletionTokens: 3, TotalTokens: 5},
+	}
+
+	resp, usage, err := ChatCompletionsResponseToResponsesResponse(chat, "resp_1", info)
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	require.Len(t, resp.Output, 1)
+	assert.Equal(t, "custom_tool_call", resp.Output[0].Type)
+	assert.Equal(t, "apply_patch", resp.Output[0].Name)
+	assert.Equal(t, "patch body", resp.Output[0].Input)
+	assert.Empty(t, resp.Output[0].Arguments)
+}
 
 func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *testing.T) {
 	chat := &dto.OpenAITextResponse{
@@ -137,4 +160,48 @@ func mustResponsesEventsFromChatChunk(t *testing.T, state *ChatToResponsesStream
 	events, err := ChatCompletionsStreamChunkToResponsesEvents(chunk, state)
 	require.NoError(t, err)
 	return events
+}
+
+func TestChatCompletionsStreamToResponsesCustomToolDoesNotRepeatAccumulatedJSON(t *testing.T) {
+	info := &convmeta.Values{}
+	info.MarkResponsesCustomTool("apply_patch")
+	state := NewChatToResponsesStreamState("resp_1", "provider-model")
+	toolIndex := 0
+
+	first, err := ChatCompletionsStreamChunkToResponsesEvents(&dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{Index: &toolIndex, ID: "call_1", Function: dto.FunctionResponse{Name: "apply_patch", Arguments: `{"input":"patch `}}},
+		}}},
+	}, state, info)
+	require.NoError(t, err)
+	require.Len(t, first, 2)
+	assert.Equal(t, responsesEventCreated, first[0].Type)
+	assert.Equal(t, responsesEventOutputItemAdded, first[1].Type)
+	assert.Equal(t, "custom_tool_call", first[1].Payload.Item.Type)
+
+	second, err := ChatCompletionsStreamChunkToResponsesEvents(&dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+			ToolCalls: []dto.ToolCallResponse{{Index: &toolIndex, Function: dto.FunctionResponse{Arguments: `body"}`}}},
+		}}},
+	}, state, info)
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.Equal(t, "response.custom_tool_call_input.delta", second[0].Type)
+	assert.Equal(t, "patch body", second[0].Payload.Delta)
+
+	finish := "tool_calls"
+	done, err := ChatCompletionsStreamChunkToResponsesEvents(&dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{FinishReason: &finish}},
+	}, state, info)
+	require.NoError(t, err)
+	require.Len(t, done, 2)
+	assert.Equal(t, "response.custom_tool_call_input.done", done[0].Type)
+	assert.Equal(t, responsesEventOutputItemDone, done[1].Type)
+	assert.Equal(t, "patch body", done[1].Payload.Item.Input)
+
+	final := FinalizeChatCompletionsStreamToResponses(state)
+	require.Len(t, final, 1)
+	assert.Equal(t, responsesEventCompleted, final[0].Type)
+	require.Len(t, final[0].Payload.Response.Output, 1)
+	assert.Equal(t, "patch body", final[0].Payload.Response.Output[0].Input)
 }

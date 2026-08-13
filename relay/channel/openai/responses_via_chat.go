@@ -48,6 +48,9 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 	usage := convertResult.Usage
 	if usage == nil || usage.TotalTokens == 0 {
+		if relaycommon.IsNativeV1CodexClient(c) {
+			return nil, types.NewOpenAIError(fmt.Errorf("upstream response omitted exact usage"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
 		text := service.ExtractOutputTextFromResponses(responsesResp)
 		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		responsesResp.Usage = relayconvert.UsageFromChatUsage(usage)
@@ -136,6 +139,9 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 	usage := state.Usage()
 	if usage == nil || usage.TotalTokens == 0 {
+		if relaycommon.IsNativeV1CodexClient(c) {
+			return nil, types.NewOpenAIError(fmt.Errorf("upstream response omitted exact usage"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
 		usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		state.SetUsage(usage)
 	}

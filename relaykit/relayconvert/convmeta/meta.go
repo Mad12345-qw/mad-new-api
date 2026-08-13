@@ -43,6 +43,11 @@ type Meta interface {
 
 	// AppendRequestConversion records a hop in the request format chain.
 	AppendRequestConversion(format types.RelayFormat)
+	// MarkResponsesCustomTool records a Responses custom tool that is lowered
+	// to a function tool for an upstream protocol. Response converters use the
+	// request-scoped marker to restore custom_tool_call events for the client.
+	MarkResponsesCustomTool(name string)
+	IsResponsesCustomTool(name string) bool
 
 	// ConvOptions returns the request-scoped conversion options snapshot.
 	// Must never return nil.
@@ -84,6 +89,7 @@ type Values struct {
 	ClaudeConvertInfo *ClaudeConvertInfo
 	SendResponseCount int
 	ConversionChain   []types.RelayFormat
+	ResponsesCustomTools map[string]struct{}
 
 	Options *Options
 }
@@ -177,6 +183,24 @@ func (v *Values) AppendRequestConversion(format types.RelayFormat) {
 		return
 	}
 	v.ConversionChain = append(v.ConversionChain, format)
+}
+
+func (v *Values) MarkResponsesCustomTool(name string) {
+	if v == nil || name == "" {
+		return
+	}
+	if v.ResponsesCustomTools == nil {
+		v.ResponsesCustomTools = make(map[string]struct{})
+	}
+	v.ResponsesCustomTools[name] = struct{}{}
+}
+
+func (v *Values) IsResponsesCustomTool(name string) bool {
+	if v == nil || name == "" {
+		return false
+	}
+	_, ok := v.ResponsesCustomTools[name]
+	return ok
 }
 
 func (v *Values) ConvOptions() *Options {

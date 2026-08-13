@@ -652,7 +652,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		usage, err = common_handler.RerankHandler(c, info, resp)
 	case relayconstant.RelayModeResponses:
 		if info.IsStream {
-			usage, err = OaiResponsesStreamHandler(c, info, resp)
+			if relaycommon.IsNativeV1CodexClient(c) {
+				usage, err = OaiResponsesStreamHandlerExactUsage(c, info, resp, nil)
+			} else {
+				usage, err = OaiResponsesStreamHandler(c, info, resp)
+			}
 		} else {
 			usage, err = OaiResponsesHandler(c, info, resp)
 		}

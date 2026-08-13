@@ -11,10 +11,8 @@ gateway_key_env_name=MADAPI_API_KEY
 madapi_base_url=${MADAPI_BASE_URL:-https://mad.myddns.me}
 madapi_base_url=${madapi_base_url%/}
 case "$madapi_base_url" in http://*|https://*) ;; *) printf '%s\n' 'MADAPI_BASE_URL is invalid.' >&2; exit 1 ;; esac
-codex_base_url=$madapi_base_url/codex/v1
 requested_login_mode=${MADAPI_CODEX_LOGIN_MODE:-auto}
 case "$requested_login_mode" in auto|oauth|apikey) ;; *) printf '%s\n' 'MADAPI_CODEX_LOGIN_MODE must be auto, oauth, or apikey.' >&2; exit 1 ;; esac
-
 codex_home=${CODEX_HOME:-"$HOME/.codex"}
 config_path="$codex_home/config.toml"
 auth_path="$codex_home/auth.json"
@@ -90,6 +88,7 @@ elif [ "$requested_login_mode" = apikey ]; then
   auth_kind=apikey
   auth_mutation=write
 fi
+if [ "$auth_kind" = apikey ]; then codex_base_url=$madapi_base_url/codex/cockpit/v1; else codex_base_url=$madapi_base_url/codex/v1; fi
 
 mkdir -p "$codex_home" "$skills_path"
 [ -f "$config_path" ] && had_config=1
@@ -161,7 +160,7 @@ provider_name=
 [ -n "$provider_name" ] || provider_name=$provider_id
 
 if [ "$had_config" -eq 1 ]; then
-  LC_ALL=C awk -v target="model_providers.$provider_id" -v force_locale="$auth_kind" '
+  LC_ALL=C awk -v target="model_providers.$provider_id" '
     function root_key(line, equals_at, key, first, last, quote) {
       equals_at = index(line, "=")
       if (equals_at == 0) return ""

@@ -175,3 +175,15 @@ jobs:
           docker build --tag mad-cpa-official-gateway:pr ops/cpa-official-gateway
           docker run --rm --entrypoint /bin/sh mad-cpa-official-gateway:pr \
             -c 'test -x /usr/local/bin/madapi-cpa-official-gateway'
+
+      - name: Export NewAPI candidate image
+        shell: bash
+        run: docker save mad-new-api:pr | gzip -1 > mad-new-api-pr.tar.gz
+
+      - name: Upload NewAPI candidate image
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: mad-new-api-pr-image
+          path: mad-new-api-pr.tar.gz
+          if-no-files-found: error
+          retention-days: 1

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
@@ -31,7 +32,7 @@ const (
 	responsesIncompleteReasonMaxTokens     = "max_output_tokens"
 )
 
-func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id string) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
+func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id string, metadata ...convmeta.Meta) (*dto.OpenAIResponsesResponse, *dto.Usage, error) {
 	if resp == nil {
 		return nil, nil, errors.New("response is nil")
 	}
@@ -87,7 +88,11 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, id
 	}
 
 	for i, toolCall := range choice.Message.ParseToolCalls() {
-		toolOutput, err := chatToolCallToResponsesOutput(toolCall, id, i, responseOutputStatus(out))
+		var info convmeta.Meta
+		if len(metadata) > 0 {
+			info = metadata[0]
+		}
+		toolOutput, err := chatToolCallToResponsesOutput(toolCall, id, i, responseOutputStatus(out), info)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -169,12 +174,22 @@ func responseStatusString(resp *dto.OpenAIResponsesResponse) string {
 	return strings.TrimSpace(status)
 }
 
-func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID string, index int, status string) (dto.ResponsesOutput, error) {
+func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID string, index int, status string, info convmeta.Meta) (dto.ResponsesOutput, error) {
 	callID := strings.TrimSpace(toolCall.ID)
 	if callID == "" {
 		callID = fmt.Sprintf("%s_call_%d", responseID, index)
 	}
 	if toolCall.Type == "" || toolCall.Type == "function" {
+		if info != nil && info.IsResponsesCustomTool(toolCall.Function.Name) {
+			return dto.ResponsesOutput{
+				Type:   "custom_tool_call",
+				ID:     callID,
+				Status: status,
+				CallId: callID,
+				Name:   toolCall.Function.Name,
+				Input:  customToolInput(toolCall.Function.Arguments),
+			}, nil
+		}
 		return dto.ResponsesOutput{
 			Type:      responsesOutputTypeFunctionCall,
 			ID:        callID,
@@ -191,6 +206,23 @@ func chatToolCallToResponsesOutput(toolCall dto.ToolCallRequest, responseID stri
 		CallId:    callID,
 		Arguments: toolCall.Custom,
 	}, nil
+}
+
+func customToolInput(arguments string) string {
+	if input, ok := completeCustomToolInput(arguments); ok {
+		return input
+	}
+	return arguments
+}
+
+func completeCustomToolInput(arguments string) (string, bool) {
+	var payload map[string]any
+	if err := kitutil.Unmarshal([]byte(arguments), &payload); err == nil {
+		if input, ok := payload["input"].(string); ok {
+			return input, true
+		}
+	}
+	return "", false
 }
 
 func chatArgumentsRawMessage(arguments string) []byte {

@@ -100,3 +100,14 @@ func IsResponsesCompactAPIType(apiType int) bool {
 		return false
 	}
 }
+
+func IsResponsesCompactFallbackAPIType(apiType int) bool {
+	switch apiType {
+	case constant.APITypeAnthropic,
+		constant.APITypeGemini,
+		constant.APITypeXai:
+		return true
+	default:
+		return false
+	}
+}

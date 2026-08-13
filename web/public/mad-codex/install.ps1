@@ -206,7 +206,6 @@ $gatewayKeyEnvName = 'MADAPI_API_KEY'
 $madapiBaseUrl = ([string]$env:MADAPI_BASE_URL).Trim().TrimEnd('/')
 if ([string]::IsNullOrWhiteSpace($madapiBaseUrl)) { $madapiBaseUrl = 'https://mad.myddns.me' }
 if ($madapiBaseUrl -notmatch '^https?://[^/]+(?::[0-9]+)?$') { throw 'MADAPI_BASE_URL is invalid.' }
-$codexBaseUrl = $madapiBaseUrl + '/codex/v1'
 $requestedLoginMode = ([string]$env:MADAPI_CODEX_LOGIN_MODE).Trim().ToLowerInvariant()
 if ([string]::IsNullOrWhiteSpace($requestedLoginMode)) { $requestedLoginMode = 'auto' }
 if (@('auto', 'oauth', 'apikey') -notcontains $requestedLoginMode) {
@@ -316,6 +315,7 @@ if ($requestedLoginMode -eq 'oauth') {
     $authKind = 'apikey'
     $authMutation = 'write'
 }
+$codexBaseUrl = $madapiBaseUrl + $(if ($authKind -eq 'apikey') { '/codex/cockpit/v1' } else { '/codex/v1' })
 
 New-Item -ItemType Directory -Path $codexHome -Force | Out-Null
 New-Item -ItemType Directory -Path $userSkillsPath -Force | Out-Null

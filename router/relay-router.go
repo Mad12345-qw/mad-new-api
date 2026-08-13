@@ -88,6 +88,7 @@ func SetRelayRouter(router *gin.Engine) {
 	codexV1Router.Use(middleware.TokenAuth())
 	codexV1Router.Use(middleware.ModelRequestRateLimit())
 	codexV1Router.Use(middleware.MarkCodexRoute())
+	codexV1Router.Use(middleware.NormalizeCodexResponsesLite())
 	codexV1Router.Use(middleware.Distribute())
 	{
 		codexV1Router.POST("/responses", func(c *gin.Context) {

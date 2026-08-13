@@ -7,13 +7,13 @@ function readSource(relativePath: string) {
 }
 
 describe('MadAPI 3.0 UI parity', () => {
-  test('keeps the full Agent Access action before the status switch', () => {
+  test('keeps the compact Agent Access action before the status switch', () => {
     const source = readSource('../../components/data-table-row-actions.tsx')
-    const agentButton = source.indexOf("className='h-8 min-w-24")
+    const agentButton = source.indexOf("className='h-7 min-w-0")
     const agentLabel = source.indexOf("{t('Agent Access')}", agentButton)
     const statusSwitch = source.indexOf('onClick={handleToggleStatus}')
 
-    assert.ok(agentButton >= 0, 'Agent Access must remain a full-width button')
+    assert.ok(agentButton >= 0, 'Agent Access must remain a compact button')
     assert.ok(
       agentLabel > agentButton,
       'Agent Access button must show its label'

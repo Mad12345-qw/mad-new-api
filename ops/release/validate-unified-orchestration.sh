@@ -55,11 +55,15 @@ for marker in (
     'image-gateway-upstream.before.conf',
     'image-gateway-upstream.candidate.conf',
     'systemctl restart "$image_gateway_service"',
+    'image_compat_port="${MADAPI_IMAGE_COMPAT_PORT:-3010}"',
+    'UPSTREAM=http://127.0.0.1:$image_compat_port',
+    'systemctl is-active --quiet image-url-compat.service',
     '"http://127.0.0.1:$image_port/health"',
-    'UPSTREAM=http://127.0.0.1:$old_port',
 ):
     if marker not in deploy:
         raise SystemExit(f"SQLite single-writer deploy gate is missing: {marker}")
+if 'UPSTREAM=http://127.0.0.1:$old_port' in deploy:
+    raise SystemExit("image gateway bypasses the complete image compatibility service")
 for marker in ("docker stop \"$candidate_new\" \"$candidate_cpa\"", 'docker rename "$candidate_new" "$deployed_new_backup"', 'docker rename "$deployed_new_backup" "$candidate_new"', "cpa_status", "sqlite_single_writer=true", "image-gateway-upstream.before.conf", "image-gateway-upstream.candidate.conf", 'systemctl restart "$image_gateway_service"'):
     if marker not in rollback:
         raise SystemExit(f"SQLite single-writer rollback gate is missing: {marker}")

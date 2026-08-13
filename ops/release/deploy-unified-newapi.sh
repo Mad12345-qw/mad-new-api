@@ -17,6 +17,7 @@ log_dir="${MADAPI_LOG_DIR:-/opt/new-api/logs}"
 old_port="${MADAPI_NEW_API_PORT:-3001}"
 candidate_port="${MADAPI_CANDIDATE_NEW_API_PORT:-13001}"
 image_port="${MADAPI_IMAGE_PORT:-3013}"
+image_compat_port="${MADAPI_IMAGE_COMPAT_PORT:-3010}"
 image_gateway_binary="${MADAPI_IMAGE_GATEWAY_BINARY:-/opt/image-media-gateway/image-media-gateway}"
 image_gateway_service="${MADAPI_IMAGE_GATEWAY_SERVICE:-image-media-gateway.service}"
 image_gateway_dropin="${MADAPI_IMAGE_GATEWAY_DROPIN:-/etc/systemd/system/image-media-gateway.service.d/20-unified-upstream.conf}"
@@ -31,7 +32,7 @@ health_attempts="${MADAPI_UNIFIED_HEALTH_ATTEMPTS:-120}"
 [[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$release_dir/release-manifest.json" && -f "$env_file" && -f "$site" && -d "$data_dir" && -f "$database" ]]
 [[ -x "$image_gateway_binary" && -f "$image_gateway_dropin" && -f "$image_gateway_hash_file" ]]
 [[ "$(dirname "$database")" == "$data_dir" ]]
-for value in "$old_port" "$candidate_port" "$image_port" "$health_attempts"; do [[ "$value" =~ ^[1-9][0-9]*$ ]]; done
+for value in "$old_port" "$candidate_port" "$image_port" "$image_compat_port" "$health_attempts"; do [[ "$value" =~ ^[1-9][0-9]*$ ]]; done
 [[ "$old_port" != "$candidate_port" ]]
 for command in docker gzip curl nginx sha256sum python3 flock cp systemctl; do command -v "$command" >/dev/null; done
 control_token="$(sed -n 's/^MADAPI_CPA_CONTROL_TOKEN=//p' "$env_file" | tail -n 1)"
@@ -217,15 +218,17 @@ check_pair "$old_port"
 
 cat >"$image_gateway_dropin.tmp" <<EOF
 [Service]
-Environment="UPSTREAM=http://127.0.0.1:$old_port"
+Environment="UPSTREAM=http://127.0.0.1:$image_compat_port"
 EOF
 chmod --reference="$image_gateway_dropin" "$image_gateway_dropin.tmp"
 cp -a "$image_gateway_dropin.tmp" "$backup_dir/image-gateway-upstream.candidate.conf"
 mv -f "$image_gateway_dropin.tmp" "$image_gateway_dropin"
 image_gateway_switched=1
 systemctl daemon-reload
+systemctl is-active --quiet image-url-compat.service
 systemctl restart "$image_gateway_service"
 systemctl is-active --quiet "$image_gateway_service"
+[[ "$(systemctl show "$image_gateway_service" -p Environment --value | tr ' ' '\n' | grep '^UPSTREAM=' | tail -1)" == "UPSTREAM=http://127.0.0.1:$image_compat_port" ]]
 image_status=""
 for _ in $(seq 1 30); do
   image_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \

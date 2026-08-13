@@ -23,6 +23,8 @@ grep -Fq 'supports_websockets = false' "$installer_path" || fail 'WebSocket opt-
 grep -Fq 'image_generation = true' "$installer_path" || fail 'Codex image generation feature is missing.'
 grep -Fq '/codex/v1' "$installer_path" || fail 'Dedicated NewAPI-CPA route is missing.'
 ! grep -Fq '/codex/cockpit/v1' "$installer_path" || fail 'Legacy API compatibility route remains.'
+grep -Fq '/mad-codex/cpa-codex-templates.json' "$refresh_path" || fail 'Self-hosted Codex model template is missing.'
+! grep -Fq 'models.router-for.me' "$refresh_path" || fail 'Codex model refresh still depends on a third-party host.'
 
 if [ "$(uname -s)" != Darwin ]; then
   printf '%s\n' 'Codex macOS source contract passed; runtime acceptance requires macOS.'

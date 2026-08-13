@@ -26,6 +26,9 @@ Assert-True ($installer.Contains('supports_websockets = false')) 'WebSocket opt-
 Assert-True ($installer.Contains('image_generation = true')) 'Codex image generation feature is missing.'
 Assert-True ($installer.Contains('/codex/v1')) 'Dedicated NewAPI-CPA route is missing.'
 Assert-True (-not $installer.Contains('/codex/cockpit/v1')) 'Legacy API compatibility route remains.'
+$refreshSource = [IO.File]::ReadAllText($refreshScript)
+Assert-True ($refreshSource.Contains('/mad-codex/cpa-codex-templates.json')) 'Self-hosted Codex model template is missing.'
+Assert-True (-not $refreshSource.Contains('models.router-for.me')) 'Codex model refresh still depends on a third-party host.'
 Assert-True ($installer.Contains("'ChatGPT', 'Codex'")) 'Codex Desktop process-group shutdown is missing.'
 Assert-True ($installer.Contains('OpenAI.Codex_')) 'Codex Desktop package filter is missing.'
 

@@ -41,7 +41,7 @@ if (-not [string]::IsNullOrWhiteSpace([string]$env:MADAPI_REFRESH_RESPONSE_FILE)
 if (-not [string]::IsNullOrWhiteSpace([string]$env:MADAPI_CODEX_TEMPLATE_FILE)) {
     $templatePayload = Get-Content -LiteralPath ([string]$env:MADAPI_CODEX_TEMPLATE_FILE) -Raw -Encoding UTF8 | ConvertFrom-Json
 } else {
-    $templatePayload = Invoke-RestMethod -UseBasicParsing -Uri 'https://models.router-for.me/codex_client_models.json' -Method Get -TimeoutSec 30
+    $templatePayload = Invoke-RestMethod -UseBasicParsing -Uri ($baseUrl + '/mad-codex/cpa-codex-templates.json') -Method Get -TimeoutSec 30
 }
 
 $templates = @($templatePayload.models)

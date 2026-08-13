@@ -11,6 +11,7 @@ MANAGED = (
     "location ^~ /codex/v1/ {",
     "location ^~ /v1/ {",
     "location = /v1/images/generations {",
+    "location = /v1/images/edits {",
     "location ^~ /mad-codex/ {",
 )
 

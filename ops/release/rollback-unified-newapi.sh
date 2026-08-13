@@ -38,7 +38,9 @@ docker rename "$old_new" new-api
 docker start new-api >/dev/null
 [[ "$old_cpa_present" == 0 ]] || docker start cpa-official-gateway >/dev/null
 [[ "$old_control_present" == 0 ]] || docker start new-api-codex-control >/dev/null
-[[ -f "$backup_dir/image-gateway-upstream.before.conf" && -f "$image_gateway_dropin" ]]
+[[ -f "$backup_dir/image-gateway-upstream.before.conf" && -f "$backup_dir/image-gateway-binary.before" && -f "$backup_dir/image-gateway-binary.candidate" && -f "$image_gateway_dropin" ]]
+image_gateway_binary="${MADAPI_IMAGE_GATEWAY_BINARY:-/opt/image-media-gateway/image-media-gateway}"
+cp -a "$backup_dir/image-gateway-binary.before" "$image_gateway_binary"
 cp -a "$backup_dir/image-gateway-upstream.before.conf" "$image_gateway_dropin"
 systemctl daemon-reload
 systemctl restart "$image_gateway_service"
@@ -61,6 +63,7 @@ if [[ "$new_status" != 200 || ( "$old_cpa_present" == 1 && "$cpa_status" != 200 
   docker rename "$deployed_new_backup" "$candidate_new" >/dev/null 2>&1 || true
   docker rename "$deployed_cpa_backup" "$candidate_cpa" >/dev/null 2>&1 || true
   docker start "$candidate_cpa" "$candidate_new" >/dev/null 2>&1 || true
+  cp -a "$backup_dir/image-gateway-binary.candidate" "$image_gateway_binary" >/dev/null 2>&1 || true
   cp -a "$backup_dir/image-gateway-upstream.candidate.conf" "$image_gateway_dropin" >/dev/null 2>&1 || true
   systemctl daemon-reload >/dev/null 2>&1 || true
   systemctl restart "$image_gateway_service" >/dev/null 2>&1 || true

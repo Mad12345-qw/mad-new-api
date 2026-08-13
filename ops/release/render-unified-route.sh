@@ -21,6 +21,9 @@ sed \
 
 grep -Fq "proxy_pass http://127.0.0.1:$new_api_port;" "$output"
 grep -Fq "proxy_pass http://127.0.0.1:$image_port;" "$output"
+test "$(grep -Fc "proxy_pass http://127.0.0.1:$image_port;" "$output")" -eq 2
 grep -Fq "location ^~ /v1/" "$output"
 grep -Fq "location ^~ /codex/v1/" "$output"
+grep -Fq "location = /v1/images/generations" "$output"
+grep -Fq "location = /v1/images/edits" "$output"
 ! grep -Fq "new-api-codex-control" "$output"

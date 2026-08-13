@@ -19,9 +19,9 @@ candidate_port="${MADAPI_CANDIDATE_NEW_API_PORT:-13001}"
 image_port="${MADAPI_IMAGE_PORT:-3013}"
 image_compat_port="${MADAPI_IMAGE_COMPAT_PORT:-3010}"
 image_gateway_binary="${MADAPI_IMAGE_GATEWAY_BINARY:-/opt/image-media-gateway/image-media-gateway}"
+image_gateway_release_binary="$release_dir/image-media-gateway"
 image_gateway_service="${MADAPI_IMAGE_GATEWAY_SERVICE:-image-media-gateway.service}"
 image_gateway_dropin="${MADAPI_IMAGE_GATEWAY_DROPIN:-/etc/systemd/system/image-media-gateway.service.d/20-unified-upstream.conf}"
-image_gateway_hash_file="${MADAPI_IMAGE_GATEWAY_HASH_FILE:-$script_dir/production-image-gateway.sha256}"
 site="${MADAPI_NGINX_SITE:-/etc/nginx/sites-enabled/mad.myddns.me}"
 backup_root="${MADAPI_UNIFIED_BACKUP_ROOT:-/opt/madapi-release-backups}"
 lock_file="${MADAPI_UNIFIED_LOCK_FILE:-/run/lock/madapi-unified-deploy.lock}"
@@ -29,8 +29,8 @@ health_attempts="${MADAPI_UNIFIED_HEALTH_ATTEMPTS:-120}"
 
 [[ $(id -u) -eq 0 ]]
 [[ "$git_sha" =~ ^[0-9a-f]{40}$ ]]
-[[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$release_dir/release-manifest.json" && -f "$env_file" && -f "$site" && -d "$data_dir" && -f "$database" ]]
-[[ -x "$image_gateway_binary" && -f "$image_gateway_dropin" && -f "$image_gateway_hash_file" ]]
+[[ -d "$release_dir" && -f "$release_dir/SHA256SUMS" && -f "$release_dir/release-manifest.json" && -f "$image_gateway_release_binary" && -f "$env_file" && -f "$site" && -d "$data_dir" && -f "$database" ]]
+[[ -x "$image_gateway_binary" && -f "$image_gateway_dropin" ]]
 [[ "$(dirname "$database")" == "$data_dir" ]]
 for value in "$old_port" "$candidate_port" "$image_port" "$image_compat_port" "$health_attempts"; do [[ "$value" =~ ^[1-9][0-9]*$ ]]; done
 [[ "$old_port" != "$candidate_port" ]]
@@ -61,7 +61,6 @@ deployed_cpa_backup="cpa-official-gateway-deployed-$timestamp"
 mkdir -p "$backup_dir" "$snapshot_data" "$snapshot_logs"
 chmod 700 "$backup_dir"
 (cd "$release_dir" && sha256sum -c SHA256SUMS --ignore-missing)
-(cd / && sha256sum -c "$image_gateway_hash_file")
 
 docker inspect new-api >"$backup_dir/new-api.inspect.json"
 docker inspect cpa-official-gateway >"$backup_dir/cpa-official-gateway.inspect.json" 2>/dev/null || true
@@ -69,6 +68,8 @@ docker inspect new-api-codex-control >"$backup_dir/new-api-codex-control.inspect
 cp -a "$env_file" "$backup_dir/production.env"
 cp -a "$site" "$backup_dir/nginx.site.before.conf"
 cp -a "$image_gateway_dropin" "$backup_dir/image-gateway-upstream.before.conf"
+cp -a "$image_gateway_binary" "$backup_dir/image-gateway-binary.before"
+cp -a "$image_gateway_release_binary" "$backup_dir/image-gateway-binary.candidate"
 sha256sum "$image_gateway_binary" >"$backup_dir/image-gateway-binary.sha256"
 database_name="$(basename "$database")"
 python3 - "$data_dir" "$snapshot_data" "$database_name" <<'PY'
@@ -108,6 +109,7 @@ final_started=0
 old_stopped=0
 site_switched=0
 image_gateway_switched=0
+image_gateway_binary_switched=0
 tmp_route="$(mktemp)"
 tmp_site="$(mktemp)"
 cleanup_files() { rm -f "$tmp_route" "$tmp_site"; }
@@ -127,6 +129,9 @@ restore_old() {
     nginx -t >/dev/null 2>&1 && nginx -s reload >/dev/null 2>&1 || true
   fi
   if [[ "$image_gateway_switched" -eq 1 ]]; then
+    if [[ "$image_gateway_binary_switched" -eq 1 ]]; then
+      cp -a "$backup_dir/image-gateway-binary.before" "$image_gateway_binary"
+    fi
     cp -a "$backup_dir/image-gateway-upstream.before.conf" "$image_gateway_dropin"
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl restart "$image_gateway_service" >/dev/null 2>&1 || true
@@ -224,6 +229,11 @@ chmod --reference="$image_gateway_dropin" "$image_gateway_dropin.tmp"
 cp -a "$image_gateway_dropin.tmp" "$backup_dir/image-gateway-upstream.candidate.conf"
 mv -f "$image_gateway_dropin.tmp" "$image_gateway_dropin"
 image_gateway_switched=1
+cp -a "$image_gateway_release_binary" "$image_gateway_binary.tmp"
+chmod --reference="$image_gateway_binary" "$image_gateway_binary.tmp"
+chown --reference="$image_gateway_binary" "$image_gateway_binary.tmp"
+mv -f "$image_gateway_binary.tmp" "$image_gateway_binary"
+image_gateway_binary_switched=1
 systemctl daemon-reload
 systemctl is-active --quiet image-url-compat.service
 systemctl restart "$image_gateway_service"

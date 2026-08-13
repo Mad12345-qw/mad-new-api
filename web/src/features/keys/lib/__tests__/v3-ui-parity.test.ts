@@ -9,7 +9,9 @@ function readSource(relativePath: string) {
 describe('MadAPI 3.0 UI parity', () => {
   test('keeps the compact Agent Access action before the status switch', () => {
     const source = readSource('../../components/data-table-row-actions.tsx')
-    const agentButton = source.indexOf("className='h-7 min-w-0")
+    const agentButton = source.indexOf(
+      "className='h-[19px] min-w-[58px] shrink-0 gap-[4px] whitespace-nowrap px-[7px] text-[7px] font-medium'"
+    )
     const agentLabel = source.indexOf("{t('Agent Access')}", agentButton)
     const statusSwitch = source.indexOf('onClick={handleToggleStatus}')
 
@@ -34,6 +36,7 @@ describe('MadAPI 3.0 UI parity', () => {
     assert.match(dialog, /t\('Copy the one-command setup below'\)/)
     assert.match(dialog, /Open PowerShell, paste the command, and press Enter/)
     assert.match(dialog, /Restart \{\{agent\}\} and choose an available model/)
+    assert.doesNotMatch(dialog, /grid w-full grid-cols-2 sm:w-72/)
     assert.match(columns, /id: 'actions',[\s\S]*?size: 260/)
   })
 

@@ -206,12 +206,12 @@ export function DataTableRowActions<TData>({
         onClick={handleOpenAgentAccess}
         disabled={!isEnabled || isRealKeyLoading}
         aria-label={t('Agent Access')}
-        className='h-7 min-w-0 shrink-0 gap-1 px-1.5 text-[10px] font-medium whitespace-nowrap sm:text-[11px]'
+        className='h-[19px] min-w-[58px] shrink-0 gap-[4px] whitespace-nowrap px-[7px] text-[7px] font-medium'
       >
         {isRealKeyLoading ? (
-          <Loader2 className='size-3.5 animate-spin' />
+          <Loader2 className='size-[8px] animate-spin' />
         ) : (
-          <Bot className='size-3.5' />
+          <Bot className='size-[8px]' />
         )}
         {t('Agent Access')}
       </Button>

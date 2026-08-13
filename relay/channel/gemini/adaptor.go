@@ -1,11 +1,15 @@
 package gemini
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -21,6 +25,87 @@ import (
 )
 
 type Adaptor struct {
+}
+
+var geminiImagePreviewSlots = make(chan struct{}, geminiImagePreviewConcurrency())
+
+type releaseOnClose struct {
+	io.ReadCloser
+	once    sync.Once
+	release func()
+}
+
+func (body *releaseOnClose) Close() error {
+	err := body.ReadCloser.Close()
+	body.once.Do(body.release)
+	return err
+}
+
+func geminiImagePreviewConcurrency() int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MADAPI_GEMINI_IMAGE_CONCURRENCY")))
+	if err != nil || value < 1 {
+		return 1
+	}
+	return value
+}
+
+func isGeminiImagePreviewModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview":
+		return true
+	default:
+		return false
+	}
+}
+
+func geminiImageSize(request dto.ImageRequest) string {
+	for _, value := range []string{request.Quality, request.Size} {
+		switch strings.ToUpper(strings.TrimSpace(value)) {
+		case "1K", "2K", "4K":
+			return strings.ToUpper(strings.TrimSpace(value))
+		case "HD", "HIGH":
+			return "2K"
+		}
+	}
+	return "1K"
+}
+
+func geminiImageAspectRatio(size string) string {
+	switch strings.ToLower(strings.TrimSpace(size)) {
+	case "1536x1024":
+		return "3:2"
+	case "1024x1536":
+		return "2:3"
+	case "1024x1792":
+		return "9:16"
+	case "1792x1024":
+		return "16:9"
+	default:
+		if strings.Contains(size, ":") {
+			return size
+		}
+		return "1:1"
+	}
+}
+
+func convertGeminiImagePreviewRequest(request dto.ImageRequest) (*dto.GeminiChatRequest, error) {
+	imageConfig, err := json.Marshal(map[string]string{
+		"imageSize":   geminiImageSize(request),
+		"aspectRatio": geminiImageAspectRatio(request.Size),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &dto.GeminiChatRequest{
+		Contents: []dto.GeminiChatContent{{
+			Role:  "user",
+			Parts: []dto.GeminiPart{{Text: request.Prompt}},
+		}},
+		GenerationConfig: dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"TEXT", "IMAGE"},
+			ImageConfig:        imageConfig,
+		},
+	}, nil
 }
 
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
@@ -61,6 +146,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if isGeminiImagePreviewModel(info.UpstreamModelName) {
+		return convertGeminiImagePreviewRequest(request)
+	}
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return nil, errors.New("not supported model for image generation, only imagen models are supported")
 	}
@@ -251,7 +339,27 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	return channel.DoApiRequest(a, c, info, requestBody)
+	if info.RelayMode != constant.RelayModeImagesGenerations || !isGeminiImagePreviewModel(info.UpstreamModelName) {
+		return channel.DoApiRequest(a, c, info, requestBody)
+	}
+	select {
+	case geminiImagePreviewSlots <- struct{}{}:
+	case <-c.Request.Context().Done():
+		return nil, c.Request.Context().Err()
+	}
+	release := func() { <-geminiImagePreviewSlots }
+	response, err := channel.DoApiRequest(a, c, info, requestBody)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	httpResponse := response
+	if httpResponse == nil || httpResponse.Body == nil {
+		release()
+		return response, nil
+	}
+	httpResponse.Body = &releaseOnClose{ReadCloser: httpResponse.Body, release: release}
+	return httpResponse, nil
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {

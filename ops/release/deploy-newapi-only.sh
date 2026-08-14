@@ -126,7 +126,15 @@ duration_pattern='^[0-9]+(ns|us|ms|s|m|h)?$'
 [[ "$health_start_period" =~ $duration_pattern && "$health_retries" =~ ^[0-9]+$ ]]
 [[ "$memory_limit" == 0 ]] || runtime_guard_args+=(--memory "$memory_limit")
 [[ "$memory_swap" == 0 ]] || runtime_guard_args+=(--memory-swap "$memory_swap")
-[[ "$nano_cpus" == 0 ]] || runtime_guard_args+=(--nano-cpus "$nano_cpus")
+if [[ "$nano_cpus" != 0 ]]; then
+  cpu_limit="$(python3 - "$nano_cpus" <<'PY'
+import decimal, sys
+value = decimal.Decimal(sys.argv[1]) / decimal.Decimal(1_000_000_000)
+print(format(value.normalize(), 'f'))
+PY
+)"
+  runtime_guard_args+=(--cpus "$cpu_limit")
+fi
 [[ "$pids_limit" == "<nil>" || "$pids_limit" == 0 ]] || runtime_guard_args+=(--pids-limit "$pids_limit")
 runtime_guard_args+=(--oom-score-adj "$oom_score_adj")
 if [[ -n "$health_cmd" ]]; then

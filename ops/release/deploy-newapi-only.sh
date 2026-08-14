@@ -108,6 +108,33 @@ with open(output, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(item + "\n")
 PY
 chmod 600 "$runtime_env"
+runtime_guard_args=()
+memory_limit="$(docker inspect -f '{{.HostConfig.Memory}}' "$container")"
+memory_swap="$(docker inspect -f '{{.HostConfig.MemorySwap}}' "$container")"
+nano_cpus="$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$container")"
+pids_limit="$(docker inspect -f '{{.HostConfig.PidsLimit}}' "$container")"
+oom_score_adj="$(docker inspect -f '{{.HostConfig.OomScoreAdj}}' "$container")"
+health_cmd="$(docker inspect -f '{{if .Config.Healthcheck}}{{index .Config.Healthcheck.Test 1}}{{end}}' "$container")"
+health_interval="$(docker inspect -f '{{if .Config.Healthcheck}}{{.Config.Healthcheck.Interval}}{{else}}0{{end}}' "$container")"
+health_timeout="$(docker inspect -f '{{if .Config.Healthcheck}}{{.Config.Healthcheck.Timeout}}{{else}}0{{end}}' "$container")"
+health_start_period="$(docker inspect -f '{{if .Config.Healthcheck}}{{.Config.Healthcheck.StartPeriod}}{{else}}0{{end}}' "$container")"
+health_retries="$(docker inspect -f '{{if .Config.Healthcheck}}{{.Config.Healthcheck.Retries}}{{else}}0{{end}}' "$container")"
+[[ "$memory_limit" =~ ^[0-9]+$ && "$memory_swap" =~ ^-?[0-9]+$ ]]
+[[ "$nano_cpus" =~ ^[0-9]+$ && "$oom_score_adj" =~ ^-?[0-9]+$ ]]
+[[ "$health_interval" =~ ^[0-9]+$ && "$health_timeout" =~ ^[0-9]+$ ]]
+[[ "$health_start_period" =~ ^[0-9]+$ && "$health_retries" =~ ^[0-9]+$ ]]
+[[ "$memory_limit" == 0 ]] || runtime_guard_args+=(--memory "$memory_limit")
+[[ "$memory_swap" == 0 ]] || runtime_guard_args+=(--memory-swap "$memory_swap")
+[[ "$nano_cpus" == 0 ]] || runtime_guard_args+=(--nano-cpus "$nano_cpus")
+[[ "$pids_limit" == "<nil>" || "$pids_limit" == 0 ]] || runtime_guard_args+=(--pids-limit "$pids_limit")
+runtime_guard_args+=(--oom-score-adj "$oom_score_adj")
+if [[ -n "$health_cmd" ]]; then
+  runtime_guard_args+=(--health-cmd "$health_cmd")
+  [[ "$health_interval" == 0 ]] || runtime_guard_args+=(--health-interval "${health_interval}ns")
+  [[ "$health_timeout" == 0 ]] || runtime_guard_args+=(--health-timeout "${health_timeout}ns")
+  [[ "$health_start_period" == 0 ]] || runtime_guard_args+=(--health-start-period "${health_start_period}ns")
+  [[ "$health_retries" == 0 ]] || runtime_guard_args+=(--health-retries "$health_retries")
+fi
 python3 - "$database" "$snapshot_data/$(basename "$database")" <<'PY'
 import sqlite3, sys
 source, target = sys.argv[1:]
@@ -133,6 +160,7 @@ cleanup_candidate() {
 }
 trap cleanup_candidate EXIT
 docker run -d --name "$candidate" --network "$network" --restart no \
+  "${runtime_guard_args[@]}" \
   --env-file "$runtime_env" -e NODE_NAME=new-api-release-preflight \
   -p "127.0.0.1:$candidate_port:3000" \
   -v "$snapshot_data:/data" -v "$snapshot_logs:/app/logs" \
@@ -163,6 +191,7 @@ PY
 # Prove the current production image can reopen the candidate-migrated clone.
 docker rm "$candidate" >/dev/null
 docker run -d --name "$candidate" --network "$network" --restart no \
+  "${runtime_guard_args[@]}" \
   --env-file "$runtime_env" -e NODE_NAME=new-api-rollback-preflight \
   -p "127.0.0.1:$candidate_port:3000" \
   -v "$snapshot_data:/data" -v "$snapshot_logs:/app/logs" \
@@ -199,6 +228,7 @@ trap restore_live_on_error ERR
 docker stop "$container" >/dev/null
 docker rename "$container" "$rollback_container"
 docker run -d --name "$container" --network "$network" --restart unless-stopped \
+  "${runtime_guard_args[@]}" \
   --env-file "$runtime_env" -e NODE_NAME=new-api-native \
   -p "127.0.0.1:$public_port:3000" \
   -v "$data_dir:/data" -v "$log_dir:/app/logs" \
@@ -211,6 +241,14 @@ for _ in $(seq 1 "$health_attempts"); do
   sleep 0.5
 done
 [[ "$live_status" == 200 ]]
+[[ "$(docker inspect -f '{{.HostConfig.Memory}}' "$container")" == "$memory_limit" ]]
+[[ "$(docker inspect -f '{{.HostConfig.MemorySwap}}' "$container")" == "$memory_swap" ]]
+[[ "$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$container")" == "$nano_cpus" ]]
+[[ "$(docker inspect -f '{{.HostConfig.PidsLimit}}' "$container")" == "$pids_limit" ]]
+[[ "$(docker inspect -f '{{.HostConfig.OomScoreAdj}}' "$container")" == "$oom_score_adj" ]]
+if [[ -n "$health_cmd" ]]; then
+  [[ "$(docker inspect -f '{{index .Config.Healthcheck.Test 1}}' "$container")" == "$health_cmd" ]]
+fi
 
 python3 "$script_dir/verify-frozen-ui.py" "http://127.0.0.1:$public_port" "$release_dir/frozen-v3-ui-metadata.json"
 python3 "$script_dir/sqlite-release-fingerprint.py" "$database" "$backup_dir/database.after-live.json"

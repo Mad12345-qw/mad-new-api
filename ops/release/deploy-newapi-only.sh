@@ -121,8 +121,9 @@ health_start_period="$(docker inspect -f '{{if .Config.Healthcheck}}{{.Config.He
 health_retries="$(docker inspect -f '{{if .Config.Healthcheck}}{{.Config.Healthcheck.Retries}}{{else}}0{{end}}' "$container")"
 [[ "$memory_limit" =~ ^[0-9]+$ && "$memory_swap" =~ ^-?[0-9]+$ ]]
 [[ "$nano_cpus" =~ ^[0-9]+$ && "$oom_score_adj" =~ ^-?[0-9]+$ ]]
-[[ "$health_interval" =~ ^[0-9]+$ && "$health_timeout" =~ ^[0-9]+$ ]]
-[[ "$health_start_period" =~ ^[0-9]+$ && "$health_retries" =~ ^[0-9]+$ ]]
+duration_pattern='^[0-9]+(ns|us|ms|s|m|h)?$'
+[[ "$health_interval" =~ $duration_pattern && "$health_timeout" =~ $duration_pattern ]]
+[[ "$health_start_period" =~ $duration_pattern && "$health_retries" =~ ^[0-9]+$ ]]
 [[ "$memory_limit" == 0 ]] || runtime_guard_args+=(--memory "$memory_limit")
 [[ "$memory_swap" == 0 ]] || runtime_guard_args+=(--memory-swap "$memory_swap")
 [[ "$nano_cpus" == 0 ]] || runtime_guard_args+=(--nano-cpus "$nano_cpus")
@@ -130,9 +131,9 @@ health_retries="$(docker inspect -f '{{if .Config.Healthcheck}}{{.Config.Healthc
 runtime_guard_args+=(--oom-score-adj "$oom_score_adj")
 if [[ -n "$health_cmd" ]]; then
   runtime_guard_args+=(--health-cmd "$health_cmd")
-  [[ "$health_interval" == 0 ]] || runtime_guard_args+=(--health-interval "${health_interval}ns")
-  [[ "$health_timeout" == 0 ]] || runtime_guard_args+=(--health-timeout "${health_timeout}ns")
-  [[ "$health_start_period" == 0 ]] || runtime_guard_args+=(--health-start-period "${health_start_period}ns")
+  [[ "$health_interval" == 0 ]] || runtime_guard_args+=(--health-interval "$health_interval")
+  [[ "$health_timeout" == 0 ]] || runtime_guard_args+=(--health-timeout "$health_timeout")
+  [[ "$health_start_period" == 0 ]] || runtime_guard_args+=(--health-start-period "$health_start_period")
   [[ "$health_retries" == 0 ]] || runtime_guard_args+=(--health-retries "$health_retries")
 fi
 python3 - "$database" "$snapshot_data/$(basename "$database")" <<'PY'

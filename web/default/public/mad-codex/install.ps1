@@ -136,16 +136,13 @@ function Restore-HistoryBackup([string]$CodexHome, [string]$HistoryBackupPath) {
 }
 
 function Invoke-HistoryRecovery([string]$ScriptPath, [string]$CodexHome, [string]$ProviderId, [string]$BackupRoot) {
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $attemptBackup = if ($attempt -eq 1) { $BackupRoot } else { $BackupRoot + '-retry-' + $attempt }
-        $output = @(& "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -CodexHome $CodexHome -ProviderId $ProviderId -BackupPath $attemptBackup 2>&1)
-        $exitCode = $LASTEXITCODE
-        foreach ($line in $output) { Write-Host ([string]$line) }
-        if ($exitCode -eq 0) { return $attemptBackup }
-        Restore-HistoryBackup $CodexHome $attemptBackup
-        if ($attempt -lt 3) { Start-Sleep -Seconds $attempt }
+    $output = @(& "$PSHOME\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath -CodexHome $CodexHome -ProviderId $ProviderId -BackupPath $BackupRoot 2>&1)
+    $exitCode = $LASTEXITCODE
+    foreach ($line in $output) { Write-Host ([string]$line) }
+    if ($exitCode -ne 0) {
+        throw ('MadAPI local history recovery did not complete. ' + (($output | ForEach-Object { [string]$_ }) -join ' | '))
     }
-    throw 'MadAPI local history recovery did not complete after 3 attempts.'
+    return $BackupRoot
 }
 
 function Backup-ManagedFiles([string]$BackupRoot, [string[]]$Paths) {

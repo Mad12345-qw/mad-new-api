@@ -240,7 +240,7 @@ func executeRequestSteps(c context.Context, info convmeta.Meta, from types.Relay
 	steps := make([]RequestStep, 0, len(specs))
 	for _, spec := range specs {
 		var err error
-		current, err = prepareRequestForStep(current, spec, target)
+		current, err = prepareRequestForStep(current, spec, target, info)
 		if err != nil {
 			return nil, err
 		}
@@ -322,7 +322,7 @@ func executeRequestStep(c context.Context, info convmeta.Meta, spec RequestConve
 	}, nil
 }
 
-func prepareRequestForStep(request any, spec RequestConverterSpec, finalTarget types.RelayFormat) (any, error) {
+func prepareRequestForStep(request any, spec RequestConverterSpec, finalTarget types.RelayFormat, info convmeta.Meta) (any, error) {
 	if spec.From != types.RelayFormatOpenAIResponses || finalTarget != types.RelayFormatGemini {
 		return request, nil
 	}
@@ -337,7 +337,11 @@ func prepareRequestForStep(request any, spec RequestConverterSpec, finalTarget t
 		return nil, fmt.Errorf("expected OpenAI responses request, got %T", request)
 	}
 
-	prepared, err := oairesponses.PrepareOpenAIResponsesRequest(*responsesRequest)
+	prepared, err := oairesponses.LowerCustomToolsForFunctionProvider(*responsesRequest, info)
+	if err != nil {
+		return nil, err
+	}
+	prepared, err = oairesponses.PrepareOpenAIResponsesRequest(prepared)
 	if err != nil {
 		return nil, err
 	}
@@ -469,7 +473,11 @@ func convertOpenAIResponsesRequestToClaudeMessages(c context.Context, info convm
 	if err != nil {
 		return nil, err
 	}
-	return oairesponses.OpenAIResponsesRequestToClaudeMessages(c, info, responsesRequest)
+	prepared, err := oairesponses.LowerCustomToolsForFunctionProvider(*responsesRequest, info)
+	if err != nil {
+		return nil, err
+	}
+	return oairesponses.OpenAIResponsesRequestToClaudeMessages(c, info, &prepared)
 }
 
 func convertOpenAIResponsesRequestToGeminiChat(c context.Context, info convmeta.Meta, request any) (any, error) {
@@ -478,14 +486,10 @@ func convertOpenAIResponsesRequestToGeminiChat(c context.Context, info convmeta.
 		return nil, err
 	}
 
-	prepared, err := oairesponses.PrepareOpenAIResponsesRequest(*responsesRequest)
-	if err != nil {
-		return nil, err
-	}
-	return oairesponses.OpenAIResponsesRequestToGeminiChat(c, &prepared, info)
+	return oairesponses.OpenAIResponsesRequestToGeminiChat(c, responsesRequest, info)
 }
 
-func convertResponsesRequestToChat(_ context.Context, _ convmeta.Meta, request any) (any, error) {
+func convertResponsesRequestToChat(_ context.Context, info convmeta.Meta, request any) (any, error) {
 	responsesRequest, ok := request.(*dto.OpenAIResponsesRequest)
 	if !ok {
 		if value, ok := request.(dto.OpenAIResponsesRequest); ok {
@@ -495,5 +499,9 @@ func convertResponsesRequestToChat(_ context.Context, _ convmeta.Meta, request a
 	if responsesRequest == nil {
 		return nil, fmt.Errorf("expected OpenAI responses request, got %T", request)
 	}
-	return oairesponses.ResponsesRequestToChatCompletionsRequest(responsesRequest)
+	prepared, err := oairesponses.LowerCustomToolsForFunctionProvider(*responsesRequest, info)
+	if err != nil {
+		return nil, err
+	}
+	return oairesponses.ResponsesRequestToChatCompletionsRequest(&prepared)
 }

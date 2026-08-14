@@ -1,10 +1,12 @@
 package openai
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -28,6 +30,9 @@ func OaiResponsesCompactionHandler(c *gin.Context, resp *http.Response) (*dto.Us
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	if relaycommon.IsNativeV1CodexClient(c) && (compactResp.Usage == nil || compactResp.Usage.TotalTokens <= 0) {
+		return nil, types.NewOpenAIError(fmt.Errorf("upstream response omitted exact usage"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+	}
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	usage := dto.Usage{}

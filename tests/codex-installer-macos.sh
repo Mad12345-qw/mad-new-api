@@ -22,7 +22,7 @@ grep -Fq 'x-openai-actor-authorization' "$installer_path" || fail 'Official gate
 grep -Fq 'supports_websockets = false' "$installer_path" || fail 'WebSocket opt-out is missing.'
 grep -Fq 'image_generation = true' "$installer_path" || fail 'Codex image generation feature is missing.'
 grep -Fq '/codex/v1' "$installer_path" || fail 'Dedicated NewAPI-CPA route is missing.'
-! grep -Fq '/codex/cockpit/v1' "$installer_path" || fail 'Legacy API compatibility route remains.'
+grep -Fq '/codex/cockpit/v1' "$installer_path" || fail 'API compatibility route is missing.'
 grep -Fq '/mad-codex/cpa-codex-templates.json' "$refresh_path" || fail 'Self-hosted Codex model template is missing.'
 ! grep -Fq 'models.router-for.me' "$refresh_path" || fail 'Codex model refresh still depends on a third-party host.'
 
@@ -72,7 +72,7 @@ grep -Fq 'requires_openai_auth = true' "$config" || fail 'OAuth gateway auth mod
 grep -Fq 'experimental_bearer_token = ' "$config" || fail 'OAuth bearer token is missing.'
 ! grep -Fq 'env_key = "MADAPI_API_KEY"' "$config" || fail 'OAuth config incorrectly uses API env_key.'
 grep -Fq 'image_generation = true' "$config" || fail 'Image generation was not enabled.'
-grep -Fq 'localeOverride = "zh-CN"' "$config" || fail 'Chinese Codex interface was not enabled.'
+grep -Fq 'localeOverride = "zh-CN"' "$config" || fail 'Codex did not default to Chinese.'
 grep -Fq 'network_access = true' "$config" || fail 'Image skill network access was not enabled.'
 grep -Fq 'sk-clean-macos-test' "$config" || fail 'OAuth bearer token was not written for the mature OAuth path.'
 [ "$(shasum -a 256 "$auth" | awk '{print $1}')" = "$auth_hash" ] || fail 'OAuth state changed.'
@@ -119,11 +119,13 @@ MADAPI_CODEX_TEMPLATE_FILE="$repo_root/tests/fixtures/cpa-codex-templates.json" 
 MADAPI_IMAGE_SKILL_SOURCE_DIR="$asset_root/image-skill" \
 /bin/sh "$installer_path"
 grep -Fq 'requires_openai_auth = false' "$api_home/config.toml" || fail 'API gateway auth mode is missing.'
+grep -Fq 'base_url = "http://127.0.0.1:13016/codex/cockpit/v1"' "$api_home/config.toml" || fail 'API compatibility route is missing.'
 grep -Fq 'env_key = "MADAPI_API_KEY"' "$api_home/config.toml" || fail 'API gateway env_key is missing.'
 ! grep -Fq 'experimental_bearer_token' "$api_home/config.toml" || fail 'API config contains OAuth bearer authentication.'
 grep -Fq 'image_generation = true' "$api_home/config.toml" || fail 'API image generation was not enabled.'
-grep -Fq 'localeOverride = "zh-CN"' "$api_home/config.toml" || fail 'API Chinese Codex interface was not enabled.'
+grep -Fq 'localeOverride = "zh-CN"' "$api_home/config.toml" || fail 'API Codex did not default to Chinese.'
 grep -Fq 'network_access = true' "$api_home/config.toml" || fail 'API image skill network access was not enabled.'
+! grep -Fq 'MADAPI_CODEX_LANGUAGE' "$installer_path" || fail 'Codex installer still exposes an English language option.'
 api_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.models.length))' "$api_home/madapi-cockpit-model-catalog.json")
 [ "$api_count" = 8 ] || fail 'API catalog does not contain exactly eight models.'
 grep -Fq '"display_name": "grok-4.6"' "$api_home/madapi-cockpit-model-catalog.json" || fail 'API catalog is missing grok-4.6.'

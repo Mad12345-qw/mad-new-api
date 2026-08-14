@@ -35,6 +35,9 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 
 	// 写入新的 response body
+	if relaycommon.IsNativeV1CodexClient(c) && (responsesResponse.Usage == nil || responsesResponse.Usage.TotalTokens <= 0) {
+		return nil, types.NewOpenAIError(fmt.Errorf("upstream response omitted exact usage"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+	}
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// compute usage

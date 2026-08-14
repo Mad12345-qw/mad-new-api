@@ -167,6 +167,7 @@ type RelayInfo struct {
 	// RequestConversionChain records request format conversions in order, e.g.
 	// ["openai", "openai_responses"] or ["openai", "claude"].
 	RequestConversionChain []types.RelayFormat
+	ResponsesCustomTools   map[string]struct{}
 	// 最终请求到上游的格式。可由 adaptor 显式设置；
 	// 若为空，调用 GetFinalRequestRelayFormat 会回退到 RequestConversionChain 的最后一项或 RelayFormat。
 	FinalRequestRelayFormat types.RelayFormat
@@ -666,6 +667,26 @@ func (info *RelayInfo) AppendRequestConversion(format types.RelayFormat) {
 		return
 	}
 	info.RequestConversionChain = append(info.RequestConversionChain, format)
+}
+
+func (info *RelayInfo) MarkResponsesCustomTool(name string) {
+	name = strings.TrimSpace(name)
+	if info == nil || name == "" {
+		return
+	}
+	if info.ResponsesCustomTools == nil {
+		info.ResponsesCustomTools = make(map[string]struct{})
+	}
+	info.ResponsesCustomTools[name] = struct{}{}
+}
+
+func (info *RelayInfo) IsResponsesCustomTool(name string) bool {
+	name = strings.TrimSpace(name)
+	if info == nil || name == "" {
+		return false
+	}
+	_, ok := info.ResponsesCustomTools[name]
+	return ok
 }
 
 func (info *RelayInfo) GetFinalRequestRelayFormat() types.RelayFormat {

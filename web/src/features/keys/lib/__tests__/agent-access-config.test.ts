@@ -25,6 +25,8 @@ describe('Agent Access command contract', () => {
     assert.match(oauthCommand, /MADAPI_CODEX_LOGIN_MODE=/)
     assert.match(oauthCommand, /https:\/\/mad\.example\/mad-codex\/install\.ps1/)
     assert.match(apiKeyCommand, /MADAPI_CODEX_LOGIN_MODE=/)
+    assert.doesNotMatch(oauthCommand, /MADAPI_CODEX_LANGUAGE/)
+    assert.doesNotMatch(apiKeyCommand, /MADAPI_CODEX_LANGUAGE/)
     assert.match(apiKeyCommand, /https:\/\/mad\.example\/mad-codex\/install\.sh/)
     assert.doesNotMatch(oauthCommand, /\/codex\/cockpit\/v1/)
     assert.doesNotMatch(apiKeyCommand, /\/codex\/cockpit\/v1/)

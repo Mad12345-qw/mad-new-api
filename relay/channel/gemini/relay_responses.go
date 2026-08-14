@@ -70,6 +70,9 @@ func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	if responsesUsage == nil || responsesUsage.TotalTokens == 0 {
 		responsesResp.Usage = relayconvert.UsageFromChatUsage(&usage)
 	}
+	if relaycommon.IsNativeV1CodexClient(c) && usage.TotalTokens <= 0 {
+		return nil, types.NewOpenAIError(fmt.Errorf("upstream response omitted exact usage"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+	}
 
 	responseBody, err = common.Marshal(responsesResp)
 	if err != nil {
@@ -172,6 +175,9 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 
 	if usage != nil {
 		state.SetUsage(usage)
+	}
+	if relaycommon.IsNativeV1CodexClient(c) && (usage == nil || usage.TotalTokens <= 0) {
+		return nil, types.NewOpenAIError(fmt.Errorf("upstream response omitted exact usage"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
 	}
 	finalResults, err := relayconvert.FinalizeStreamResponse(c, info, state)
 	if err != nil {

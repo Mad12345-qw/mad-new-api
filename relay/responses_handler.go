@@ -21,8 +21,10 @@ import (
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	compactFallback := info.RelayMode == relayconstant.RelayModeResponsesCompact &&
+		common.IsResponsesCompactFallbackAPIType(info.ApiType)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
-		!common.IsResponsesCompactAPIType(info.ApiType) {
+		!common.IsResponsesCompactAPIType(info.ApiType) && !compactFallback {
 		return types.NewErrorWithStatusCode(
 			fmt.Errorf("unsupported endpoint %q for api type %d", "/v1/responses/compact", info.ApiType),
 			types.ErrorCodeInvalidRequest,
@@ -60,6 +62,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	if compactFallback {
+		prepareResponsesCompactFallback(responsesReq)
+		info.RelayMode = relayconstant.RelayModeResponses
+		info.RequestURLPath = "/v1/responses"
+	}
 
 	request, err := common.DeepCopy(responsesReq)
 	if err != nil {
@@ -77,7 +84,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	adaptor.Init(info)
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if !compactFallback && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
@@ -137,7 +144,12 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 	}
 
-	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+	var usage any
+	if compactFallback {
+		usage, newAPIError = responsesCompactFallbackHandler(c, info, httpResp)
+	} else {
+		usage, newAPIError = adaptor.DoResponse(c, httpResp, info)
+	}
 	if newAPIError != nil {
 		// reset status code 重置状态码
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
@@ -145,7 +157,15 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 
 	usageDto := usage.(*dto.Usage)
-	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+	if relaycommon.IsNativeV1CodexClient(c) && usageDto.TotalTokens <= 0 {
+		return types.NewErrorWithStatusCode(
+			fmt.Errorf("upstream response omitted exact usage"),
+			types.ErrorCodeBadResponseBody,
+			http.StatusBadGateway,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	if info.RelayMode == relayconstant.RelayModeResponsesCompact || compactFallback {
 		originModelName := info.OriginModelName
 		originPriceData := info.PriceData
 

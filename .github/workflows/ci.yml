@@ -35,7 +35,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             relaykit/go.sum
-            ops/cpa-official-gateway/go.sum
 
       - name: Create frontend embed placeholder
         shell: bash
@@ -49,7 +48,6 @@ jobs:
           go vet ./...
           go build ./...
           make test
-          (cd ops/cpa-official-gateway && go test ./...)
 
   frontend:
     name: Frontend and product assets
@@ -84,6 +82,13 @@ jobs:
           node tests/claude-image-widget.mjs web/public/mad-claude/image-tool/widget.html
           node tests/claude-image-cache-restart.mjs web/public/mad-claude/image-tool
           node tests/mad-home-default-theme.mjs product/mad-home/default-theme.js
+          (cd product/frozen-v3-ui && sha256sum -c madapi-v3-ui.tar.gz.sha256)
+          mkdir -p "$RUNNER_TEMP/frozen-v3-ui"
+          tar -xzf product/frozen-v3-ui/madapi-v3-ui.tar.gz -C "$RUNNER_TEMP/frozen-v3-ui"
+          test -s "$RUNNER_TEMP/frozen-v3-ui/dist/index.html"
+          grep -Fq '<html lang="zh-CN">' "$RUNNER_TEMP/frozen-v3-ui/dist/index.html"
+          grep -Fq '<title>Mad API</title>' "$RUNNER_TEMP/frozen-v3-ui/dist/index.html"
+          ! grep -Fq '/mad-home/oauth-bridge-v3.js' "$RUNNER_TEMP/frozen-v3-ui/dist/index.html"
 
   agent-installers:
     name: Agent installers (${{ matrix.os }})
@@ -133,17 +138,12 @@ jobs:
       - name: Check out candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Validate official CPA pin and source boundary
+      - name: Validate native release boundary
         shell: bash
         run: |
-          sha=$(tr -d '[:space:]' < ops/release/cpa-upstream-commit.txt)
-          test ${#sha} -eq 40
-          test "$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git refs/tags/v7.2.128 | awk '{print $1}')" = "$sha"
-          grep -Fq 'github.com/router-for-me/CLIProxyAPI/v7 v7.2.128' ops/cpa-official-gateway/go.mod
-          ! grep -Eq '^[[:space:]]*replace[[:space:]].*CLIProxyAPI' ops/cpa-official-gateway/go.mod
           test ! -d patches
           test ! -d guards
-          ! grep -n -E 'Mad12345-qw/CLIProxyAPI|Apply Mad API patches|calciumion/new-api' \
+          ! grep -n -E 'Mad12345-qw/CLIProxyAPI|Apply Mad API patches|calciumion/new-api|mad-cpa-official-gateway|cpa-upstream-commit' \
             .github/workflows/build-release.yml \
             .github/workflows/publish-home.yml \
             .github/workflows/build-detector-release.yml
@@ -158,7 +158,7 @@ jobs:
           for script in ops/release/*.sh ops/disaster-recovery/*.sh ops/docker-disk-guard/*.sh; do
             bash -n "$script"
           done
-          ops/release/validate-unified-orchestration.sh
+          ops/release/validate-newapi-only-release.sh
           python3 ops/release/test-patch-nginx-unified-route.py
           python3 -m unittest discover -s ops/disaster-recovery -p 'test_*.py'
           python3 -m unittest discover -s ops/mad-api-error-alert -p 'test_*.py'
@@ -172,6 +172,15 @@ jobs:
         shell: bash
         run: |
           docker build --tag mad-new-api:pr .
-          docker build --tag mad-cpa-official-gateway:pr ops/cpa-official-gateway
-          docker run --rm --entrypoint /bin/sh mad-cpa-official-gateway:pr \
-            -c 'test -x /usr/local/bin/madapi-cpa-official-gateway'
+
+      - name: Export NewAPI candidate image
+        shell: bash
+        run: docker save mad-new-api:pr | gzip -1 > mad-new-api-pr.tar.gz
+
+      - name: Upload NewAPI candidate image
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: mad-new-api-pr-image
+          path: mad-new-api-pr.tar.gz
+          if-no-files-found: error
+          retention-days: 1

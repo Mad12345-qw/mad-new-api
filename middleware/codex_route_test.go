@@ -36,6 +36,19 @@ func TestMarkCodexRouteDoesNotRewriteOtherPaths(t *testing.T) {
 	require.Equal(t, "/v1/responses", ctx.Request.URL.Path)
 }
 
+func TestMarkCodexCockpitRouteRestoresStandardV1PathAndMarksAPI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/codex/cockpit/v1/responses", nil)
+
+	MarkCodexRoute()(ctx)
+
+	require.True(t, IsCodexRoute(ctx))
+	require.Equal(t, "/v1/responses", ctx.Request.URL.Path)
+	require.Equal(t, "1", ctx.GetHeader(codexCockpitHeader))
+}
+
 func TestCodexCompactDoesNotUseSyntheticChannelModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

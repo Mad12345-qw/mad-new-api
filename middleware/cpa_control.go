@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,17 +20,6 @@ const (
 	cpaRequestPathHeader  = "X-MadAPI-CPA-Request-Path"
 	cpaLoginModeHeader    = "X-MadAPI-Codex-Login-Mode"
 )
-
-var cpaAPIModelSlots = map[string]string{
-	"gpt-5.5":       "claude-fable-5",
-	"gpt-5.4":       "claude-opus-5",
-	"gpt-5.6-sol":   "gpt-5.6-sol",
-	"gpt-5.6-terra": "gpt-5.6-terra",
-	"gpt-5.6-luna":  "gpt-5.6-luna",
-	"gpt-5.4-mini":  "grok-4.6",
-	"gpt-5.3-codex": "gpt-5.6-sol-pro",
-	"gpt-5.2":       "gpt-5.6-terra-pro",
-}
 
 // CPAControlAuth limits the CPA control plane to the private gateway.
 func CPAControlAuth() gin.HandlerFunc {
@@ -74,7 +64,7 @@ func CPAControlModelSlots() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 			return
 		}
-		target, ok := cpaAPIModelSlots[strings.ToLower(strings.TrimSpace(shell))]
+		target, ok := constant.CodexAPIModelSlots[strings.ToLower(strings.TrimSpace(shell))]
 		if !ok || strings.EqualFold(shell, target) {
 			c.Next()
 			return

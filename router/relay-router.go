@@ -41,6 +41,16 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
+	registerCodexModelsRouter := func(group *gin.RouterGroup) {
+		group.Use(middleware.RouteTag("relay"))
+		group.Use(middleware.TokenAuth())
+		group.GET("", controller.ListCodexModels)
+	}
+	registerCodexModelsRouter(router.Group("/codex/v1/models"))
+	cockpitModelsRouter := router.Group("/codex/cockpit/v1/models")
+	cockpitModelsRouter.Use(middleware.MarkCodexRoute())
+	registerCodexModelsRouter(cockpitModelsRouter)
+
 	geminiRouter := router.Group("/v1beta/models")
 	geminiRouter.Use(middleware.RouteTag("relay"))
 	geminiRouter.Use(middleware.TokenAuth())
@@ -80,24 +90,24 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
-	// Codex keeps NewAPI's authentication, routing and billing lifecycle while
-	// delegating protocol execution to the official CPA handler.
-	codexV1Router := router.Group("/codex/v1")
-	codexV1Router.Use(middleware.RouteTag("relay"))
-	codexV1Router.Use(middleware.SystemPerformanceCheck())
-	codexV1Router.Use(middleware.TokenAuth())
-	codexV1Router.Use(middleware.ModelRequestRateLimit())
-	codexV1Router.Use(middleware.MarkCodexRoute())
-	codexV1Router.Use(middleware.NormalizeCodexResponsesLite())
-	codexV1Router.Use(middleware.Distribute())
-	{
-		codexV1Router.POST("/responses", func(c *gin.Context) {
+	registerCodexResponsesRouter := func(group *gin.RouterGroup) {
+		group.Use(middleware.RouteTag("relay"))
+		group.Use(middleware.SystemPerformanceCheck())
+		group.Use(middleware.TokenAuth())
+		group.Use(middleware.ModelRequestRateLimit())
+		group.Use(middleware.MarkCodexRoute())
+		group.Use(middleware.NativeV1CodexClient())
+		group.Use(middleware.NormalizeCodexResponsesLite())
+		group.Use(middleware.Distribute())
+		group.POST("/responses", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIResponses)
 		})
-		codexV1Router.POST("/responses/compact", func(c *gin.Context) {
+		group.POST("/responses/compact", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
 		})
 	}
+	registerCodexResponsesRouter(router.Group("/codex/v1"))
+	registerCodexResponsesRouter(router.Group("/codex/cockpit/v1"))
 	{
 		//http router
 		httpRouter := relayV1Router.Group("")

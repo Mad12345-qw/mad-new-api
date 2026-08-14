@@ -24,7 +24,10 @@ func MarkCodexRoute() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set(codexRouteContextKey, true)
 		if c.Request != nil && c.Request.URL != nil {
-			if suffix, ok := strings.CutPrefix(c.Request.URL.Path, "/codex/v1/"); ok {
+			if suffix, ok := strings.CutPrefix(c.Request.URL.Path, "/codex/cockpit/v1/"); ok {
+				c.Request.Header.Set(codexCockpitHeader, "1")
+				c.Request.URL.Path = "/v1/" + suffix
+			} else if suffix, ok := strings.CutPrefix(c.Request.URL.Path, "/codex/v1/"); ok {
 				c.Request.URL.Path = "/v1/" + suffix
 			}
 		}

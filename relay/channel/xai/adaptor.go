@@ -1,7 +1,9 @@
 package xai
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -104,7 +106,133 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if request.Model == "" && info != nil {
 		request.Model = info.UpstreamModelName
 	}
+	var err error
+	request.Tools, err = convertXAIResponsesTools(request.Tools)
+	if err != nil {
+		return nil, fmt.Errorf("convert xAI Responses tools: %w", err)
+	}
+	request.ToolChoice, err = convertXAIResponsesToolChoice(request.ToolChoice)
+	if err != nil {
+		return nil, fmt.Errorf("convert xAI Responses tool choice: %w", err)
+	}
+	request.Input, err = convertXAIResponsesInput(request.Input)
+	if err != nil {
+		return nil, fmt.Errorf("convert xAI Responses input: %w", err)
+	}
 	return request, nil
+}
+
+func convertXAIResponsesTools(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return raw, nil
+	}
+	var tools []any
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		return nil, err
+	}
+	for _, value := range tools {
+		convertXAIResponsesTool(value)
+	}
+	return json.Marshal(tools)
+}
+
+func convertXAIResponsesTool(value any) {
+	tool, ok := value.(map[string]any)
+	if !ok || strings.TrimSpace(xaiResponsesString(tool["type"])) != "custom" {
+		return
+	}
+	tool["type"] = "function"
+	tool["parameters"] = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"input": map[string]any{"type": "string"},
+		},
+		"required": []any{"input"},
+	}
+	delete(tool, "format")
+}
+
+func convertXAIResponsesToolChoice(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return raw, nil
+	}
+	var choice any
+	if err := json.Unmarshal(raw, &choice); err != nil {
+		return nil, err
+	}
+	convertXAIResponsesToolChoiceValue(choice)
+	return json.Marshal(choice)
+}
+
+func convertXAIResponsesToolChoiceValue(value any) {
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			convertXAIResponsesToolChoiceValue(item)
+		}
+	case map[string]any:
+		if strings.TrimSpace(xaiResponsesString(typed["type"])) == "custom" {
+			typed["type"] = "function"
+			delete(typed, "format")
+		}
+		if tools, ok := typed["tools"]; ok {
+			convertXAIResponsesToolChoiceValue(tools)
+		}
+	}
+}
+
+func convertXAIResponsesInput(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return raw, nil
+	}
+	var input any
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return nil, err
+	}
+	items, ok := input.([]any)
+	if !ok {
+		return raw, nil
+	}
+	for _, value := range items {
+		item, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(xaiResponsesString(item["type"])) {
+		case "custom_tool_call":
+			arguments, err := json.Marshal(map[string]any{"input": xaiResponsesFreeformInput(item["input"])})
+			if err != nil {
+				return nil, err
+			}
+			item["type"] = "function_call"
+			item["arguments"] = string(arguments)
+			delete(item, "input")
+		case "custom_tool_call_output":
+			item["type"] = "function_call_output"
+		}
+	}
+	return json.Marshal(input)
+}
+
+func xaiResponsesFreeformInput(value any) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	if value == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(encoded)
+}
+
+func xaiResponsesString(value any) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return ""
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {

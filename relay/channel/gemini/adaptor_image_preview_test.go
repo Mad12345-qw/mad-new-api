@@ -57,13 +57,35 @@ func TestConvertGeminiImagePreviewRequestPreservesReferenceOrderAndFourKSize(t *
 	})
 	require.NoError(t, err)
 	require.Len(t, request.Contents, 1)
-	require.Len(t, request.Contents[0].Parts, 5)
-	require.Equal(t, "use image 1 as the person and image 2 as the clothes", request.Contents[0].Parts[0].Text)
-	require.Contains(t, request.Contents[0].Parts[1].Text, "图1")
+	require.Len(t, request.Contents[0].Parts, 6)
+	require.Contains(t, request.Contents[0].Parts[0].Text, "不得根据图片内容重新排序")
+	require.Equal(t, "图1（第1个上传的参考图；紧随其后的图片数据就是图1）", request.Contents[0].Parts[1].Text)
 	require.Equal(t, "Zmlyc3QtaW1hZ2U=", request.Contents[0].Parts[2].InlineData.Data)
-	require.Contains(t, request.Contents[0].Parts[3].Text, "图2")
+	require.Equal(t, "图2（第2个上传的参考图；紧随其后的图片数据就是图2）", request.Contents[0].Parts[3].Text)
 	require.Equal(t, "c2Vjb25kLWltYWdl", request.Contents[0].Parts[4].InlineData.Data)
+	require.Equal(t, "用户原始提示词（其中“图N”严格对应以上相同编号）：\nuse image 1 as the person and image 2 as the clothes", request.Contents[0].Parts[5].Text)
 	require.JSONEq(t, `{"aspectRatio":"3:4","imageSize":"4K"}`, string(request.GenerationConfig.ImageConfig))
+}
+
+func TestConvertGeminiImagePreviewJSONReferencesPreserveArrayOrder(t *testing.T) {
+	request, err := convertGeminiImagePreviewRequest(nil, &relaycommon.RelayInfo{
+		OriginModelName: "gemini-3.1-flash-image-preview",
+	}, dto.ImageRequest{
+		Prompt:  "以图1为人物基础，以图2为服装参考",
+		Images:  []byte(`["data:image/png;base64,Zmlyc3QtaW1hZ2U=","data:image/jpeg;base64,c2Vjb25kLWltYWdl"]`),
+		Size:    "3:4",
+		Quality: "2K",
+	})
+	require.NoError(t, err)
+	require.Len(t, request.Contents[0].Parts, 6)
+	require.Equal(t, "图1（第1个上传的参考图；紧随其后的图片数据就是图1）", request.Contents[0].Parts[1].Text)
+	require.Equal(t, "Zmlyc3QtaW1hZ2U=", request.Contents[0].Parts[2].InlineData.Data)
+	require.Equal(t, "image/png", request.Contents[0].Parts[2].InlineData.MimeType)
+	require.Equal(t, "图2（第2个上传的参考图；紧随其后的图片数据就是图2）", request.Contents[0].Parts[3].Text)
+	require.Equal(t, "c2Vjb25kLWltYWdl", request.Contents[0].Parts[4].InlineData.Data)
+	require.Equal(t, "image/jpeg", request.Contents[0].Parts[4].InlineData.MimeType)
+	require.Contains(t, request.Contents[0].Parts[5].Text, "以图1为人物基础，以图2为服装参考")
+	require.JSONEq(t, `{"aspectRatio":"3:4","imageSize":"2K"}`, string(request.GenerationConfig.ImageConfig))
 }
 
 func TestGeminiImagePreviewModelMatrix(t *testing.T) {

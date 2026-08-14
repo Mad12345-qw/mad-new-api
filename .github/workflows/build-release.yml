@@ -68,21 +68,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve official CPA source
-        id: cpa
-        shell: bash
-        run: |
-          sha=$(tr -d '[:space:]' < ops/release/cpa-upstream-commit.txt)
-          test ${#sha} -eq 40
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
       - name: Verify source boundaries
         shell: bash
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git refs/tags/v7.2.128 | awk '{print $1}')" = "${{ steps.cpa.outputs.sha }}"
-          grep -Fq 'github.com/router-for-me/CLIProxyAPI/v7 v7.2.128' ops/cpa-official-gateway/go.mod
-          ! grep -Eq '^[[:space:]]*replace[[:space:]].*CLIProxyAPI' ops/cpa-official-gateway/go.mod
           test ! -d patches
           test ! -d guards
 
@@ -117,7 +106,7 @@ jobs:
           for script in ops/release/*.sh ops/disaster-recovery/*.sh ops/docker-disk-guard/*.sh; do
             bash -n "$script"
           done
-          ops/release/validate-unified-orchestration.sh
+          ops/release/validate-newapi-only-release.sh
           python3 ops/release/test-patch-nginx-unified-route.py
           python3 -m unittest discover -s ops/disaster-recovery -p 'test_*.py'
           python3 -m unittest discover -s ops/mad-api-error-alert -p 'test_*.py'
@@ -138,50 +127,41 @@ jobs:
             --tag mad-new-api:latest \
             --tag "mad-new-api:${GITHUB_SHA}" .
 
-      - name: Build official CPA gateway image
-        shell: bash
-        run: |
-          docker build --pull \
-            --tag mad-cpa-official-gateway:latest \
-            --tag "mad-cpa-official-gateway:${GITHUB_SHA}" \
-            ops/cpa-official-gateway
-          docker run --rm --entrypoint /bin/sh mad-cpa-official-gateway:latest \
-            -c 'test -x /usr/local/bin/madapi-cpa-official-gateway'
-
       - name: Package release
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
           mkdir -p release
           docker save mad-new-api:latest | gzip -1 > release/mad-new-api.tar.gz
-          docker save mad-cpa-official-gateway:latest | gzip -1 > release/mad-cpa-official-gateway.tar.gz
           tar -C product/mad-home -czf release/mad-home.tar.gz .
           tar -czf release/madapi-release-tools.tar.gz \
-            ops/release \
+            ops/release/deploy-newapi-only.sh \
+            ops/release/rollback-newapi-only.sh \
+            ops/release/verify-frozen-ui.py \
+            ops/release/sqlite-release-fingerprint.py \
             ops/disaster-recovery \
             ops/docker-disk-guard \
             ops/mad-api-error-alert
-          cp ops/release/cpa-upstream-commit.txt release/cpa-upstream-commit.txt
+          cp product/frozen-v3-ui/metadata.json release/frozen-v3-ui-metadata.json
           cat > release/release-manifest.json <<EOF
           {
-            "release_format": 1,
+            "release_format": 2,
             "madapi_commit": "${GITHUB_SHA}",
             "newapi_source": "Mad12345-qw/mad-new-api",
-            "cpa_source": "router-for-me/CLIProxyAPI v7 embedded through the official Go module",
-            "cpa_commit": "${{ steps.cpa.outputs.sha }}",
-            "cpa_version": "v7.2.128",
-            "cpa_image_generation_mode": false,
             "newapi_image": "mad-new-api:latest",
-            "cpa_image": "mad-cpa-official-gateway:latest"
+            "runtime_mode": "newapi-native",
+            "cpa_runtime_required": false,
+            "deployment_entrypoint": "ops/release/deploy-newapi-only.sh",
+            "rollback_entrypoint": "ops/release/rollback-newapi-only.sh",
+            "preserved_surfaces": ["production-database", "nginx", "image-url-compat-3010", "image-media-gateway-3013", "other-containers"]
           }
           EOF
           cd release
           sha256sum \
             mad-new-api.tar.gz \
-            mad-cpa-official-gateway.tar.gz \
             mad-home.tar.gz \
             madapi-release-tools.tar.gz \
-            cpa-upstream-commit.txt \
+            frozen-v3-ui-metadata.json \
             release-manifest.json > SHA256SUMS
 
       - name: Publish build-latest release
@@ -193,5 +173,5 @@ jobs:
           gh release delete build-latest --cleanup-tag --yes || true
           gh release create build-latest release/* \
             --target "$GITHUB_SHA" \
-            --title "MadAPI official CPA release" \
-            --notes "Built directly from this repository. CPA owns the complete Codex protocol path through the pinned official v7 module; NewAPI owns authentication, channel selection, billing, refunds, and logs."
+            --title "MadAPI native NewAPI release" \
+            --notes "Immutable NewAPI-only runtime release with the frozen production 3.0 UI and current agent installers. CPA is not required. Production deployment replaces only the NewAPI container and preserves Nginx, database, image gateways, and all other containers."

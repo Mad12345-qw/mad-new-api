@@ -40,6 +40,10 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 	return oairesponses.ResponsesRequestToChatCompletionsRequest(req)
 }
 
+func ValidateResponsesRequestForChat(req *dto.OpenAIResponsesRequest) error {
+	return oairesponses.ValidateRequestChatUnsupportedFields(req)
+}
+
 func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIResponsesRequest) (*dto.ClaudeRequest, error) {
 	return oairesponses.OpenAIResponsesRequestToClaudeMessages(c, req)
 }

@@ -24,6 +24,7 @@ import type {
   MessageVersion,
   ChatCompletionMessage,
   ContentPart,
+  PlaygroundAttachment,
 } from '../../types'
 
 /**
@@ -76,13 +77,15 @@ export function updateCurrentVersionContent(
  */
 export function createUserMessage(
   content: string,
-  createdAt: number = Date.now()
+  createdAt: number = Date.now(),
+  attachments: PlaygroundAttachment[] = []
 ): Message {
   return {
     key: nanoid(),
     from: MESSAGE_ROLES.USER,
     versions: [createMessageVersion(content)],
     createdAt,
+    attachments,
   }
 }
 
@@ -154,6 +157,34 @@ export function getTextContent(content: string | ContentPart[]): string {
  */
 export function formatMessageForAPI(message: Message): ChatCompletionMessage {
   const currentVersion = getCurrentVersion(message)
+  const attachments = message.attachments ?? []
+  if (message.from === MESSAGE_ROLES.USER && attachments.length > 0) {
+    const content: ContentPart[] = [
+      { type: 'text', text: currentVersion.content },
+      ...attachments.map((attachment): ContentPart => {
+        if (attachment.kind === 'image') {
+          return {
+            type: 'image_url',
+            image_url: { url: attachment.dataUrl },
+          }
+        }
+        if (attachment.kind === 'video') {
+          return {
+            type: 'video_url',
+            video_url: attachment.dataUrl,
+          }
+        }
+        return {
+          type: 'file',
+          file: {
+            filename: attachment.name,
+            file_data: attachment.dataUrl,
+          },
+        }
+      }),
+    ]
+    return { role: message.from, content }
+  }
   return {
     role: message.from,
     content: currentVersion.content,
@@ -172,5 +203,5 @@ export function isValidMessage(message: Message): boolean {
     return false
   }
 
-  return true
+  return hasMessageContent(message) || Boolean(message.attachments?.length)
 }

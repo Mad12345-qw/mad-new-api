@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -32,10 +33,12 @@ type tokenPageResponse struct {
 }
 
 type tokenResponseItem struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Key    string `json:"key"`
-	Status int    `json:"status"`
+	ID                int    `json:"id"`
+	Name              string `json:"name"`
+	Key               string `json:"key"`
+	Status            int    `json:"status"`
+	LifetimeUsedQuota *int   `json:"lifetime_used_quota"`
+	Recent7dUsedQuota *int   `json:"recent_7d_used_quota"`
 }
 
 type tokenKeyResponse struct {
@@ -109,6 +112,9 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 
 	db := openTokenControllerTestDB(t)
 	migrateTokenControllerTestDB(t, db)
+	if err := db.AutoMigrate(&model.Log{}); err != nil {
+		t.Fatalf("migrate log table: %v", err)
+	}
 	return db
 }
 
@@ -415,6 +421,49 @@ func TestGetAllTokensMasksKeyInResponse(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("list response leaked raw token key: %s", recorder.Body.String())
 	}
+}
+
+func TestGetAllTokensIncludesSuccessfulUsageTotals(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "usage-token", "usage1234token5678")
+	otherToken := seedToken(t, db, 1, "other-token", "other1234token5678")
+	now := time.Now().Unix()
+	logs := []*model.Log{
+		{UserId: 1, TokenId: token.Id, Type: model.LogTypeConsume, Quota: 120, CreatedAt: now - 8*24*60*60},
+		{UserId: 1, TokenId: token.Id, Type: model.LogTypeConsume, Quota: 30, CreatedAt: now - 60},
+		{UserId: 1, TokenId: token.Id, Type: model.LogTypeError, Quota: 999, CreatedAt: now - 30},
+		{UserId: 1, TokenId: otherToken.Id, Type: model.LogTypeConsume, Quota: 77, CreatedAt: now - 30},
+	}
+	for _, log := range logs {
+		if err := db.Create(log).Error; err != nil {
+			t.Fatalf("seed log: %v", err)
+		}
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/?p=1&size=10", nil, 1)
+	GetAllTokens(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+	var page tokenPageResponse
+	if err := common.Unmarshal(response.Data, &page); err != nil {
+		t.Fatalf("decode token page response: %v", err)
+	}
+	for _, item := range page.Items {
+		if item.ID != token.Id {
+			continue
+		}
+		if item.LifetimeUsedQuota == nil || *item.LifetimeUsedQuota != 150 {
+			t.Fatalf("expected lifetime usage 150, got %#v", item.LifetimeUsedQuota)
+		}
+		if item.Recent7dUsedQuota == nil || *item.Recent7dUsedQuota != 30 {
+			t.Fatalf("expected recent usage 30, got %#v", item.Recent7dUsedQuota)
+		}
+		return
+	}
+	t.Fatalf("usage token %d missing from response", token.Id)
 }
 
 func TestSearchTokensMasksKeyInResponse(t *testing.T) {

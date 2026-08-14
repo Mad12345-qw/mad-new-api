@@ -31,6 +31,13 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 	return maskedTokens
 }
 
+func buildTokenListResponse(tokens []*model.Token) []*model.Token {
+	if err := model.PopulateTokenUsageStats(tokens); err != nil {
+		common.SysError("failed to populate token usage statistics: " + err.Error())
+	}
+	return buildMaskedTokenResponses(tokens)
+}
+
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
@@ -41,7 +48,7 @@ func GetAllTokens(c *gin.Context) {
 	}
 	total, _ := model.CountUserTokens(userId)
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	pageInfo.SetItems(buildTokenListResponse(tokens))
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -58,7 +65,7 @@ func SearchTokens(c *gin.Context) {
 		return
 	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	pageInfo.SetItems(buildTokenListResponse(tokens))
 	common.ApiSuccess(c, pageInfo)
 }
 

@@ -37,6 +37,26 @@ func TestChatCompletionsRequestToResponsesRequestInstructionsAndTools(t *testing
 	assert.Equal(t, "function_call_output", gjson.GetBytes(got.Input, "3.type").String())
 }
 
+func TestChatCompletionsRequestToResponsesRequestPreservesNativeSearchAndVerbosity(t *testing.T) {
+	req := &dto.GeneralOpenAIRequest{
+		Model:     "gpt-5.5",
+		Messages:  []dto.Message{{Role: "user", Content: "Search current facts"}},
+		Verbosity: []byte(`"medium"`),
+		WebSearchOptions: &dto.WebSearchOptions{
+			SearchContextSize: "high",
+			UserLocation:      []byte(`{"type":"approximate","country":"CN"}`),
+		},
+	}
+
+	got, err := ChatCompletionsRequestToResponsesRequest(req)
+	require.NoError(t, err)
+
+	assert.Equal(t, "medium", gjson.GetBytes(got.Text, "verbosity").String())
+	assert.Equal(t, "web_search", gjson.GetBytes(got.Tools, "0.type").String())
+	assert.Equal(t, "high", gjson.GetBytes(got.Tools, "0.search_context_size").String())
+	assert.Equal(t, "CN", gjson.GetBytes(got.Tools, "0.user_location.country").String())
+}
+
 func TestChatCompletionsRequestToResponsesRequestRejectsMultipleChoices(t *testing.T) {
 	_, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
 		Model: "gpt-test",

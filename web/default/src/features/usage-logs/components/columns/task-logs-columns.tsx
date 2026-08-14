@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { Music } from 'lucide-react'
+import { Download, Music, Play } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +36,7 @@ import {
   type AudioClip,
 } from '../dialogs/audio-preview-dialog'
 import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
+import { VideoPreviewDialog } from '../dialogs/video-preview-dialog'
 import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
@@ -85,6 +86,41 @@ function AudioPreviewCell({ log }: { log: TaskLog }) {
         open={open}
         onOpenChange={setOpen}
         clips={clips as AudioClip[]}
+      />
+    </>
+  )
+}
+
+function VideoPreviewCell({ log }: { log: TaskLog }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const taskId = String(log.task_id || '')
+  const downloadUrl = `/v1/videos/${encodeURIComponent(taskId)}/content?download=1`
+
+  return (
+    <>
+      <div className='flex items-center gap-2 whitespace-nowrap text-xs'>
+        <button
+          type='button'
+          className='text-foreground inline-flex items-center gap-1 hover:underline'
+          onClick={() => setOpen(true)}
+        >
+          <Play className='size-3' />
+          {t('Preview video')}
+        </button>
+        <a
+          href={downloadUrl}
+          download
+          className='text-foreground inline-flex items-center gap-1 hover:underline'
+        >
+          <Download className='size-3' />
+          {t('Download')}
+        </a>
+      </div>
+      <VideoPreviewDialog
+        open={open}
+        onOpenChange={setOpen}
+        taskId={taskId}
       />
     </>
   )
@@ -245,20 +281,8 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
           log.action === TASK_ACTIONS.REMIX_GENERATE
         const isSuccess = status === TASK_STATUS.SUCCESS
-        const isUrl = failReason?.startsWith('http')
-
-        if (isSuccess && isVideoTask && isUrl) {
-          const videoUrl = `/v1/videos/${log.task_id}/content`
-          return (
-            <a
-              href={videoUrl}
-              target='_blank'
-              rel='noopener noreferrer'
-              className='text-foreground text-xs hover:underline'
-            >
-              {t('Click to preview video')}
-            </a>
-          )
+        if (isSuccess && isVideoTask && log.task_id) {
+          return <VideoPreviewCell log={log} />
         }
 
         if (!failReason) {

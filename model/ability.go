@@ -106,6 +106,10 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 }
 
 func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+	return GetChannelExcluding(group, model, retry, requestPath, nil)
+}
+
+func GetChannelExcluding(group string, model string, retry int, requestPath string, excluded map[int]struct{}) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -122,6 +126,7 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 		return nil, err
 	}
 	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
+	abilities = preferUntriedAbilities(abilities, excluded)
 	channel := Channel{}
 	if len(abilities) > 0 {
 		// Randomly choose one
@@ -144,6 +149,22 @@ func GetChannel(group string, model string, retry int, requestPath string) (*Cha
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+func preferUntriedAbilities(abilities []Ability, excluded map[int]struct{}) []Ability {
+	if len(abilities) == 0 || len(excluded) == 0 {
+		return abilities
+	}
+	untried := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		if _, seen := excluded[ability.ChannelId]; !seen {
+			untried = append(untried, ability)
+		}
+	}
+	if len(untried) == 0 {
+		return abilities
+	}
+	return untried
 }
 
 // filterAbilitiesByRequestPathAndModel restricts candidates by request path and

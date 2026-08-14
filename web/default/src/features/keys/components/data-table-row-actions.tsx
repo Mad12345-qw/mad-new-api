@@ -27,6 +27,8 @@ import {
   Copy,
   Link,
   Loader2,
+  Bot,
+  SquareTerminal,
 } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -34,6 +36,11 @@ import { toast } from 'sonner'
 
 import { DataTableRowActionMenu } from '@/components/data-table/core/row-action-menu'
 import { Button } from '@/components/ui/button'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -92,6 +99,7 @@ export function DataTableRowActions<TData>({
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
   const { chatPresets, serverAddress } = useChatPresets()
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
+  const [isAgentMenuOpen, setIsAgentMenuOpen] = useState(false)
   const resolvedRealKey = resolvedKeys[apiKey.id]
   const isRealKeyLoading = Boolean(loadingKeys[apiKey.id])
 
@@ -182,6 +190,17 @@ export function DataTableRowActions<TData>({
     }
   }
 
+  const handleOpenAgentSetup = async (
+    dialog: 'codex-setup' | 'claude-setup'
+  ) => {
+    const realKey = await resolveRealKey(apiKey.id)
+    if (!realKey) return
+    setResolvedKey(realKey)
+    setCurrentRow(apiKey)
+    setIsAgentMenuOpen(false)
+    setOpen(dialog)
+  }
+
   let statusIcon = <Power className='size-4' />
   if (isTogglingStatus) {
     statusIcon = <Loader2 className='size-4 animate-spin' />
@@ -191,6 +210,47 @@ export function DataTableRowActions<TData>({
 
   return (
     <div className='-ml-1.5 flex items-center gap-1'>
+      <Popover open={isAgentMenuOpen} onOpenChange={setIsAgentMenuOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              variant='outline'
+              size='sm'
+              disabled={!isEnabled || isRealKeyLoading}
+              aria-label={t('Agent Setup')}
+              className='h-7 min-w-0 shrink-0 whitespace-nowrap px-1.5 text-[10px] sm:text-[11px]'
+            />
+          }
+        >
+          {isRealKeyLoading ? (
+            <Loader2 className='size-3 animate-spin' />
+          ) : (
+            <Bot className='size-3' />
+          )}
+          {t('Agent Setup')}
+        </PopoverTrigger>
+        <PopoverContent className='w-64 p-2' align='start'>
+          <div className='grid grid-cols-2 gap-2'>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => void handleOpenAgentSetup('codex-setup')}
+            >
+              <SquareTerminal />
+              {t('Codex Setup')}
+            </Button>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => void handleOpenAgentSetup('claude-setup')}
+            >
+              <Bot />
+              {t('Claude Setup')}
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+
       <Tooltip>
         <TooltipTrigger
           render={

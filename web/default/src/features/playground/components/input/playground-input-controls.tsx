@@ -39,6 +39,7 @@ type PlaygroundInputControlsProps = {
   onStop?: () => void
   text: string
   tools: ReactNode
+  attachmentCount?: number
 }
 
 export function PlaygroundInputControls({
@@ -54,6 +55,7 @@ export function PlaygroundInputControls({
   onStop,
   text,
   tools,
+  attachmentCount = 0,
 }: PlaygroundInputControlsProps) {
   const { t } = useTranslation()
   const { canSubmit, isSelectorDisabled, shouldShowStop } =
@@ -65,6 +67,7 @@ export function PlaygroundInputControls({
       isModelLoading,
       models,
       text,
+      attachmentCount,
     })
 
   const renderSelector = () => (

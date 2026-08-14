@@ -24,6 +24,8 @@ import type {
   ChatCompletionResponse,
   ModelOption,
   GroupOption,
+  ImageGenerationResponse,
+  VideoTaskResponse,
 } from './types'
 
 /**
@@ -34,6 +36,62 @@ export async function sendChatCompletion(
   signal?: AbortSignal
 ): Promise<ChatCompletionResponse> {
   const res = await api.post(API_ENDPOINTS.CHAT_COMPLETIONS, payload, {
+    signal,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function sendImageGeneration(
+  payload: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<ImageGenerationResponse> {
+  const res = await api.post(API_ENDPOINTS.IMAGE_GENERATIONS, payload, {
+    signal,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function sendImageEdit(
+  payload: FormData,
+  signal?: AbortSignal
+): Promise<ImageGenerationResponse> {
+  const res = await api.post(API_ENDPOINTS.IMAGE_EDITS, payload, {
+    signal,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function sendSpeech(
+  payload: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const res = await api.post(API_ENDPOINTS.AUDIO_SPEECH, payload, {
+    responseType: 'blob',
+    signal,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function submitVideo(
+  payload: FormData | Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<VideoTaskResponse> {
+  const res = await api.post(API_ENDPOINTS.VIDEOS, payload, {
+    signal,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function fetchVideoTask(
+  taskId: string,
+  signal?: AbortSignal
+): Promise<VideoTaskResponse> {
+  const res = await api.get(`${API_ENDPOINTS.VIDEOS}/${taskId}`, {
     signal,
     skipErrorHandler: true,
   } as Record<string, unknown>)

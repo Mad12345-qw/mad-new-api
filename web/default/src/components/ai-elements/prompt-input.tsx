@@ -438,6 +438,7 @@ export type PromptInputProps = Omit<
   // Minimal constraints
   maxFiles?: number
   maxFileSize?: number // bytes
+  onFilesAdded?: (files: File[]) => void | Promise<void>
   onError?: (err: {
     code: 'max_files' | 'max_file_size' | 'accept'
     message: string
@@ -462,6 +463,7 @@ export const PromptInput = ({
   syncHiddenInput,
   maxFiles,
   maxFileSize,
+  onFilesAdded,
   onError,
   onSubmit,
   children,
@@ -562,8 +564,12 @@ export const PromptInput = ({
     () =>
       controller
         ? (files: File[] | FileList) => controller.attachments.add(files)
+        : onFilesAdded
+          ? (files: File[] | FileList) => {
+              void onFilesAdded(Array.from(files))
+            }
         : addLocal,
-    [controller, addLocal]
+    [controller, onFilesAdded, addLocal]
   )
 
   const remove = useMemo(
@@ -783,6 +789,7 @@ export const PromptInput = ({
       <form
         className={cn('w-full', className)}
         onSubmit={handleSubmit}
+        ref={formRef}
         {...props}
       >
         <InputGroup className={groupClassName}>{children}</InputGroup>

@@ -1,0 +1,23 @@
+{
+  "name": "Mad API",
+  "short_name": "Mad API",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090907",
+  "theme_color": "#090907",
+  "icons": [
+    {
+      "src": "/icons/mad-api-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/mad-api-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

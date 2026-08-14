@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -15,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	taskxai "github.com/QuantumNous/new-api/relay/channel/task/xai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -137,6 +139,190 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 	return nil
 }
 
+func isPerSecondSeedanceModel(modelName string) bool {
+	switch strings.ToLower(strings.TrimSpace(modelName)) {
+	case "seedance-2.0-1080p", "seedance-2.0-720p", "seedance-fast-720p":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyFixedPriceVideoBilling(info *relaycommon.RelayInfo, modelName string) bool {
+	ratios := info.PriceData.OtherRatios()
+	seconds := ratios["seconds"]
+	if seconds <= 0 {
+		return false
+	}
+
+	multiplier := 0.0
+	if isPerSecondSeedanceModel(modelName) {
+		multiplier = seconds
+	} else if taskxai.IsVideoModel(modelName) {
+		resolution := ratios["resolution"]
+		if resolution <= 0 {
+			resolution = 1
+		}
+		multiplier = seconds * resolution
+		if strings.EqualFold(strings.TrimSpace(modelName), "grok-imagine-video") {
+			images := ratios["images"]
+			if images > 0 {
+				// The original Grok video model charges one thirty-fifth of its
+				// 720p per-second price for each input image.
+				multiplier += images / 35.0
+			}
+		}
+	} else {
+		return false
+	}
+
+	var quota int
+	var clamp *common.QuotaClamp
+	if taskxai.IsVideoModel(modelName) {
+		quota, clamp = common.QuotaRoundChecked(float64(info.PriceData.Quota) * multiplier)
+	} else {
+		quota, clamp = common.QuotaFromFloatChecked(float64(info.PriceData.Quota) * multiplier)
+	}
+	info.PriceData.Quota = quota
+	noteTaskQuotaClamp(info, clamp)
+	return true
+}
+
+func applyTaskBillingRatios(info *relaycommon.RelayInfo, modelName string) {
+	// ModelPrice is the administrator-configured fixed charge for one request.
+	// The three channel-37 Seedance prices are explicitly per-second prices,
+	// so only their requested duration multiplies the configured base price.
+	if info.PriceData.UsePrice {
+		applyFixedPriceVideoBilling(info, modelName)
+		return
+	}
+	if common.StringsContains(constant.TaskPricePatches, modelName) {
+		return
+	}
+
+	quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
+	quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
+	info.PriceData.Quota = quota
+	noteTaskQuotaClamp(info, clamp)
+}
+
+func applyAdjustedTaskBillingRatios(info *relaycommon.RelayInfo, adjustedRatios map[string]float64) (int, bool) {
+	if len(adjustedRatios) == 0 {
+		return info.PriceData.Quota, false
+	}
+
+	if info.PriceData.UsePrice {
+		info.PriceData.ReplaceOtherRatios(adjustedRatios)
+		return info.PriceData.Quota, true
+	}
+
+	adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios)
+	if !ok {
+		return info.PriceData.Quota, false
+	}
+	info.PriceData.ReplaceOtherRatios(adjustedRatios)
+	info.PriceData.Quota = adjustedQuota
+	return adjustedQuota, true
+}
+
+func fillTaskBillingSnapshot(task *model.Task, info *relaycommon.RelayInfo) {
+	task.PrivateData.BillingSource = info.BillingSource
+	task.PrivateData.SubscriptionId = info.SubscriptionId
+	task.PrivateData.TokenId = info.TokenId
+	task.PrivateData.NodeName = common.NodeName
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelPrice:      info.PriceData.ModelPrice,
+		GroupRatio:      info.PriceData.GroupRatioInfo.GroupRatio,
+		ModelRatio:      info.PriceData.ModelRatio,
+		OtherRatios:     info.PriceData.OtherRatios(),
+		OriginModelName: info.OriginModelName,
+		PerCallBilling:  common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.PriceData.UsePrice,
+	}
+}
+
+func ensureTaskRecordBeforeUpstream(platform constant.TaskPlatform, info *relaycommon.RelayInfo) error {
+	task, exists, err := model.GetByTaskId(info.UserId, info.PublicTaskID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		if task.Status != model.TaskStatusReserved {
+			return fmt.Errorf("task %s has already been submitted", info.PublicTaskID)
+		}
+		task.Platform = platform
+		task.ChannelId = info.ChannelId
+		task.Group = info.UsingGroup
+		task.Quota = info.PriceData.Quota
+		task.Action = info.Action
+		task.Properties.OriginModelName = info.OriginModelName
+		task.Properties.UpstreamModelName = info.UpstreamModelName
+		fillTaskBillingSnapshot(task, info)
+		return task.Update()
+	}
+
+	task = model.InitTask(platform, info)
+	task.Status = model.TaskStatusReserved
+	task.Quota = info.PriceData.Quota
+	task.Action = info.Action
+	fillTaskBillingSnapshot(task, info)
+	if err = task.Insert(); err == nil {
+		return nil
+	}
+
+	_, exists, lookupErr := model.GetByTaskId(info.UserId, info.PublicTaskID)
+	if lookupErr == nil && exists {
+		return nil
+	}
+	return err
+}
+
+func FinalizeTaskRecord(info *relaycommon.RelayInfo, result *TaskSubmitResult) error {
+	if info == nil || result == nil || strings.TrimSpace(info.PublicTaskID) == "" {
+		return fmt.Errorf("task finalization context is incomplete")
+	}
+	task, exists, err := model.GetByTaskId(info.UserId, info.PublicTaskID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		task = model.InitTask(result.Platform, info)
+	}
+	task.Platform = result.Platform
+	task.ChannelId = info.ChannelId
+	task.Group = info.UsingGroup
+	task.Status = model.TaskStatusNotStart
+	task.Progress = "0%"
+	task.FailReason = ""
+	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+	fillTaskBillingSnapshot(task, info)
+	task.Quota = result.Quota
+	task.Data = result.TaskData
+	task.Action = info.Action
+	if exists {
+		return task.Update()
+	}
+	return task.Insert()
+}
+
+func FailReservedTaskRecord(info *relaycommon.RelayInfo, taskErr *dto.TaskError) error {
+	if info == nil || taskErr == nil || strings.TrimSpace(info.PublicTaskID) == "" {
+		return nil
+	}
+	task, exists, err := model.GetByTaskId(info.UserId, info.PublicTaskID)
+	if err != nil || !exists {
+		return err
+	}
+	if task.Status != model.TaskStatusReserved {
+		return nil
+	}
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FailReason = taskErr.Message
+	task.FinishTime = time.Now().Unix()
+	_, err = task.UpdateWithStatus(model.TaskStatusReserved)
+	return err
+}
+
 // RelayTaskSubmit 完成 task 提交的全部流程（每次尝试调用一次）：
 // 刷新渠道元数据 → 确定 platform/adaptor → 验证请求 →
 // 估算计费(EstimateBilling) → 计算价格 → 预扣费（仅首次）→
@@ -150,9 +336,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if platform == "" {
 		platform = GetTaskPlatform(c)
 	}
+	platform = GetTaskPlatformForModel(platform, info.OriginModelName)
 	adaptor := GetTaskAdaptor(platform)
 	if adaptor == nil {
-		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
+		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("channel does not support this video task platform: %s", platform), "unsupported_task_platform", http.StatusServiceUnavailable)
 	}
 	adaptor.Init(info)
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
@@ -194,13 +381,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	// 6. 将 OtherRatios 应用到基础额度（饱和转换，防止溢出成负数）
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
-		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
-		info.PriceData.Quota = quota
-		noteTaskQuotaClamp(info, clamp)
-	}
+	// 6. 按量任务应用请求倍率；按次任务严格保留后台配置的单次价格。
+	applyTaskBillingRatios(info, modelName)
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {
@@ -214,6 +396,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+	}
+	if err = ensureTaskRecordBeforeUpstream(platform, info); err != nil {
+		return nil, service.TaskErrorWrapper(err, "persist_task_reservation_failed", http.StatusInternalServerError)
 	}
 
 	// 9. 发送请求
@@ -243,11 +428,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
 	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
-		if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
-			// 基于调整后的 ratios 重新计算 quota
+		if adjustedQuota, ok := applyAdjustedTaskBillingRatios(info, adjustedRatios); ok {
 			finalQuota = adjustedQuota
-			info.PriceData.ReplaceOtherRatios(adjustedRatios)
-			info.PriceData.Quota = finalQuota
 		}
 	}
 
@@ -296,7 +478,7 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
-		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
 	}
 
 	respBody, taskErr := respBuilder(c)
@@ -387,7 +569,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 
-	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
+	// Gemini/Vertex/xAI support real-time status refresh when users poll.
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
 		respBody = realtimeResp
 		return
@@ -424,15 +606,17 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
-// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。
-// 仅当渠道类型为 Gemini 或 Vertex 时触发；其他渠道或出错时返回 nil。
+// tryRealtimeFetch refreshes supported asynchronous tasks directly from upstream.
+// It returns nil for other channel types or when the refresh fails.
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
 func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
 	}
-	if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
+	if channelModel.Type != constant.ChannelTypeVertexAi &&
+		channelModel.Type != constant.ChannelTypeGemini &&
+		channelModel.Type != constant.ChannelTypeXai {
 		return nil
 	}
 
@@ -548,6 +732,23 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	resultURL := task.GetResultURL()
+	data := task.Data
+	if task.Platform == constant.TaskPlatformXAI {
+		publicData := map[string]any{
+			"request_id": task.TaskID,
+			"id":         task.TaskID,
+			"status":     mapTaskStatusToSimple(task.Status),
+		}
+		if task.Status == model.TaskStatusSuccess {
+			resultURL = taskcommon.BuildProxyURL(task.TaskID)
+			publicData["video"] = map[string]any{"url": resultURL}
+		}
+		if task.Status == model.TaskStatusFailure {
+			publicData["error"] = map[string]any{"message": task.FailReason}
+		}
+		data, _ = common.Marshal(publicData)
+	}
 	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
@@ -561,13 +762,13 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Action:     task.Action,
 		Status:     string(task.Status),
 		FailReason: task.FailReason,
-		ResultURL:  task.GetResultURL(),
+		ResultURL:  resultURL,
 		SubmitTime: task.SubmitTime,
 		StartTime:  task.StartTime,
 		FinishTime: task.FinishTime,
 		Progress:   task.Progress,
 		Properties: task.Properties,
 		Username:   task.Username,
-		Data:       task.Data,
+		Data:       data,
 	}
 }

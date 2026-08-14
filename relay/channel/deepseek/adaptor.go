@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -58,7 +59,7 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	fimBaseUrl := info.ChannelBaseUrl
-	switch info.RelayFormat {
+	switch info.GetFinalRequestRelayFormat() {
 	case types.RelayFormatClaude:
 		return fmt.Sprintf("%s/anthropic/v1/messages", info.ChannelBaseUrl), nil
 	default:
@@ -159,8 +160,46 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// TODO implement me
-	return nil, errors.New("not implemented")
+	chatRequest, err := relayconvert.ConvertCodexResponsesRequestToChatRequest(request)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyDeepSeekV4OpenAIThinkingSuffix(info, chatRequest); err != nil {
+		return nil, err
+	}
+	applyGLMResponsesCompatibility(info, chatRequest)
+	return chatRequest, nil
+}
+
+func applyGLMResponsesCompatibility(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	if request == nil || !strings.HasPrefix(strings.ToLower(getDeepSeekUpstreamModel(info, request.Model)), "glm-") {
+		return
+	}
+	if request.WebSearchOptions != nil {
+		request.WebSearch = []byte(`{"enable":true}`)
+		request.WebSearchOptions = nil
+	}
+	if request.Stream != nil && *request.Stream {
+		return
+	}
+	choice, ok := request.ToolChoice.(string)
+	if !ok {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(choice)) {
+	case "auto":
+		request.ToolChoice = nil
+	case "none":
+		request.ToolChoice = nil
+		request.Tools = nil
+	}
+}
+
+func getDeepSeekUpstreamModel(info *relaycommon.RelayInfo, fallback string) string {
+	if info != nil && info.ChannelMeta != nil && info.UpstreamModelName != "" {
+		return info.UpstreamModelName
+	}
+	return fallback
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
@@ -168,6 +207,12 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if info.RelayFormat == types.RelayFormatOpenAIResponses && info.GetFinalRequestRelayFormat() == types.RelayFormatOpenAI {
+		if info.IsStream {
+			return openai.CodexChatToResponsesStreamHandler(c, info, resp)
+		}
+		return openai.CodexChatToResponsesHandler(c, info, resp)
+	}
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
 		adaptor := claude.Adaptor{}

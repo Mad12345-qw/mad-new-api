@@ -1,6 +1,9 @@
 package common
 
 import (
+	"crypto/rand"
+	"fmt"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +33,18 @@ func GenerateVerificationCode(length int) string {
 		return code
 	}
 	return code[:length]
+}
+
+func GenerateNumericVerificationCode(length int) (string, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("verification code length must be positive")
+	}
+	limit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(length)), nil)
+	number, err := rand.Int(rand.Reader, limit)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%0*d", length, number.Int64()), nil
 }
 
 func RegisterVerificationCodeWithKey(key string, code string, purpose string) {

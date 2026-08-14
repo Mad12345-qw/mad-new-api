@@ -38,11 +38,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import {
-  ATTACHMENT_ACTIONS,
-  getAttachmentActionNotice,
-  getSearchActionNotice,
-} from '../../lib'
+import { ATTACHMENT_ACTIONS, getPlaygroundModelKind } from '../../lib'
 import type { ParameterEnabled, PlaygroundConfig } from '../../types'
 import { PlaygroundParameterPanel } from './playground-parameter-panel'
 
@@ -60,6 +56,7 @@ type PlaygroundInputToolsProps = {
     value: boolean
   ) => void
   parameterEnabled: ParameterEnabled
+  onAttachmentAction: (action: string) => void
 }
 
 export function PlaygroundInputTools({
@@ -70,21 +67,11 @@ export function PlaygroundInputTools({
   onConfigChange,
   onParameterEnabledChange,
   parameterEnabled,
+  onAttachmentAction,
 }: PlaygroundInputToolsProps) {
   const { t } = useTranslation()
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
-
-  const handleFileAction = (action: string) => {
-    const notice = getAttachmentActionNotice(action)
-    toast.info(t(notice.title), {
-      description: notice.description,
-    })
-  }
-
-  const handleSearchAction = () => {
-    const notice = getSearchActionNotice()
-    toast.info(t(notice.title))
-  }
+  const searchAvailable = getPlaygroundModelKind(config.model) === 'chat'
 
   const handleClearMessages = () => {
     onClearMessages?.()
@@ -120,7 +107,7 @@ export function PlaygroundInputTools({
               {ATTACHMENT_ACTIONS.map(({ action, icon: Icon, label }) => (
                 <DropdownMenuItem
                   key={action}
-                  onClick={() => handleFileAction(action)}
+                  onClick={() => onAttachmentAction(action)}
                 >
                   <Icon className='mr-2' size={16} />
                   {t(label)}
@@ -135,9 +122,13 @@ export function PlaygroundInputTools({
             render={
               <PromptInputButton
                 aria-label={t('Search')}
-                className='text-muted-foreground hover:text-foreground hover:bg-muted/70 font-medium'
-                disabled={disabled}
-                onClick={handleSearchAction}
+                className={
+                  config.webSearch
+                    ? 'bg-primary/15 text-primary hover:bg-primary/20 font-medium'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/70 font-medium'
+                }
+                disabled={disabled || !searchAvailable}
+                onClick={() => onConfigChange('webSearch', !config.webSearch)}
                 variant='ghost'
               >
                 <GlobeIcon size={16} />
@@ -145,7 +136,11 @@ export function PlaygroundInputTools({
             }
           />
           <TooltipContent>
-            <p>{t('Search')}</p>
+            <p>
+              {searchAvailable
+                ? t('Search')
+                : t('Web search is available for chat models')}
+            </p>
           </TooltipContent>
         </Tooltip>
 

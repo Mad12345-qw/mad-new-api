@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -230,6 +231,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		retryParam.ExcludeChannel(channel.Id)
 
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
@@ -329,6 +331,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
+	if c.Writer.Written() {
+		return false
+	}
 	if types.IsChannelError(openaiErr) {
 		return true
 	}
@@ -341,6 +346,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
+	if isRetryablePrecommitError(openaiErr) {
+		return true
+	}
 	code := openaiErr.StatusCode
 	if code >= 200 && code < 300 {
 		return false
@@ -352,6 +360,34 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func isRetryablePrecommitError(openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil {
+		return false
+	}
+	if openaiErr.StatusCode == http.StatusRequestTimeout || openaiErr.StatusCode == http.StatusGatewayTimeout || openaiErr.StatusCode == 524 {
+		return true
+	}
+	if openaiErr.GetErrorCode() == types.ErrorCodeBadResponseBody {
+		return true
+	}
+	if openaiErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(openaiErr.Error())
+	for _, marker := range []string{
+		"unknown field",
+		"unsupported field",
+		"not supported model for image generation",
+		"does not support this endpoint",
+		"not allowed to access this endpoint",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
@@ -483,6 +519,147 @@ func RelayTaskFetch(c *gin.Context) {
 	}
 }
 
+const maxTaskIdempotencyKeyLength = 255
+
+func taskIdempotencyKey(c *gin.Context) string {
+	return strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+}
+
+func taskReplayPayload(taskID string, task *model.Task) gin.H {
+	payload := gin.H{
+		"id":       taskID,
+		"task_id":  taskID,
+		"object":   "video",
+		"status":   dto.VideoStatusQueued,
+		"progress": 0,
+	}
+	if task == nil {
+		return payload
+	}
+	payload["model"] = task.Properties.OriginModelName
+	payload["status"] = task.Status.ToVideoStatus()
+	progress, err := strconv.Atoi(strings.TrimSuffix(task.Progress, "%"))
+	if err == nil {
+		payload["progress"] = progress
+	}
+	if task.Status == model.TaskStatusFailure {
+		payload["error"] = gin.H{
+			"code":    "video_generation_failed",
+			"message": task.FailReason,
+		}
+	}
+	return payload
+}
+
+func writeTaskIdempotencyReplay(c *gin.Context, reservation *model.TaskRequestReservation) {
+	c.Header("X-MadAPI-Idempotent-Replay", "true")
+	c.Header("X-MadAPI-Task-ID", reservation.TaskID)
+	if reservation.Status == model.TaskRequestStatusFailed {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": gin.H{
+				"type":    "idempotent_task_failed",
+				"code":    reservation.ErrorCode,
+				"message": reservation.ErrorMessage,
+				"task_id": reservation.TaskID,
+			},
+		})
+		return
+	}
+	task, exists, err := model.GetByTaskId(reservation.UserID, reservation.TaskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "failed to recover task", "type": "server_error"}})
+		return
+	}
+	if !exists {
+		task = nil
+	}
+	c.JSON(http.StatusOK, taskReplayPayload(reservation.TaskID, task))
+}
+
+func prepareTaskIdempotency(c *gin.Context, info *relaycommon.RelayInfo) (bool, *dto.TaskError) {
+	key := taskIdempotencyKey(c)
+	if key == "" {
+		return false, nil
+	}
+	if len(key) > maxTaskIdempotencyKeyLength {
+		return false, service.TaskErrorWrapperLocal(fmt.Errorf("Idempotency-Key must be at most %d characters", maxTaskIdempotencyKeyLength), "invalid_idempotency_key", http.StatusBadRequest)
+	}
+	for _, char := range []byte(key) {
+		if char < 0x21 || char > 0x7e {
+			return false, service.TaskErrorWrapperLocal(fmt.Errorf("Idempotency-Key must contain visible ASCII characters only"), "invalid_idempotency_key", http.StatusBadRequest)
+		}
+	}
+	bodyStorage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return false, service.TaskErrorWrapperLocal(err, "read_request_body_failed", http.StatusBadRequest)
+	}
+	body, err := bodyStorage.Bytes()
+	if err != nil {
+		return false, service.TaskErrorWrapperLocal(err, "read_request_body_failed", http.StatusBadRequest)
+	}
+	requestHash := model.HashTaskRequestParts(
+		[]byte(c.Request.Method),
+		[]byte("\n"),
+		[]byte(c.Request.URL.Path),
+		[]byte("\n"),
+		body,
+	)
+	reservation, created, err := model.ReserveTaskRequest(
+		info.UserId,
+		info.TokenId,
+		key,
+		requestHash,
+		model.GenerateTaskID(),
+	)
+	if err != nil {
+		return false, service.TaskErrorWrapperLocal(err, "reserve_idempotency_key_failed", http.StatusInternalServerError)
+	}
+	if !created {
+		if reservation.RequestHash != requestHash {
+			return false, service.TaskErrorWrapperLocal(fmt.Errorf("Idempotency-Key was already used with a different request"), "idempotency_key_conflict", http.StatusConflict)
+		}
+		writeTaskIdempotencyReplay(c, reservation)
+		return true, nil
+	}
+	info.PublicTaskID = reservation.TaskID
+	c.Header("X-MadAPI-Task-ID", reservation.TaskID)
+	return false, nil
+}
+
+func updateTaskIdempotency(c *gin.Context, info *relaycommon.RelayInfo, status string, taskErr *dto.TaskError) {
+	key := taskIdempotencyKey(c)
+	if key == "" {
+		return
+	}
+	errorCode := ""
+	errorMessage := ""
+	if taskErr != nil {
+		errorCode = taskErr.Code
+		errorMessage = taskErr.Message
+	}
+	if err := model.UpdateTaskRequestReservation(info.UserId, info.TokenId, key, status, errorCode, errorMessage); err != nil {
+		common.SysError("update task idempotency reservation error: " + err.Error())
+	}
+}
+
+func GetVideoTaskByRequestID(c *gin.Context) {
+	key := strings.TrimSpace(c.Query("request_id"))
+	if key == "" || len(key) > maxTaskIdempotencyKeyLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "request_id is required", "type": "invalid_request_error"}})
+		return
+	}
+	reservation, exists, err := model.GetTaskRequestReservation(c.GetInt("id"), c.GetInt("token_id"), key)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"message": "failed to query request", "type": "server_error"}})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"message": "request_id was not found", "type": "invalid_request_error"}})
+		return
+	}
+	writeTaskIdempotencyReplay(c, reservation)
+}
+
 func RelayTask(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
@@ -496,6 +673,12 @@ func RelayTask(c *gin.Context) {
 
 	if taskErr := relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
 		respondTaskError(c, taskErr)
+		return
+	}
+	if replayed, taskErr := prepareTaskIdempotency(c, relayInfo); taskErr != nil {
+		respondTaskError(c, taskErr)
+		return
+	} else if replayed {
 		return
 	}
 
@@ -571,37 +754,28 @@ func RelayTask(c *gin.Context) {
 		logger.LogInfo(c, retryLogStr)
 	}
 
-	// ── 成功：结算 + 日志 + 插入任务 ──
+	// Persist the recoverable task before final settlement.
 	if taskErr == nil {
-		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
-			common.SysError("settle task billing error: " + settleErr.Error())
-		}
-		service.LogTaskConsumption(c, relayInfo)
-
-		task := model.InitTask(result.Platform, relayInfo)
-		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
-		task.PrivateData.BillingSource = relayInfo.BillingSource
-		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
-		task.PrivateData.TokenId = relayInfo.TokenId
-		task.PrivateData.NodeName = common.NodeName
-		task.PrivateData.BillingContext = &model.TaskBillingContext{
-			ModelPrice:      relayInfo.PriceData.ModelPrice,
-			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-			ModelRatio:      relayInfo.PriceData.ModelRatio,
-			OtherRatios:     relayInfo.PriceData.OtherRatios(),
-			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
-		}
-		task.Quota = result.Quota
-		task.Data = result.TaskData
-		task.Action = relayInfo.Action
-		if insertErr := task.Insert(); insertErr != nil {
-			common.SysError("insert task error: " + insertErr.Error())
+		if persistErr := relay.FinalizeTaskRecord(relayInfo, result); persistErr != nil {
+			common.SysError("finalize task record error: " + persistErr.Error())
+			taskErr = service.TaskErrorWrapperLocal(persistErr, "finalize_task_record_failed", http.StatusInternalServerError)
+		} else {
+			updateTaskIdempotency(c, relayInfo, model.TaskRequestStatusSubmitted, nil)
+			if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+				common.SysError("settle task billing error: " + settleErr.Error())
+			}
+			service.LogTaskConsumption(c, relayInfo)
 		}
 	}
 
 	if taskErr != nil {
-		respondTaskError(c, taskErr)
+		if err := relay.FailReservedTaskRecord(relayInfo, taskErr); err != nil {
+			common.SysError("fail reserved task record error: " + err.Error())
+		}
+		updateTaskIdempotency(c, relayInfo, model.TaskRequestStatusFailed, taskErr)
+		if !c.Writer.Written() {
+			respondTaskError(c, taskErr)
+		}
 	}
 }
 
@@ -625,6 +799,11 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
+	}
+	// No upstream request was made. This channel simply has no task adaptor, so
+	// another compatible channel can be tried without duplicate supplier billing.
+	if taskErr.Code == "unsupported_task_platform" {
+		return true
 	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		return true

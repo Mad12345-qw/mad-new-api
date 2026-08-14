@@ -16,14 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { PlaygroundChat } from './components/chat/playground-chat'
-import { PlaygroundInput } from './components/input/playground-input'
+import { useEffect } from "react";
+
+import { PlaygroundChat } from "./components/chat/playground-chat";
+import { PlaygroundInput } from "./components/input/playground-input";
 import {
   useChatHandler,
   usePlaygroundConversation,
   usePlaygroundOptions,
   usePlaygroundState,
-} from './hooks'
+} from "./hooks";
+import { getPlaygroundModelProfile } from "./lib";
 
 export function Playground() {
   const {
@@ -39,13 +42,13 @@ export function Playground() {
     updateConfig,
     updateParameterEnabled,
     clearMessages,
-  } = usePlaygroundState()
+  } = usePlaygroundState();
 
   const { sendChat, stopGeneration, isGenerating } = useChatHandler({
     config,
     parameterEnabled,
     onMessageUpdate: updateMessages,
-  })
+  });
 
   const {
     editingMessageKey,
@@ -59,12 +62,12 @@ export function Playground() {
     messages,
     updateMessages,
     sendChat,
-  })
+  });
 
   const handleClearMessages = () => {
-    handleEditOpenChange(false)
-    clearMessages()
-  }
+    handleEditOpenChange(false);
+    clearMessages();
+  };
 
   const { isLoadingModels } = usePlaygroundOptions({
     currentGroup: config.group,
@@ -72,12 +75,42 @@ export function Playground() {
     setGroups,
     setModels,
     updateConfig,
-  })
+  });
+
+  useEffect(() => {
+    const profile = getPlaygroundModelProfile(config.model);
+
+    if (profile.defaultImageSize) {
+      updateConfig("imageSize", profile.defaultImageSize);
+    }
+    if (profile.defaultImageQuality) {
+      updateConfig("imageQuality", profile.defaultImageQuality);
+    }
+    if (profile.defaultImageResponseFormat) {
+      updateConfig("imageResponseFormat", profile.defaultImageResponseFormat);
+    }
+    if (profile.defaultTtsVoice) {
+      updateConfig("ttsVoice", profile.defaultTtsVoice);
+    }
+    if (profile.defaultTtsFormat) {
+      updateConfig("ttsFormat", profile.defaultTtsFormat);
+    }
+    if (profile.defaultVideoSeconds) {
+      updateConfig("videoSeconds", profile.defaultVideoSeconds);
+    }
+    if (profile.defaultVideoSize) {
+      updateConfig("videoSize", profile.defaultVideoSize);
+    }
+  }, [config.model, updateConfig]);
+
+  const handleModelChange = (value: string) => {
+    updateConfig("model", value);
+  };
 
   return (
-    <div className='relative flex size-full min-h-0 flex-col overflow-hidden'>
+    <div className="relative flex size-full min-h-0 flex-col overflow-hidden">
       {/* Full-width scroll container: scrolling works even over side whitespace */}
-      <div className='flex min-h-0 flex-1 flex-col overflow-hidden'>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <PlaygroundChat
           messages={messages}
           isLoadingMessages={isLoadingMessages}
@@ -94,7 +127,7 @@ export function Playground() {
       </div>
 
       {/* Input area: center content and constrain to the same container width */}
-      <div className='mx-auto w-full max-w-4xl'>
+      <div className="mx-auto w-full max-w-4xl">
         <PlaygroundInput
           config={config}
           disabled={isGenerating}
@@ -104,10 +137,10 @@ export function Playground() {
           isModelLoading={isLoadingModels}
           modelValue={config.model}
           models={models}
-          onGroupChange={(value) => updateConfig('group', value)}
+          onGroupChange={(value) => updateConfig("group", value)}
           onConfigChange={updateConfig}
           onClearMessages={handleClearMessages}
-          onModelChange={(value) => updateConfig('model', value)}
+          onModelChange={handleModelChange}
           onParameterEnabledChange={updateParameterEnabled}
           onStop={stopGeneration}
           onSubmit={handleSendMessage}
@@ -116,5 +149,5 @@ export function Playground() {
         />
       </div>
     </div>
-  )
+  );
 }

@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate } from '@tanstack/react-router'
 import { User, Wallet, LogOut, Settings } from 'lucide-react'
-import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SignOutDialog } from '@/components/sign-out-dialog'
@@ -34,11 +33,13 @@ import {
 import useDialogState from '@/hooks/use-dialog'
 import { useIsSidebarModuleVisible } from '@/hooks/use-sidebar-config'
 import { useUserDisplay } from '@/hooks/use-user-display'
-import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
+import { getUserAvatarFallback } from '@/lib/avatar'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-const avatarFallbackClassName = 'font-semibold text-white'
+const avatarClassName =
+  'border border-[#c8a96a]/60 bg-[#0d0c09] shadow-[0_0_0_1px_rgba(0,0,0,0.72),0_0_14px_rgba(200,169,106,0.16)]'
+const avatarFallbackClassName = 'bg-[#0d0c09] font-semibold text-[#e7cf91]'
 
 export function ProfileDropdown() {
   const { t } = useTranslation()
@@ -50,10 +51,6 @@ export function ProfileDropdown() {
   const isWalletVisible = useIsSidebarModuleVisible('/wallet')
   const avatarName = user?.username || displayName
   const avatarFallback = getUserAvatarFallback(avatarName)
-  const avatarFallbackStyle = useMemo(
-    () => getUserAvatarStyle(avatarName),
-    [avatarName]
-  )
 
   return (
     <>
@@ -61,10 +58,9 @@ export function ProfileDropdown() {
         <DropdownMenuTrigger
           render={<Button variant='ghost' className='relative size-6 p-0' />}
         >
-          <Avatar className='size-6'>
+          <Avatar className={`${avatarClassName} size-6`}>
             <AvatarFallback
               className={`${avatarFallbackClassName} text-[11px]`}
-              style={avatarFallbackStyle}
             >
               {avatarFallback}
             </AvatarFallback>
@@ -72,11 +68,8 @@ export function ProfileDropdown() {
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' sideOffset={8} className='w-56'>
           <div className='flex items-center gap-2 px-1.5 py-1.5'>
-            <Avatar className='size-8'>
-              <AvatarFallback
-                className={`${avatarFallbackClassName} text-xs`}
-                style={avatarFallbackStyle}
-              >
+            <Avatar className={`${avatarClassName} size-8`}>
+              <AvatarFallback className={`${avatarFallbackClassName} text-xs`}>
                 {avatarFallback}
               </AvatarFallback>
             </Avatar>

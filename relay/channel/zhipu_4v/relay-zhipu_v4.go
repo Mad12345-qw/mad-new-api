@@ -3,10 +3,11 @@ package zhipu_4v
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 )
 
-func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) *dto.GeneralOpenAIRequest {
+func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) any {
 	messages := make([]dto.Message, 0, len(request.Messages))
 	for _, message := range request.Messages {
 		if !message.IsStringContent() {
@@ -55,6 +56,18 @@ func requestOpenAI2Zhipu(request dto.GeneralOpenAIRequest) *dto.GeneralOpenAIReq
 	if request.MaxTokens != nil || request.MaxCompletionTokens != nil {
 		maxTokens := request.GetMaxTokens()
 		out.MaxTokens = &maxTokens
+	}
+	if len(request.WebSearch) > 0 {
+		var webSearch any
+		if common.Unmarshal(request.WebSearch, &webSearch) == nil {
+			toMap := out.ToMap()
+			tools, _ := toMap["tools"].([]any)
+			toMap["tools"] = append(tools, map[string]any{
+				"type":       "web_search",
+				"web_search": webSearch,
+			})
+			return toMap
+		}
 	}
 	return out
 }

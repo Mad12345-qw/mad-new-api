@@ -24,56 +24,56 @@ For commercial licensing, please contact support@quantumnous.com
  * Generic API response
  */
 export interface ApiResponse<T = unknown> {
-  success?: boolean
-  message?: string
-  data?: T
+  success?: boolean;
+  message?: string;
+  data?: T;
 }
 
 /**
  * Standard API response types
  */
-export type TopupInfoResponse = ApiResponse<TopupInfo>
-export type RedemptionResponse = ApiResponse<number>
-export type AmountResponse = ApiResponse<string>
+export type TopupInfoResponse = ApiResponse<TopupInfo>;
+export type RedemptionResponse = ApiResponse<number>;
+export type AmountResponse = ApiResponse<string>;
 export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
-  url?: string
-}
-export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
-export type AffiliateCodeResponse = ApiResponse<string>
-export type AffiliateTransferResponse = ApiResponse
-export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
+  url?: string;
+};
+export type StripePaymentResponse = ApiResponse<{ pay_link: string }>;
+export type AffiliateCodeResponse = ApiResponse<string>;
+export type AffiliateTransferResponse = ApiResponse;
+export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>;
 export type WaffoPaymentResponse = ApiResponse<
   { payment_url?: string } | string
->
+>;
 export type WaffoPancakePaymentResponse = ApiResponse<
   | {
-      checkout_url?: string
-      session_id?: string
-      expires_at?: number | string
-      order_id?: string
+      checkout_url?: string;
+      session_id?: string;
+      expires_at?: number | string;
+      order_id?: string;
       // Self-service session token + expiry — surfaced by the backend so
       // future flows (refund / cancel from new-api's own UI) can use them
       // without re-issuing checkout. Not consumed by the current handler.
-      token?: string
-      token_expires_at?: number | string
+      token?: string;
+      token_expires_at?: number | string;
     }
   | string
->
+>;
 
 /**
  * Creem product configuration
  */
 export interface CreemProduct {
   /** Product display name */
-  name: string
+  name: string;
   /** Creem product ID */
-  productId: string
+  productId: string;
   /** Product price */
-  price: number
+  price: number;
   /** Quota amount to credit */
-  quota: number
+  quota: number;
   /** Currency (USD or EUR) */
-  currency: 'USD' | 'EUR'
+  currency: "USD" | "EUR";
 }
 
 /**
@@ -81,9 +81,9 @@ export interface CreemProduct {
  */
 export interface CreemPaymentRequest {
   /** Creem product ID */
-  product_id: string
+  product_id: string;
   /** Payment method identifier */
-  payment_method: 'creem'
+  payment_method: "creem";
 }
 
 /**
@@ -91,15 +91,15 @@ export interface CreemPaymentRequest {
  */
 export interface PaymentMethod {
   /** Display name of payment method */
-  name: string
+  name: string;
   /** Payment method type identifier */
-  type: string
+  type: string;
   /** Legacy optional color for UI display */
-  color?: string
+  color?: string;
   /** Minimum topup amount for this payment method */
-  min_topup?: number
+  min_topup?: number;
   /** Optional react-icons component name or safe icon URL */
-  icon?: string
+  icon?: string;
 }
 
 /**
@@ -107,13 +107,13 @@ export interface PaymentMethod {
  */
 export interface WaffoPayMethod {
   /** Display name of payment method */
-  name: string
+  name: string;
   /** Optional icon path */
-  icon?: string
+  icon?: string;
   /** Waffo pay method type */
-  payMethodType?: string
+  payMethodType?: string;
   /** Waffo pay method name */
-  payMethodName?: string
+  payMethodName?: string;
 }
 
 /**
@@ -121,41 +121,46 @@ export interface WaffoPayMethod {
  */
 export interface TopupInfo {
   /** Whether online topup is enabled */
-  enable_online_topup: boolean
+  enable_online_topup: boolean;
   /** Whether Stripe topup is enabled */
-  enable_stripe_topup: boolean
+  enable_stripe_topup: boolean;
   /** Available payment methods */
-  pay_methods: PaymentMethod[]
+  pay_methods: PaymentMethod[];
   /** Minimum topup amount for online topup */
-  min_topup: number
+  min_topup: number;
   /** Minimum topup amount for Stripe */
-  stripe_min_topup: number
+  stripe_min_topup: number;
   /** Preset amount options */
-  amount_options: number[]
+  amount_options: number[];
   /** Discount rates by amount */
-  discount: Record<number, number>
+  discount: Record<number, number>;
+  /** Mad API recharge promotion state */
+  recharge_promotion?: {
+    new_user_six_eligible: boolean;
+    amount_options: number[];
+  };
   /** Optional topup link for purchasing codes */
-  topup_link?: string
+  topup_link?: string;
   /** Whether Creem topup is enabled */
-  enable_creem_topup?: boolean
+  enable_creem_topup?: boolean;
   /** Available Creem products */
-  creem_products?: CreemProduct[]
+  creem_products?: CreemProduct[];
   /** Whether Waffo topup is enabled */
-  enable_waffo_topup?: boolean
+  enable_waffo_topup?: boolean;
   /** Available Waffo payment methods */
-  waffo_pay_methods?: WaffoPayMethod[]
+  waffo_pay_methods?: WaffoPayMethod[];
   /** Minimum topup amount for Waffo */
-  waffo_min_topup?: number
+  waffo_min_topup?: number;
   /** Whether Waffo Pancake topup is enabled */
-  enable_waffo_pancake_topup?: boolean
+  enable_waffo_pancake_topup?: boolean;
   /** Minimum topup amount for Waffo Pancake */
-  waffo_pancake_min_topup?: number
+  waffo_pancake_min_topup?: number;
   /** Whether redemption code usage is enabled */
-  enable_redemption?: boolean
+  enable_redemption?: boolean;
   /** Whether compliance confirmation has been completed */
-  payment_compliance_confirmed?: boolean
+  payment_compliance_confirmed?: boolean;
   /** Current compliance terms version */
-  payment_compliance_terms_version?: string
+  payment_compliance_terms_version?: string;
 }
 
 /**
@@ -163,9 +168,9 @@ export interface TopupInfo {
  */
 export interface PresetAmount {
   /** Preset amount value */
-  value: number
+  value: number;
   /** Optional discount rate (0-1) */
-  discount?: number
+  discount?: number;
 }
 
 /**
@@ -173,7 +178,7 @@ export interface PresetAmount {
  */
 export interface RedemptionRequest {
   /** Redemption code key */
-  key: string
+  key: string;
 }
 
 /**
@@ -181,9 +186,9 @@ export interface RedemptionRequest {
  */
 export interface PaymentRequest {
   /** Topup amount */
-  amount: number
+  amount: number;
   /** Payment method identifier */
-  payment_method: string
+  payment_method: string;
 }
 
 /**
@@ -191,9 +196,9 @@ export interface PaymentRequest {
  */
 export interface WaffoPaymentRequest {
   /** Topup amount */
-  amount: number
+  amount: number;
   /** Optional server-side Waffo payment method index */
-  pay_method_index?: number
+  pay_method_index?: number;
 }
 
 /**
@@ -201,7 +206,7 @@ export interface WaffoPaymentRequest {
  */
 export interface WaffoPancakePaymentRequest {
   /** Topup amount */
-  amount: number
+  amount: number;
 }
 
 /**
@@ -209,7 +214,7 @@ export interface WaffoPancakePaymentRequest {
  */
 export interface AmountRequest {
   /** Topup amount to calculate */
-  amount: number
+  amount: number;
 }
 
 /**
@@ -217,7 +222,7 @@ export interface AmountRequest {
  */
 export interface AffiliateTransferRequest {
   /** Quota amount to transfer */
-  quota: number
+  quota: number;
 }
 
 /**
@@ -225,65 +230,65 @@ export interface AffiliateTransferRequest {
  */
 export interface UserWalletData {
   /** User ID */
-  id: number
+  id: number;
   /** Username */
-  username: string
+  username: string;
   /** Current quota balance */
-  quota: number
+  quota: number;
   /** Total used quota */
-  used_quota: number
+  used_quota: number;
   /** Total request count */
-  request_count: number
+  request_count: number;
   /** Affiliate quota (pending rewards) */
-  aff_quota: number
+  aff_quota: number;
   /** Total affiliate quota earned (historical) */
-  aff_history_quota: number
+  aff_history_quota: number;
   /** Number of successful affiliate invites */
-  aff_count: number
+  aff_count: number;
   /** User group */
-  group: string
+  group: string;
 }
 
 /**
  * Topup record status
  */
-export type TopupStatus = 'success' | 'pending' | 'expired'
+export type TopupStatus = "success" | "pending" | "expired";
 
 /**
  * Topup billing record
  */
 export interface TopupRecord {
   /** Record ID */
-  id: number
+  id: number;
   /** User ID */
-  user_id: number
+  user_id: number;
   /** Topup amount (quota) */
-  amount: number
+  amount: number;
   /** Payment amount (actual money paid) */
-  money: number
+  money: number;
   /** Trade/order number */
-  trade_no: string
+  trade_no: string;
   /** Payment method type */
-  payment_method: string
+  payment_method: string;
   /** Creation timestamp */
-  create_time: number
+  create_time: number;
   /** Completion timestamp */
-  complete_time?: number
+  complete_time?: number;
   /** Payment status */
-  status: TopupStatus
+  status: TopupStatus;
 }
 
 /**
  * Billing history response
  */
 export interface BillingHistoryResponse {
-  items: TopupRecord[]
-  total: number
+  items: TopupRecord[];
+  total: number;
 }
 
 /**
  * Complete order request (admin only)
  */
 export interface CompleteOrderRequest {
-  trade_no: string
+  trade_no: string;
 }

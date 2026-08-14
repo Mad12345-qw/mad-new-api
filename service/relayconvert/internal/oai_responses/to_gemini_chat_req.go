@@ -1,6 +1,7 @@
 package oairesponses
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -34,10 +35,6 @@ func OpenAIResponsesRequestToGeminiChat(c *gin.Context, req *dto.OpenAIResponses
 	if req.Model == "" {
 		return nil, fmt.Errorf("model is required")
 	}
-	if err := ValidateRequestChatUnsupportedFields(req); err != nil {
-		return nil, err
-	}
-
 	geminiRequest := &dto.GeminiChatRequest{
 		GenerationConfig: dto.GeminiChatGenerationConfig{
 			Temperature: req.Temperature,
@@ -88,10 +85,12 @@ func OpenAIResponsesRequestToGeminiChat(c *gin.Context, req *dto.OpenAIResponses
 		}
 		functions[i].Parameters = sharedgemini.CleanFunctionParameters(functions[i].Parameters)
 	}
+	geminiTools := responsesGeminiBuiltinTools(req.Tools)
 	if len(functions) > 0 {
-		geminiRequest.SetTools([]dto.GeminiChatTool{
-			{FunctionDeclarations: functions},
-		})
+		geminiTools = append(geminiTools, dto.GeminiChatTool{FunctionDeclarations: functions})
+	}
+	if len(geminiTools) > 0 {
+		geminiRequest.SetTools(geminiTools)
 	}
 
 	toolChoice, err := RequestToolChoiceToChat(req.ToolChoice)
@@ -164,6 +163,39 @@ func OpenAIResponsesRequestToGeminiChat(c *gin.Context, req *dto.OpenAIResponses
 	}
 
 	return geminiRequest, nil
+}
+
+func responsesGeminiBuiltinTools(raw json.RawMessage) []dto.GeminiChatTool {
+	if !RawJSONPresent(raw) {
+		return nil
+	}
+	var tools []map[string]any
+	if common.Unmarshal(raw, &tools) != nil {
+		return nil
+	}
+	out := make([]dto.GeminiChatTool, 0, 3)
+	seen := make(map[string]bool)
+	for _, tool := range tools {
+		toolType := strings.ToLower(strings.TrimSpace(common.Interface2String(tool["type"])))
+		switch toolType {
+		case "web_search", "web_search_preview", "google_search":
+			if !seen["search"] {
+				out = append(out, dto.GeminiChatTool{GoogleSearch: map[string]string{}})
+				seen["search"] = true
+			}
+		case "code_interpreter", "code_execution":
+			if !seen["code"] {
+				out = append(out, dto.GeminiChatTool{CodeExecution: map[string]string{}})
+				seen["code"] = true
+			}
+		case "url_context":
+			if !seen["url"] {
+				out = append(out, dto.GeminiChatTool{URLContext: map[string]string{}})
+				seen["url"] = true
+			}
+		}
+	}
+	return out
 }
 
 func applyResponsesTextToGemini(raw []byte, geminiRequest *dto.GeminiChatRequest) error {

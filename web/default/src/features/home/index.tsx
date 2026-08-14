@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
@@ -36,6 +36,7 @@ export function Home() {
   const { auth } = useAuthStore()
   const isAuthenticated = !!auth.user
   const { content, isLoaded, isUrl } = useHomePageContent()
+  const [embeddedHomeScrolled, setEmbeddedHomeScrolled] = useState(false)
 
   const syncIframePreferences = useCallback(() => {
     try {
@@ -58,6 +59,27 @@ export function Home() {
     }
   }, [isUrl, syncIframePreferences])
 
+  useEffect(() => {
+    if (!isUrl) {
+      setEmbeddedHomeScrolled(false)
+      return
+    }
+
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (event.source !== iframeRef.current?.contentWindow) return
+      if (!event.data || typeof event.data !== 'object') return
+
+      const message = event.data as { type?: unknown; scrolled?: unknown }
+      if (message.type !== 'mad-home:scroll') return
+      if (typeof message.scrolled !== 'boolean') return
+
+      setEmbeddedHomeScrolled(message.scrolled)
+    }
+
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [isUrl])
+
   if (!isLoaded) {
     return (
       <PublicLayout showMainContainer={false}>
@@ -71,7 +93,10 @@ export function Home() {
   if (content) {
     if (isUrl) {
       return (
-        <PublicLayout showMainContainer={false}>
+        <PublicLayout
+          showMainContainer={false}
+          headerProps={{ scrolledOverride: embeddedHomeScrolled }}
+        >
           {/*
             allow-top-navigation-by-user-activation: the custom home page URL is
             admin-configured (trusted); this lets its target="_top" nav/menu links
@@ -85,6 +110,7 @@ export function Home() {
             src={content}
             className='h-screen w-full border-none'
             title={t('Custom Home Page')}
+            allow='clipboard-write'
             sandbox='allow-forms allow-popups allow-popups-to-escape-sandbox allow-scripts allow-top-navigation-by-user-activation'
             onLoad={syncIframePreferences}
           />

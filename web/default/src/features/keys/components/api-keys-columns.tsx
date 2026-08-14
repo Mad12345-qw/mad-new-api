@@ -24,7 +24,6 @@ import { BadgeCell, TruncatedCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Progress } from '@/components/ui/progress'
 import {
   Tooltip,
   TooltipContent,
@@ -46,10 +45,50 @@ import {
 } from './api-keys-cells'
 import { DataTableRowActions } from './data-table-row-actions'
 
-function getQuotaProgressColor(percentage: number): string {
-  if (percentage <= 10) return '[&_[data-slot=progress-indicator]]:bg-rose-500'
-  if (percentage <= 30) return '[&_[data-slot=progress-indicator]]:bg-amber-500'
-  return '[&_[data-slot=progress-indicator]]:bg-emerald-500'
+export function ApiKeyUsageSummary({ apiKey }: { apiKey: ApiKey }) {
+  const { t } = useTranslation()
+  const lifetime = apiKey.lifetime_used_quota
+  const recent7d = apiKey.recent_7d_used_quota
+  const remaining = apiKey.remain_quota
+  const total = apiKey.used_quota + remaining
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<div className='w-[150px] space-y-1 text-xs' />}>
+        <div className='flex items-center justify-between gap-2'>
+          <span className='text-muted-foreground'>{t('Lifetime Usage')}</span>
+          <span className='font-medium tabular-nums'>
+            {lifetime == null ? '-' : formatQuota(lifetime)}
+          </span>
+        </div>
+        <div className='flex items-center justify-between gap-2'>
+          <span className='text-muted-foreground'>{t('Last 7 Days')}</span>
+          <span className='font-medium tabular-nums'>
+            {recent7d == null ? '-' : formatQuota(recent7d)}
+          </span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>
+        <div className='space-y-1 text-xs'>
+          <div>
+            {t('Lifetime Usage')}: {lifetime == null ? '-' : formatQuota(lifetime)}
+          </div>
+          <div>
+            {t('Last 7 Days')}: {recent7d == null ? '-' : formatQuota(recent7d)}
+          </div>
+          {apiKey.unlimited_quota ? (
+            <div>
+              {t('Quota')}: {t('Unlimited')}
+            </div>
+          ) : (
+            <div>
+              {t('Remaining:')} {formatQuota(remaining)} / {formatQuota(total)}
+            </div>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 function useGroupRatios(): Record<string, number> {
@@ -142,57 +181,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       id: 'quota',
       accessorKey: 'remain_quota',
       header: t('Quota'),
-      cell: ({ row }) => {
-        const apiKey = row.original
-        if (apiKey.unlimited_quota) {
-          return (
-            <StatusBadge
-              label={t('Unlimited')}
-              variant='neutral'
-              copyable={false}
-              className='-ml-1.5'
-            />
-          )
-        }
-
-        const used = apiKey.used_quota
-        const remaining = apiKey.remain_quota
-        const total = used + remaining
-        const percentage = total > 0 ? (remaining / total) * 100 : 0
-
-        return (
-          <Tooltip>
-            <TooltipTrigger render={<div className='w-[150px] space-y-1' />}>
-              <div className='flex justify-between text-xs'>
-                <span className='font-medium tabular-nums'>
-                  {formatQuota(remaining)}
-                </span>
-                <span className='text-muted-foreground tabular-nums'>
-                  {formatQuota(total)}
-                </span>
-              </div>
-              <Progress
-                value={percentage}
-                className={cn('h-1.5', getQuotaProgressColor(percentage))}
-              />
-            </TooltipTrigger>
-            <TooltipContent>
-              <div className='space-y-1 text-xs'>
-                <div>
-                  {t('Used:')} {formatQuota(used)}
-                </div>
-                <div>
-                  {t('Remaining:')} {formatQuota(remaining)} (
-                  {percentage.toFixed(1)}%)
-                </div>
-                <div>
-                  {t('Total:')} {formatQuota(total)}
-                </div>
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        )
-      },
+      cell: ({ row }) => <ApiKeyUsageSummary apiKey={row.original} />,
       size: 170,
     },
     {

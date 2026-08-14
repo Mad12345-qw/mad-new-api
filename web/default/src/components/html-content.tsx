@@ -18,7 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import DOMPurify, { type Config } from 'dompurify'
 import { useEffect, useMemo, useRef } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 
+import { CopyButton } from '@/components/copy-button'
 import { cn } from '@/lib/utils'
 
 export type HtmlContentVariant = 'inline' | 'isolated'
@@ -163,6 +165,30 @@ function IsolatedHtmlContent(props: {
     syncDarkClass(wrapper)
     wrapper.innerHTML = props.html
 
+    const copyButtonRoots: Root[] = []
+    wrapper.querySelectorAll('pre > code').forEach((code) => {
+      const pre = code.parentElement
+      if (!pre) return
+
+      const buttonHost = document.createElement('div')
+      buttonHost.style.cssText =
+        'position:absolute;top:10px;right:10px;z-index:1;display:flex;'
+      pre.style.position = 'relative'
+      pre.append(buttonHost)
+
+      const root = createRoot(buttonHost)
+      root.render(
+        <CopyButton
+          value={code.textContent ?? ''}
+          tooltip='Copy code'
+          successTooltip='Copied!'
+          className='h-7 w-7 border border-white/10 bg-black/30 text-white hover:bg-black/50'
+          iconClassName='size-3.5'
+        />
+      )
+      copyButtonRoots.push(root)
+    })
+
     const contentTemplate = document.createElement('template')
     contentTemplate.innerHTML = isolatedContentBaseStyles
 
@@ -178,13 +204,66 @@ function IsolatedHtmlContent(props: {
       attributeFilter: ['class'],
     })
 
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      copyButtonRoots.forEach((root) => root.unmount())
+    }
   }, [props.html])
 
   return (
     <div
       ref={containerRef}
       className={cn('block w-full', props.className)}
+    />
+  )
+}
+
+function InlineHtmlContent(props: {
+  className?: string
+  html: string
+}): React.ReactElement {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const copyButtonRoots: Root[] = []
+    container.querySelectorAll('pre > code').forEach((code) => {
+      const pre = code.parentElement
+      if (!pre) return
+
+      const buttonHost = document.createElement('div')
+      buttonHost.style.cssText =
+        'position:absolute;top:10px;right:10px;z-index:1;display:flex;'
+      pre.style.position = 'relative'
+      pre.append(buttonHost)
+
+      const root = createRoot(buttonHost)
+      root.render(
+        <CopyButton
+          value={code.textContent ?? ''}
+          tooltip='Copy code'
+          successTooltip='Copied!'
+          className='h-7 w-7 border border-border/70 bg-background/90 shadow-sm hover:bg-muted'
+          iconClassName='size-3.5'
+        />
+      )
+      copyButtonRoots.push(root)
+    })
+
+    return () => copyButtonRoots.forEach((root) => root.unmount())
+  }, [props.html])
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn(
+        'prose prose-neutral dark:prose-invert max-w-none',
+        props.className
+      )}
+      // eslint-disable-next-line react/no-danger -- html is sanitized above
+      dangerouslySetInnerHTML={{ __html: props.html }}
     />
   )
 }
@@ -200,14 +279,5 @@ export function HtmlContent(props: HtmlContentProps) {
     return <IsolatedHtmlContent className={props.className} html={html} />
   }
 
-  return (
-    <div
-      className={cn(
-        'prose prose-neutral dark:prose-invert max-w-none',
-        props.className
-      )}
-      // eslint-disable-next-line react/no-danger -- html is sanitized above
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  )
+  return <InlineHtmlContent className={props.className} html={html} />
 }

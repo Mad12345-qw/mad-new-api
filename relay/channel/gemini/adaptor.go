@@ -1,16 +1,23 @@
 package gemini
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
@@ -21,6 +28,265 @@ import (
 )
 
 type Adaptor struct {
+}
+
+var geminiImagePreviewSlots = make(chan struct{}, geminiImagePreviewConcurrency())
+
+type releaseOnClose struct {
+	io.ReadCloser
+	once    sync.Once
+	release func()
+}
+
+func (body *releaseOnClose) Close() error {
+	err := body.ReadCloser.Close()
+	body.once.Do(body.release)
+	return err
+}
+
+func geminiImagePreviewConcurrency() int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MADAPI_GEMINI_IMAGE_CONCURRENCY")))
+	if err != nil || value < 1 {
+		return 1
+	}
+	return value
+}
+
+func isGeminiImagePreviewModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview":
+		return true
+	default:
+		return false
+	}
+}
+
+func geminiImageRequestValue(c *gin.Context, request dto.ImageRequest, keys ...string) string {
+	for _, key := range keys {
+		if c != nil && c.Request != nil {
+			if value := strings.TrimSpace(c.Request.PostForm.Get(key)); value != "" {
+				return value
+			}
+		}
+		if raw, ok := request.Extra[key]; ok {
+			var value string
+			if common.Unmarshal(raw, &value) == nil && strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
+}
+
+func geminiImageSize(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) string {
+	originModel := ""
+	if info != nil {
+		originModel = strings.ToLower(strings.TrimSpace(info.OriginModelName))
+	}
+	if strings.HasSuffix(originModel, "-4k") {
+		return "4K"
+	}
+	if strings.HasSuffix(originModel, "-2k") {
+		return "2K"
+	}
+	for _, value := range []string{
+		geminiImageRequestValue(c, request, "image_size", "output_resolution", "resolution"),
+		request.Quality,
+		request.Size,
+	} {
+		switch strings.ToUpper(strings.TrimSpace(value)) {
+		case "1K", "2K", "4K":
+			return strings.ToUpper(strings.TrimSpace(value))
+		case "HD", "HIGH":
+			return "2K"
+		}
+	}
+	if width, height, ok := geminiImageDimensions(request.Size); ok {
+		longest := width
+		if height > longest {
+			longest = height
+		}
+		if longest > 2048 {
+			return "4K"
+		}
+		if longest > 1024 {
+			return "2K"
+		}
+	}
+	return "1K"
+}
+
+func geminiImageDimensions(size string) (int, int, bool) {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(size)), "x")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	return width, height, widthErr == nil && heightErr == nil && width > 0 && height > 0
+}
+
+func geminiImageGCD(left, right int) int {
+	for right != 0 {
+		left, right = right, left%right
+	}
+	return left
+}
+
+func geminiImageAspectRatio(c *gin.Context, request dto.ImageRequest) string {
+	if explicit := geminiImageRequestValue(c, request, "aspect_ratio", "aspectRatio"); explicit != "" {
+		return explicit
+	}
+	size := request.Size
+	switch strings.ToLower(strings.TrimSpace(size)) {
+	case "1536x1024":
+		return "3:2"
+	case "1024x1536":
+		return "2:3"
+	case "1024x1792":
+		return "9:16"
+	case "1792x1024":
+		return "16:9"
+	default:
+		if strings.Contains(size, ":") {
+			return size
+		}
+		if width, height, ok := geminiImageDimensions(size); ok {
+			divisor := geminiImageGCD(width, height)
+			if divisor > 0 {
+				return fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+			}
+		}
+		return "1:1"
+	}
+}
+
+type geminiReferenceImage struct {
+	MimeType string
+	Data     string
+}
+
+func appendGeminiReferenceValue(c *gin.Context, images []geminiReferenceImage, raw json.RawMessage) ([]geminiReferenceImage, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return images, nil
+	}
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return appendGeminiReferenceAny(c, images, value)
+}
+
+func appendGeminiReferenceAny(c *gin.Context, images []geminiReferenceImage, value any) ([]geminiReferenceImage, error) {
+	switch typed := value.(type) {
+	case string:
+		source := types.NewFileSourceFromData(strings.TrimSpace(typed), "")
+		data, mimeType, err := service.GetBase64Data(c, source, "gemini_image_reference")
+		if err != nil {
+			return nil, err
+		}
+		return append(images, geminiReferenceImage{MimeType: mimeType, Data: data}), nil
+	case []any:
+		var err error
+		for _, item := range typed {
+			images, err = appendGeminiReferenceAny(c, images, item)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return images, nil
+	case map[string]any:
+		for _, key := range []string{"url", "image_url", "imageUrl", "data"} {
+			if nested, ok := typed[key]; ok {
+				return appendGeminiReferenceAny(c, images, nested)
+			}
+		}
+	}
+	return images, nil
+}
+
+func geminiReferenceImages(c *gin.Context, request dto.ImageRequest) ([]geminiReferenceImage, error) {
+	images := make([]geminiReferenceImage, 0, 4)
+	if c != nil && c.Request != nil && c.Request.MultipartForm != nil {
+		for _, field := range []string{"image", "image[]", "images", "reference_images", "reference_image"} {
+			for _, header := range c.Request.MultipartForm.File[field] {
+				file, err := header.Open()
+				if err != nil {
+					return nil, err
+				}
+				raw, readErr := io.ReadAll(file)
+				closeErr := file.Close()
+				if readErr != nil {
+					return nil, readErr
+				}
+				if closeErr != nil {
+					return nil, closeErr
+				}
+				mimeType := strings.TrimSpace(header.Header.Get("Content-Type"))
+				if mimeType == "" {
+					mimeType = http.DetectContentType(raw)
+				}
+				if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+					return nil, fmt.Errorf("uploaded Gemini reference is not an image")
+				}
+				images = append(images, geminiReferenceImage{
+					MimeType: mimeType,
+					Data:     base64.StdEncoding.EncodeToString(raw),
+				})
+			}
+		}
+		if len(images) > 0 {
+			return images, nil
+		}
+	}
+	var err error
+	for _, raw := range []json.RawMessage{request.Image, request.Images} {
+		images, err = appendGeminiReferenceValue(c, images, raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, key := range []string{"input_image", "input_images", "reference_image_urls", "reference_images"} {
+		if raw, ok := request.Extra[key]; ok {
+			images, err = appendGeminiReferenceValue(c, images, raw)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return images, nil
+}
+
+func convertGeminiImagePreviewRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (*dto.GeminiChatRequest, error) {
+	imageConfig, err := common.Marshal(map[string]string{
+		"imageSize":   geminiImageSize(c, info, request),
+		"aspectRatio": geminiImageAspectRatio(c, request),
+	})
+	if err != nil {
+		return nil, err
+	}
+	parts := []dto.GeminiPart{{Text: request.Prompt}}
+	references, err := geminiReferenceImages(c, request)
+	if err != nil {
+		return nil, err
+	}
+	for index, reference := range references {
+		position := index + 1
+		parts = append(parts,
+			dto.GeminiPart{Text: fmt.Sprintf("Reference image %d (图%d). Treat this exact position as image %d in the user's prompt.", position, position, position)},
+			dto.GeminiPart{InlineData: &dto.GeminiInlineData{MimeType: reference.MimeType, Data: reference.Data}},
+		)
+	}
+	return &dto.GeminiChatRequest{
+		Contents: []dto.GeminiChatContent{{
+			Role:  "user",
+			Parts: parts,
+		}},
+		GenerationConfig: dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"TEXT", "IMAGE"},
+			ImageConfig:        imageConfig,
+		},
+	}, nil
 }
 
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
@@ -61,6 +327,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if isGeminiImagePreviewModel(info.UpstreamModelName) {
+		return convertGeminiImagePreviewRequest(c, info, request)
+	}
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return nil, errors.New("not supported model for image generation, only imagen models are supported")
 	}
@@ -251,7 +520,27 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	return channel.DoApiRequest(a, c, info, requestBody)
+	if info.RelayMode != constant.RelayModeImagesGenerations || !isGeminiImagePreviewModel(info.UpstreamModelName) {
+		return channel.DoApiRequest(a, c, info, requestBody)
+	}
+	select {
+	case geminiImagePreviewSlots <- struct{}{}:
+	case <-c.Request.Context().Done():
+		return nil, c.Request.Context().Err()
+	}
+	release := func() { <-geminiImagePreviewSlots }
+	response, err := channel.DoApiRequest(a, c, info, requestBody)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	httpResponse := response
+	if httpResponse == nil || httpResponse.Body == nil {
+		release()
+		return response, nil
+	}
+	httpResponse.Body = &releaseOnClose{ReadCloser: httpResponse.Body, release: release}
+	return httpResponse, nil
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {

@@ -68,5 +68,21 @@ export function buildChatCompletionPayload(
     payload.seed = config.seed
   }
 
+  if (config.webSearch) {
+    if (/gemini/i.test(config.model)) {
+      payload.tools = [
+        {
+          type: 'function',
+          function: {
+            name: 'googleSearch',
+            description: 'Search the web for current information',
+          },
+        },
+      ]
+    } else {
+      payload.web_search_options = { search_context_size: 'medium' }
+    }
+  }
+
   return payload
 }

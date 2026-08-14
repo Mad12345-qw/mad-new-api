@@ -35,6 +35,11 @@ export const MESSAGE_STATUS = {
 // API endpoints
 export const API_ENDPOINTS = {
   CHAT_COMPLETIONS: '/pg/chat/completions',
+  RESPONSES: '/pg/responses',
+  IMAGE_GENERATIONS: '/pg/images/generations',
+  IMAGE_EDITS: '/pg/images/edits',
+  AUDIO_SPEECH: '/pg/audio/speech',
+  VIDEOS: '/pg/videos',
   USER_MODELS: '/api/user/models',
   USER_GROUPS: '/api/user/self/groups',
 } as const
@@ -54,6 +59,14 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   presence_penalty: 0,
   seed: null,
   stream: true,
+  webSearch: false,
+  imageSize: '1024x1024',
+  imageQuality: 'hd',
+  imageResponseFormat: 'b64_json',
+  videoSeconds: 5,
+  videoSize: '1280x720',
+  ttsVoice: 'alloy',
+  ttsFormat: 'mp3',
 }
 
 export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {

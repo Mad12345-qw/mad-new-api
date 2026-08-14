@@ -22,7 +22,7 @@ import { AnimatePresence, motion, type Variants } from 'motion/react'
 import { useTranslation } from 'react-i18next'
 
 import { SignOutDialog } from '@/components/sign-out-dialog'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import useDialogState from '@/hooks/use-dialog'
@@ -90,9 +90,10 @@ function MobileUserProfile({ user, onNavigate }: MobileUserProfileProps) {
       <div className='flex flex-col text-sm'>
         {/* User header - simplified */}
         <div className='border-border flex items-center gap-2.5 border-b p-2.5'>
-          <Avatar className='size-9'>
-            <AvatarImage src='/avatars/01.png' alt={`@${displayName}`} />
-            <AvatarFallback className='text-xs'>{initials}</AvatarFallback>
+          <Avatar className='size-9 border border-[#c8a96a]/60 bg-[#0d0c09] shadow-[0_0_0_1px_rgba(0,0,0,0.72),0_0_14px_rgba(200,169,106,0.16)]'>
+            <AvatarFallback className='bg-[#0d0c09] text-xs font-semibold text-[#e7cf91]'>
+              {initials}
+            </AvatarFallback>
           </Avatar>
           <div className='flex flex-1 flex-col gap-0.5 overflow-hidden'>
             <p className='text-foreground truncate font-medium'>

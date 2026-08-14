@@ -23,6 +23,7 @@ For commercial licensing, please contact support@quantumnous.com
  * Supports:
  * - Basic: "OpenAI", "OpenAI.Color"
  * - Chained properties: "OpenAI.Avatar.type={'platform'}"
+ * - Image paths: "/model-icons/custom.svg", "https://example.com/icon.png"
  * - Size parameter: getLobeIcon("OpenAI", 20)
  */
 import * as LobeIcons from '@lobehub/icons'
@@ -98,7 +99,22 @@ export function getLobeIcon(
       </div>
     )
   }
-
+  if (/^(?:https?:\/\/|\/)/i.test(trimmedName)) {
+    return (
+      <span
+        className='border-border/70 inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border bg-white'
+        style={{ width: size, height: size }}
+      >
+        <img
+          src={trimmedName}
+          alt=''
+          aria-hidden='true'
+          loading='lazy'
+          className='h-full w-full object-contain p-[2px]'
+        />
+      </span>
+    )
+  }
   // Parse component path and chained properties
   const segments = trimmedName.split('.')
   const baseKey = segments[0]

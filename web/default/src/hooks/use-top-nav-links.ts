@@ -100,5 +100,11 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('About'), href: '/about' })
   }
 
+  links.push({
+    title: 'AdForge（广告腹肌）',
+    href: 'https://mad.myddns.me/adforge',
+    external: true,
+  })
+
   return links
 }

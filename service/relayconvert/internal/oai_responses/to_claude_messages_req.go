@@ -1,6 +1,7 @@
 package oairesponses
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -28,10 +29,6 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
 	if req.Model == "" {
 		return nil, fmt.Errorf("model is required")
 	}
-	if err := ValidateRequestChatUnsupportedFields(req); err != nil {
-		return nil, err
-	}
-
 	claudeRequest := &dto.ClaudeRequest{
 		Model:       req.Model,
 		Temperature: req.Temperature,
@@ -50,8 +47,12 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
 	if err != nil {
 		return nil, err
 	}
-	if len(functions) > 0 {
-		claudeRequest.Tools = responsesFunctionDeclarationsToClaudeTools(functions)
+	claudeTools := responsesFunctionDeclarationsToClaudeTools(functions)
+	if webSearchTool := responsesClaudeWebSearchTool(req.Tools); webSearchTool != nil {
+		claudeTools = append(claudeTools, webSearchTool)
+	}
+	if len(claudeTools) > 0 {
+		claudeRequest.Tools = claudeTools
 	}
 
 	toolChoice, err := RequestToolChoiceToChat(req.ToolChoice)
@@ -120,6 +121,45 @@ func OpenAIResponsesRequestToClaudeMessages(c *gin.Context, req *dto.OpenAIRespo
 	}
 	claudeRequest.Messages = ensureClaudeMessagesStartWithUser(claudeRequest.Messages)
 	return claudeRequest, nil
+}
+
+func responsesClaudeWebSearchTool(raw json.RawMessage) *dto.ClaudeWebSearchTool {
+	if !RawJSONPresent(raw) {
+		return nil
+	}
+	var tools []map[string]any
+	if common.Unmarshal(raw, &tools) != nil {
+		return nil
+	}
+	for _, tool := range tools {
+		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
+		if toolType != "web_search" && toolType != "web_search_preview" {
+			continue
+		}
+		webSearch := &dto.ClaudeWebSearchTool{Type: "web_search_20250305", Name: "web_search"}
+		switch strings.ToLower(strings.TrimSpace(common.Interface2String(tool["search_context_size"]))) {
+		case "low":
+			webSearch.MaxUses = 1
+		case "medium":
+			webSearch.MaxUses = 5
+		case "high":
+			webSearch.MaxUses = 10
+		}
+		if location, ok := tool["user_location"].(map[string]any); ok {
+			if approximate, ok := location["approximate"].(map[string]any); ok {
+				location = approximate
+			}
+			webSearch.UserLocation = &dto.ClaudeWebSearchUserLocation{
+				Type:     "approximate",
+				Timezone: common.Interface2String(location["timezone"]),
+				Country:  common.Interface2String(location["country"]),
+				Region:   common.Interface2String(location["region"]),
+				City:     common.Interface2String(location["city"]),
+			}
+		}
+		return webSearch
+	}
+	return nil
 }
 
 func responsesFunctionDeclarationsToClaudeTools(functions []dto.FunctionRequest) []any {

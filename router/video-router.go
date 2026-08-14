@@ -7,11 +7,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func videoContentAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Query("expires") != "" && c.Query("signature") != "" {
+			c.Next()
+			return
+		}
+		middleware.TokenOrUserAuth()(c)
+	}
+}
+
 func SetVideoRouter(router *gin.Engine) {
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
-	videoProxyRouter.Use(middleware.TokenOrUserAuth())
+	videoProxyRouter.Use(videoContentAuth())
 	{
 		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
 	}
@@ -20,6 +30,7 @@ func SetVideoRouter(router *gin.Engine) {
 	videoV1Router.Use(middleware.RouteTag("relay"))
 	videoV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
 	{
+		videoV1Router.GET("/videos/by-request", controller.GetVideoTaskByRequestID)
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
@@ -28,6 +39,8 @@ func SetVideoRouter(router *gin.Engine) {
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
 	{
 		videoV1Router.POST("/videos", controller.RelayTask)
+		videoV1Router.POST("/videos/generations", controller.RelayTask)
+		videoV1Router.GET("/videos/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
 

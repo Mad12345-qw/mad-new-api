@@ -15,6 +15,29 @@ func SetRelayRouter(router *gin.Engine) {
 	router.Use(middleware.DecompressRequestMiddleware())
 	router.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	router.Use(middleware.StatsMiddleware())
+	// Codex Desktop uses a richer catalog and a native Responses transport.
+	// Authentication, distribution and billing remain in the existing relay.
+	codexRouter := router.Group("/codex/v1")
+	codexRouter.Use(middleware.RouteTag("codex_compat"))
+	codexRouter.Use(middleware.TokenAuth())
+	{
+		codexRouter.GET("/models", controller.CodexListModels)
+		codexRouter.GET("/responses", controller.CodexResponsesWebsocket)
+		codexRouter.POST("/responses", controller.CodexResponses)
+		codexRouter.POST("/responses/compact", controller.CodexResponsesCompact)
+	}
+
+	// API-key Codex Desktop clients can opt into Cockpit-style model shells
+	// without changing the established /codex/v1 surface.
+	codexCockpitRouter := router.Group("/codex/cockpit/v1")
+	codexCockpitRouter.Use(middleware.RouteTag("codex_cockpit_compat"))
+	codexCockpitRouter.Use(middleware.TokenAuth())
+	{
+		codexCockpitRouter.GET("/models", controller.CodexCockpitListModels)
+		codexCockpitRouter.POST("/responses", controller.CodexResponses)
+		codexCockpitRouter.POST("/responses/compact", controller.CodexResponsesCompact)
+	}
+
 	// https://platform.openai.com/docs/api-reference/introduction
 	modelsRouter := router.Group("/v1/models")
 	modelsRouter.Use(middleware.RouteTag("relay"))
@@ -62,9 +85,18 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundRouter := router.Group("/pg")
 	playgroundRouter.Use(middleware.RouteTag("relay"))
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
-	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute())
+	playgroundRouter.Use(middleware.NormalizePlaygroundRequestPath())
+	playgroundRouter.Use(middleware.UserAuth())
 	{
-		playgroundRouter.POST("/chat/completions", controller.Playground)
+		playgroundSubmitRouter := playgroundRouter.Group("")
+		playgroundSubmitRouter.Use(middleware.Distribute())
+		playgroundSubmitRouter.POST("/chat/completions", controller.Playground)
+		playgroundSubmitRouter.POST("/responses", controller.PlaygroundResponses)
+		playgroundSubmitRouter.POST("/images/generations", controller.PlaygroundImage)
+		playgroundSubmitRouter.POST("/images/edits", controller.PlaygroundImage)
+		playgroundSubmitRouter.POST("/audio/speech", controller.PlaygroundAudio)
+		playgroundSubmitRouter.POST("/videos", controller.PlaygroundTask)
+		playgroundRouter.GET("/videos/:task_id", controller.PlaygroundTaskFetch)
 	}
 	relayV1Router := router.Group("/v1")
 	relayV1Router.Use(middleware.RouteTag("relay"))

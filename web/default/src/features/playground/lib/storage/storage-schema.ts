@@ -34,6 +34,14 @@ export const playgroundConfigSchema = z.object({
   presence_penalty: z.number().optional(),
   seed: z.number().nullable().optional(),
   stream: z.boolean().optional(),
+  webSearch: z.boolean().optional(),
+  imageSize: z.string().optional(),
+  imageQuality: z.string().optional(),
+  imageResponseFormat: z.enum(['b64_json', 'url']).optional(),
+  videoSeconds: z.number().optional(),
+  videoSize: z.string().optional(),
+  ttsVoice: z.string().optional(),
+  ttsFormat: z.string().optional(),
 })
 
 export const parameterEnabledSchema = z.object({

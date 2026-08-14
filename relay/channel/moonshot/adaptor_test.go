@@ -1,6 +1,7 @@
 package moonshot
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -8,6 +9,25 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/require"
 )
+
+func TestConvertOpenAIResponsesRequestUsesCodexChatAtChannelBoundary(t *testing.T) {
+	request := dto.OpenAIResponsesRequest{
+		Model: "kimi-k3",
+		Input: json.RawMessage(`[{"role":"user","content":"search"}]`),
+		Tools: json.RawMessage(`[{"type":"web_search","search_context_size":"high"}]`),
+	}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "kimi-k3"},
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(nil, info, request)
+
+	require.NoError(t, err)
+	chatRequest, ok := converted.(*dto.GeneralOpenAIRequest)
+	require.True(t, ok)
+	require.NotNil(t, chatRequest.WebSearchOptions)
+	require.Equal(t, "high", chatRequest.WebSearchOptions.SearchContextSize)
+}
 
 func TestConvertOpenAIRequestKimiK26UsesOnlyAllowedTemperature(t *testing.T) {
 	request := &dto.GeneralOpenAIRequest{

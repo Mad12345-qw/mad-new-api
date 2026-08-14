@@ -49,6 +49,29 @@ export interface Message {
   isContentComplete?: boolean
   status?: MessageStatus
   errorCode?: string | null
+  attachments?: PlaygroundAttachment[]
+  media?: PlaygroundMedia[]
+}
+
+export type PlaygroundAttachmentKind = 'image' | 'video' | 'file'
+
+export interface PlaygroundAttachment {
+  id: string
+  kind: PlaygroundAttachmentKind
+  name: string
+  mimeType: string
+  size: number
+  dataUrl: string
+}
+
+export type PlaygroundMediaKind = 'image' | 'video' | 'audio' | 'file'
+
+export interface PlaygroundMedia {
+  kind: PlaygroundMediaKind
+  url: string
+  mimeType?: string
+  name?: string
+  revokeOnDispose?: boolean
 }
 
 // API payload types
@@ -58,10 +81,15 @@ export interface ChatCompletionMessage {
 }
 
 export interface ContentPart {
-  type: 'text' | 'image_url'
+  type: 'text' | 'image_url' | 'video_url' | 'file'
   text?: string
   image_url?: {
     url: string
+  }
+  video_url?: string
+  file?: {
+    filename: string
+    file_data: string
   }
 }
 
@@ -76,6 +104,11 @@ export interface ChatCompletionRequest {
   frequency_penalty?: number
   presence_penalty?: number
   seed?: number
+  web_search_options?: {
+    search_context_size: 'low' | 'medium' | 'high'
+  }
+  tools?: Array<Record<string, unknown>>
+  extra_body?: Record<string, unknown>
 }
 
 export interface ChatCompletionChunk {
@@ -126,6 +159,35 @@ export interface PlaygroundConfig {
   presence_penalty: number
   seed: number | null
   stream: boolean
+  webSearch: boolean
+  imageSize: string
+  imageQuality: string
+  imageResponseFormat: 'b64_json' | 'url'
+  videoSeconds: number
+  videoSize: string
+  ttsVoice: string
+  ttsFormat: string
+}
+
+export type PlaygroundModelKind = 'chat' | 'image' | 'video' | 'tts'
+
+export interface ImageGenerationResponse {
+  data?: Array<{
+    url?: string
+    b64_json?: string
+    revised_prompt?: string
+  }>
+}
+
+export interface VideoTaskResponse {
+  id?: string
+  task_id?: string
+  status?: string
+  fail_reason?: string
+  url?: string
+  result_url?: string
+  error?: unknown
+  data?: Record<string, unknown>
 }
 
 export interface ParameterEnabled {

@@ -27,6 +27,8 @@ import {
   getInitialParameterEnabled,
   getInitialPlaygroundConfig,
   loadMessages,
+  revokeMessageResources,
+  revokeRemovedMessageResources,
   type MessageStateUpdater,
 } from '../lib'
 import type {
@@ -104,6 +106,7 @@ export function usePlaygroundState() {
         window.clearTimeout(messagesSaveTimerRef.current)
         saveMessages(latestMessagesRef.current)
       }
+      revokeMessageResources(latestMessagesRef.current)
     },
     []
   )
@@ -137,6 +140,7 @@ export function usePlaygroundState() {
     (updater: MessageStateUpdater) => {
       setMessages((prev) => {
         const newMessages = applyMessageStateUpdate(prev, updater)
+        revokeRemovedMessageResources(prev, newMessages)
         persistMessages(newMessages)
         return newMessages
       })

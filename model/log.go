@@ -80,6 +80,59 @@ type Log struct {
 	Other             string `json:"other"`
 }
 
+type tokenUsageQuota struct {
+	TokenId           int `gorm:"column:token_id"`
+	LifetimeUsedQuota int `gorm:"column:lifetime_used_quota"`
+	Recent7dUsedQuota int `gorm:"column:recent_7d_used_quota"`
+}
+
+// PopulateTokenUsageStats adds successful consumption totals to a page of tokens.
+func PopulateTokenUsageStats(tokens []*Token) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	tokenIDs := make([]int, 0, len(tokens))
+	for _, token := range tokens {
+		if token != nil {
+			tokenIDs = append(tokenIDs, token.Id)
+		}
+	}
+	if len(tokenIDs) == 0 {
+		return nil
+	}
+
+	const secondsPerDay = 24 * 60 * 60
+	cutoff := time.Now().Add(-7 * secondsPerDay * time.Second).Unix()
+	var rows []tokenUsageQuota
+	err := LOG_DB.Table("logs").
+		Select(`token_id,
+			COALESCE(sum(quota), 0) AS lifetime_used_quota,
+			COALESCE(sum(CASE WHEN created_at >= ? THEN quota ELSE 0 END), 0) AS recent_7d_used_quota`, cutoff).
+		Where("type = ? AND token_id IN ?", LogTypeConsume, tokenIDs).
+		Group("token_id").
+		Scan(&rows).Error
+	if err != nil {
+		return err
+	}
+
+	byTokenID := make(map[int]tokenUsageQuota, len(rows))
+	for _, row := range rows {
+		byTokenID[row.TokenId] = row
+	}
+	for _, token := range tokens {
+		if token == nil {
+			continue
+		}
+		usage := byTokenID[token.Id]
+		token.LifetimeUsedQuota = new(int)
+		*token.LifetimeUsedQuota = usage.LifetimeUsedQuota
+		token.Recent7dUsedQuota = new(int)
+		*token.Recent7dUsedQuota = usage.Recent7dUsedQuota
+	}
+	return nil
+}
+
 // don't use iota, avoid change log type value
 const (
 	LogTypeUnknown = 0

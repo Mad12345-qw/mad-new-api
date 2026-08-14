@@ -41,6 +41,7 @@ type ImageURL struct {
 type responseTask struct {
 	ID                 string `json:"id"`
 	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
+	RequestID          string `json:"request_id,omitempty"`
 	Object             string `json:"object"`
 	Model              string `json:"model"`
 	Status             string `json:"status"`
@@ -50,6 +51,7 @@ type responseTask struct {
 	ExpiresAt          int64  `json:"expires_at,omitempty"`
 	Seconds            string `json:"seconds,omitempty"`
 	Size               string `json:"size,omitempty"`
+	VideoURL           string `json:"video_url,omitempty"`
 	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
 	Error              *struct {
 		Message string `json:"message"`
@@ -66,6 +68,7 @@ type TaskAdaptor struct {
 	ChannelType int
 	apiKey      string
 	baseURL     string
+	FixedPrice  bool
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -91,11 +94,21 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if info.Action == constant.TaskActionRemix {
 		return validateRemixRequest(c)
 	}
+	if IsMikotoSeedanceModel(info.OriginModelName) {
+		if err := prepareMikotoSeedanceRequest(c, info); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		return nil
+	}
 	return relaycommon.ValidateMultipartDirect(c, info)
 }
 
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	if a.FixedPrice {
+		return nil
+	}
+
 	// remix 路径的 OtherRatios 已在 ResolveOriginTask 中设置
 	if info.Action == constant.TaskActionRemix {
 		return nil
@@ -129,6 +142,48 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return ratios
 }
 
+func IsApiOkSeedanceModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "seedance-2.0",
+		"seedance-2.0-fast",
+		"doubao-seedance-2.0-720p",
+		"doubao-seedance-2.0-cf-1080p":
+		return true
+	default:
+		return false
+	}
+}
+
+func apiOkSeedanceContent(model, prompt string, content interface{}) interface{} {
+	if !IsApiOkSeedanceModel(model) {
+		return content
+	}
+	if items, ok := content.([]interface{}); ok && len(items) > 0 {
+		return content
+	}
+	text := strings.TrimSpace(prompt)
+	if text == "" {
+		if value, ok := content.(string); ok {
+			text = strings.TrimSpace(value)
+		}
+	}
+	if text == "" {
+		return content
+	}
+	return []ContentItem{{Type: "text", Text: text}}
+}
+
+func apiOkSeedanceMultipartContent(model, prompt, content string) string {
+	if !IsApiOkSeedanceModel(model) || strings.TrimSpace(content) != "" {
+		return content
+	}
+	items, err := common.Marshal([]ContentItem{{Type: "text", Text: strings.TrimSpace(prompt)}})
+	if err != nil || strings.TrimSpace(prompt) == "" {
+		return content
+	}
+	return string(items)
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info.Action == constant.TaskActionRemix {
 		return fmt.Sprintf("%s/v1/videos/%s/remix", a.baseURL, info.OriginTaskID), nil
@@ -139,11 +194,23 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 // BuildRequestHeader sets required headers.
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	if IsMikotoSeedanceModel(info.OriginModelName) {
+		req.Header.Set("Content-Type", "application/json")
+		return nil
+	}
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	return nil
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	if IsMikotoSeedanceModel(info.OriginModelName) {
+		if value, exists := c.Get(mikotoSeedanceBodyKey); exists {
+			if body, ok := value.([]byte); ok {
+				return bytes.NewReader(body), nil
+			}
+		}
+		return nil, fmt.Errorf("normalized Mikoto Seedance request is missing")
+	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return nil, errors.Wrap(err, "get_request_body_failed")
@@ -158,6 +225,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
+			prompt, _ := bodyMap["prompt"].(string)
+			content := bodyMap["content"]
+			if compatContent := apiOkSeedanceContent(info.OriginModelName, prompt, content); compatContent != nil {
+				bodyMap["content"] = compatContent
+			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
 			}
@@ -173,13 +245,29 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 		writer.WriteField("model", info.UpstreamModelName)
+		prompt := ""
+		content := ""
 		for key, values := range formData.Value {
 			if key == "model" {
 				continue
 			}
 			for _, v := range values {
+				if key == "prompt" && prompt == "" {
+					prompt = v
+				}
+				if key == "content" {
+					if strings.TrimSpace(v) != "" {
+						content = v
+					}
+					if IsApiOkSeedanceModel(info.OriginModelName) && strings.TrimSpace(v) == "" {
+						continue
+					}
+				}
 				writer.WriteField(key, v)
 			}
+		}
+		if compatContent := apiOkSeedanceMultipartContent(info.OriginModelName, prompt, content); strings.TrimSpace(compatContent) != "" && strings.TrimSpace(content) == "" {
+			writer.WriteField("content", compatContent)
 		}
 		for fieldName, fileHeaders := range formData.File {
 			for _, fh := range fileHeaders {
@@ -245,6 +333,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		upstreamID = dResp.TaskID
 	}
 	if upstreamID == "" {
+		upstreamID = dResp.RequestID
+	}
+	if upstreamID == "" {
 		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 		return
 	}
@@ -302,9 +393,14 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusQueued
 	case "processing", "in_progress":
 		taskResult.Status = model.TaskStatusInProgress
+	case "unknown":
+		if IsApiOkSeedanceModel(resTask.Model) &&
+			(resTask.ID != "" || resTask.TaskID != "" || resTask.RequestID != "") {
+			taskResult.Status = model.TaskStatusQueued
+		}
 	case "completed":
 		taskResult.Status = model.TaskStatusSuccess
-		// Url intentionally left empty — the caller constructs the proxy URL using the public task ID
+		taskResult.Url = resTask.VideoURL
 	case "failed", "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		if resTask.Error != nil {
@@ -313,6 +409,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Reason = "task failed"
 		}
 	default:
+		// Some compatible gateways expose the provider request ID before their
+		// own task status is available. Keep polling this valid hand-off state.
+		if resTask.RequestID != "" {
+			taskResult.Status = model.TaskStatusQueued
+		}
 	}
 	if resTask.Progress > 0 && resTask.Progress < 100 {
 		taskResult.Progress = fmt.Sprintf("%d%%", resTask.Progress)

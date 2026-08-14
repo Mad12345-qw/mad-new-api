@@ -35,16 +35,18 @@ func normalizeChatImageURLToString(v any) any {
 	}
 }
 
-func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) json.RawMessage {
-	if reqFormat == nil || strings.TrimSpace(reqFormat.Type) == "" {
+func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat, verbosity json.RawMessage) json.RawMessage {
+	if (reqFormat == nil || strings.TrimSpace(reqFormat.Type) == "") && len(verbosity) == 0 {
 		return nil
 	}
 
-	format := map[string]any{
-		"type": reqFormat.Type,
+	text := make(map[string]any)
+	format := make(map[string]any)
+	if reqFormat != nil && strings.TrimSpace(reqFormat.Type) != "" {
+		format["type"] = reqFormat.Type
 	}
 
-	if reqFormat.Type == "json_schema" && len(reqFormat.JsonSchema) > 0 {
+	if reqFormat != nil && reqFormat.Type == "json_schema" && len(reqFormat.JsonSchema) > 0 {
 		var chatSchema map[string]any
 		if err := common.Unmarshal(reqFormat.JsonSchema, &chatSchema); err == nil {
 			for key, value := range chatSchema {
@@ -66,10 +68,17 @@ func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) jso
 			format["json_schema"] = reqFormat.JsonSchema
 		}
 	}
+	if len(format) > 0 {
+		text["format"] = format
+	}
+	if len(verbosity) > 0 {
+		var value any
+		if common.Unmarshal(verbosity, &value) == nil {
+			text["verbosity"] = value
+		}
+	}
 
-	textRaw, _ := common.Marshal(map[string]any{
-		"format": format,
-	})
+	textRaw, _ := common.Marshal(text)
 	return textRaw
 }
 
@@ -286,8 +295,8 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	}
 
 	var toolsRaw json.RawMessage
-	if req.Tools != nil {
-		tools := make([]map[string]any, 0, len(req.Tools))
+	if req.Tools != nil || req.WebSearchOptions != nil {
+		tools := make([]map[string]any, 0, len(req.Tools)+1)
 		for _, tool := range req.Tools {
 			switch tool.Type {
 			case "function":
@@ -308,6 +317,19 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 				}
 				tools = append(tools, m)
 			}
+		}
+		if req.WebSearchOptions != nil {
+			webSearch := map[string]any{"type": "web_search"}
+			if size := strings.TrimSpace(req.WebSearchOptions.SearchContextSize); size != "" {
+				webSearch["search_context_size"] = size
+			}
+			if len(req.WebSearchOptions.UserLocation) > 0 {
+				var location any
+				if common.Unmarshal(req.WebSearchOptions.UserLocation, &location) == nil {
+					webSearch["user_location"] = location
+				}
+			}
+			tools = append(tools, webSearch)
 		}
 		toolsRaw, _ = common.Marshal(tools)
 	}
@@ -355,7 +377,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		parallelToolCallsRaw, _ = common.Marshal(*req.ParallelTooCalls)
 	}
 
-	textRaw := convertChatResponseFormatToResponsesText(req.ResponseFormat)
+	textRaw := convertChatResponseFormatToResponsesText(req.ResponseFormat, req.Verbosity)
 
 	maxOutputTokens := lo.FromPtrOr(req.MaxTokens, uint(0))
 	maxCompletionTokens := lo.FromPtrOr(req.MaxCompletionTokens, uint(0))

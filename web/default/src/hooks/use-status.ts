@@ -68,8 +68,9 @@ export function useStatus() {
     },
     // Use localStorage data as initial data
     placeholderData: getInitialStatus(),
-    // Data becomes stale after 5 minutes
-    staleTime: 5 * 60 * 1000,
+    // Keep admin-facing site configuration fresh without polling continuously.
+    staleTime: 10 * 1000,
+    refetchOnWindowFocus: true,
     // Cache expires after 30 minutes
     gcTime: 30 * 60 * 1000,
   })

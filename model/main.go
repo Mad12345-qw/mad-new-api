@@ -279,8 +279,10 @@ func migrateDB() error {
 		&Log{},
 		&Midjourney{},
 		&TopUp{},
+		&TopUpPromotionClaim{},
 		&QuotaData{},
 		&Task{},
+		&TaskRequestReservation{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},
@@ -305,6 +307,9 @@ func migrateDB() error {
 	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
+			return err
+		}
+		if err := migrateLegacyTwoFATimestampsSQLite(); err != nil {
 			return err
 		}
 	} else {
@@ -333,8 +338,10 @@ func migrateDBFast() error {
 		{&Log{}, "Log"},
 		{&Midjourney{}, "Midjourney"},
 		{&TopUp{}, "TopUp"},
+		{&TopUpPromotionClaim{}, "TopUpPromotionClaim"},
 		{&QuotaData{}, "QuotaData"},
 		{&Task{}, "Task"},
+		{&TaskRequestReservation{}, "TaskRequestReservation"},
 		{&Model{}, "Model"},
 		{&Vendor{}, "Vendor"},
 		{&PrefillGroup{}, "PrefillGroup"},
@@ -379,12 +386,50 @@ func migrateDBFast() error {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
 		}
+		if err := migrateLegacyTwoFATimestampsSQLite(); err != nil {
+			return err
+		}
 	} else {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
 		}
 	}
 	common.SysLog("database migrated")
+	return nil
+}
+
+// migrateLegacyTwoFATimestampsSQLite preserves 2FA records written by the
+// frozen 3.0 runtime, which stored time values as Unix integers. Newer GORM
+// models scan these columns into time.Time and otherwise reject a valid login
+// before the user can enter their TOTP code.
+func migrateLegacyTwoFATimestampsSQLite() error {
+	if !common.UsingMainDatabase(common.DatabaseTypeSQLite) || !DB.Migrator().HasTable(&TwoFA{}) {
+		return nil
+	}
+	for _, column := range []string{"locked_until", "last_used_at", "deleted_at"} {
+		if !DB.Migrator().HasColumn(&TwoFA{}, column) {
+			continue
+		}
+		statement := fmt.Sprintf(
+			"UPDATE `two_fas` SET `%s` = CASE WHEN CAST(`%s` AS INTEGER) <= 0 THEN NULL ELSE datetime(CAST(`%s` AS INTEGER), 'unixepoch') END WHERE typeof(`%s`) IN ('integer', 'real')",
+			column, column, column, column,
+		)
+		if err := DB.Exec(statement).Error; err != nil {
+			return fmt.Errorf("migrate two_fas.%s timestamp: %w", column, err)
+		}
+	}
+	for _, column := range []string{"created_at", "updated_at"} {
+		if !DB.Migrator().HasColumn(&TwoFA{}, column) {
+			continue
+		}
+		statement := fmt.Sprintf(
+			"UPDATE `two_fas` SET `%s` = datetime(CAST(`%s` AS INTEGER), 'unixepoch') WHERE typeof(`%s`) IN ('integer', 'real')",
+			column, column, column,
+		)
+		if err := DB.Exec(statement).Error; err != nil {
+			return fmt.Errorf("migrate two_fas.%s timestamp: %w", column, err)
+		}
+	}
 	return nil
 }
 

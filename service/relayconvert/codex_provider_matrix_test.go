@@ -139,7 +139,7 @@ func TestCodexProviderSwitchConvertsOpenAIClientToolsAndDropsUnsupportedXAIToolS
 		"previous_response_id":"resp_previous",
 		"input":[
 			{"type":"custom_tool_call","id":"ctco_01a003bf-75c1-76f0-bc53-46aef06da266","call_id":"call_custom","name":"apply_patch","input":"patch"},
-			{"type":"custom_tool_call_output","call_id":"call_custom","output":"ok"},
+			{"type":"custom_tool_call_output","id":"ctco_01a003bf-75c1-76f0-bc53-46aef06da267","call_id":"call_custom","output":"ok"},
 			{"type":"tool_search_call","id":"tsc_search","call_id":"call_search","execution":"client","arguments":{"query":"search"},"status":"completed"}
 		],
 		"tools":[{"type":"web_search"},{"type":"custom","name":"apply_patch"},{"type":"tool_search"}]
@@ -156,6 +156,8 @@ func TestCodexProviderSwitchConvertsOpenAIClientToolsAndDropsUnsupportedXAIToolS
 	require.NoError(t, err)
 	require.Equal(t, "function_call", gjson.GetBytes(openAIPayload, "input.0.type").String())
 	require.Equal(t, "fc_01a003bf-75c1-76f0-bc53-46aef06da266", gjson.GetBytes(openAIPayload, "input.0.id").String())
+	require.Equal(t, "function_call_output", gjson.GetBytes(openAIPayload, "input.1.type").String())
+	require.Equal(t, "fc_01a003bf-75c1-76f0-bc53-46aef06da267", gjson.GetBytes(openAIPayload, "input.1.id").String())
 	require.Equal(t, "function_call", gjson.GetBytes(openAIPayload, "input.2.type").String())
 	require.Equal(t, "fc_search", gjson.GetBytes(openAIPayload, "input.2.id").String())
 	require.Equal(t, "tool_search", gjson.GetBytes(openAIPayload, "input.2.name").String())
@@ -167,6 +169,7 @@ func TestCodexProviderSwitchConvertsOpenAIClientToolsAndDropsUnsupportedXAIToolS
 	require.Equal(t, "function_call", gjson.GetBytes(providerPayload, "input.0.type").String())
 	require.False(t, gjson.GetBytes(providerPayload, "input.0.id").Exists())
 	require.Equal(t, "function_call_output", gjson.GetBytes(providerPayload, "input.1.type").String())
+	require.False(t, gjson.GetBytes(providerPayload, "input.1.id").Exists())
 	require.Equal(t, int64(2), gjson.GetBytes(providerPayload, "input.#").Int())
 	require.Equal(t, int64(1), gjson.GetBytes(providerPayload, "tools.#").Int())
 	require.Equal(t, "web_search", gjson.GetBytes(providerPayload, "tools.0.type").String())

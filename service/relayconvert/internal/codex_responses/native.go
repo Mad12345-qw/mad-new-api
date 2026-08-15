@@ -395,6 +395,7 @@ func normalizeNativeHistoryItem(item map[string]any) {
 		normalizeNativeFunctionCallID(item)
 	case "custom_tool_call_output":
 		item["type"] = "function_call_output"
+		normalizeNativeFunctionCallID(item)
 	case "tool_search_call":
 		arguments, _ := common.Marshal(nativeObject(item["arguments"]))
 		item["type"] = "function_call"

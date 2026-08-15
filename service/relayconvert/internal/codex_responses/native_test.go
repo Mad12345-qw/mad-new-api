@@ -216,7 +216,7 @@ func TestNormalizeOpenAIResponsesRequestBuildsOneProviderSafeToolContract(t *tes
 			{"type":"custom_tool_call","id":"ctco_01a003bf-75c1-76f0-bc53-46aef06da266","call_id":"call_custom","name":"apply_patch","input":"*** Begin Patch"},
 			{"type":"custom_tool_call_output","call_id":"call_custom","output":"ok"},
 			{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","arguments":{"query":"agent tools","limit":3},"status":"completed"},
-			{"type":"tool_search_output","call_id":"call_search","status":"completed","tools":[{"type":"namespace","name":"agents","tools":[{"type":"function","name":"spawn","parameters":{"type":"object"}}]}]},
+			{"type":"tool_search_output","id":"tso_01a00547-dd34-7080-97b7-8c91164b78de","call_id":"call_search","status":"completed","tools":[{"type":"namespace","name":"agents","tools":[{"type":"function","name":"spawn","parameters":{"type":"object"}}]}]},
 			{"type":"additional_tools","tools":[{"type":"namespace","name":"terminal","tools":[{"type":"custom","name":"exec"}]}]}
 		],
 		"tools":[
@@ -251,6 +251,8 @@ func TestNormalizeOpenAIResponsesRequestBuildsOneProviderSafeToolContract(t *tes
 	assert.Equal(t, "tool_search", gjson.GetBytes(out, "input.3.name").String())
 	assert.Equal(t, "agent tools", gjson.Get(gjson.GetBytes(out, "input.3.arguments").String(), "query").String())
 	assert.Equal(t, "function_call_output", gjson.GetBytes(out, "input.4.type").String())
+	assert.False(t, gjson.GetBytes(out, "input.4.id").Exists())
+	assert.Equal(t, "call_search", gjson.GetBytes(out, "input.4.call_id").String())
 	assert.Contains(t, gjson.GetBytes(out, "input.4.output").String(), "agents__spawn")
 	assert.NotContains(t, string(out), `"type":"custom"`)
 	assert.NotContains(t, string(out), `"type":"tool_search"`)

@@ -77,6 +77,10 @@ func normalizeOpenAIResponsesRequestForFunctionProvider(rawJSON []byte, preserve
 				tools = append(tools, loadedTools...)
 				item["type"] = "function_call_output"
 				item["output"] = nativeToolSearchOutputText(loadedTools, stringValue(item["status"]))
+				// Function-call outputs are paired by call_id. A Codex tool-search
+				// output id (tso_...) is not valid after changing the item type and
+				// can also collide with the paired function-call id when rewritten.
+				delete(item, "id")
 				delete(item, "tools")
 				delete(item, "status")
 			}

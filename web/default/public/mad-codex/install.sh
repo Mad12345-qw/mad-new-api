@@ -84,6 +84,7 @@ existing_auth_kind=$auth_kind
 auth_mutation=none
 if [ "$requested_login_mode" = oauth ]; then
   auth_kind=oauth
+  if [ "$existing_auth_kind" != oauth ] && [ "$had_auth" -eq 1 ]; then auth_mutation=clear; fi
 elif [ "$requested_login_mode" = apikey ]; then
   auth_kind=apikey
   auth_mutation=write
@@ -332,7 +333,7 @@ if [ "$had_config" -eq 1 ]; then
 fi
 if [ -f "$key_path" ]; then key_backup_path="$key_path.madapi-backup-$transaction_id"; cp "$key_path" "$key_backup_path"; fi
 if [ -d "$image_skill_path" ]; then image_skill_backup_path="$image_skill_path.madapi-backup-$transaction_id"; mv "$image_skill_path" "$image_skill_backup_path"; fi
-if [ "$auth_mutation" = write ] && [ "$had_auth" -eq 1 ]; then auth_backup_path="$auth_path.madapi-backup-$transaction_id"; cp "$auth_path" "$auth_backup_path"; fi
+if [ "$auth_mutation" != none ] && [ "$had_auth" -eq 1 ]; then auth_backup_path="$auth_path.madapi-backup-$transaction_id"; cp "$auth_path" "$auth_backup_path"; fi
 mkdir -p "$managed_backup_path"
 if [ -f "$refresh_script_path" ]; then cp -p "$refresh_script_path" "$managed_backup_path/madapi-refresh-model-catalog.sh"; had_refresh_script=1; fi
 if [ -f "$history_script_path" ]; then cp -p "$history_script_path" "$managed_backup_path/madapi-restore-history.sh"; had_history_script=1; fi
@@ -352,7 +353,15 @@ chmod 600 "$key_path"
 key_installed=1
 mv "$temp_image_skill_path" "$image_skill_path"
 image_skill_installed=1
-if [ "$auth_mutation" = write ]; then mv "$temp_auth_path" "$auth_path"; chmod 600 "$auth_path"; auth_changed=1; fi
+if [ "$auth_mutation" != none ]; then
+  auth_changed=1
+  if [ "$auth_mutation" = clear ]; then
+    rm -f "$auth_path"
+  else
+    mv "$temp_auth_path" "$auth_path"
+    chmod 600 "$auth_path"
+  fi
+fi
 if [ "$test_mode" != 1 ]; then
     launch_agents="$HOME/Library/LaunchAgents"
     plist_path="$launch_agents/me.madapi.codex-model-catalog.plist"

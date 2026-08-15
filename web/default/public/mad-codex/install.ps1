@@ -286,28 +286,7 @@ $existingAuthKind = $authKind
 $authMutation = 'none'
 if ($requestedLoginMode -eq 'oauth') {
     $authKind = 'oauth'
-    if ($existingAuthKind -ne 'oauth') {
-        $oauthBackupPath = $null
-        foreach ($candidate in @(Get-ChildItem -LiteralPath $codexHome -Filter 'auth.json.madapi-backup-*' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
-            try {
-                $candidateAuth = [IO.File]::ReadAllText($candidate.FullName, $utf8Strict) | ConvertFrom-Json
-                $candidateTokens = $candidateAuth.PSObject.Properties['tokens']
-                if ($null -eq $candidateTokens) { continue }
-                $candidateAccess = $candidateTokens.Value.PSObject.Properties['access_token']
-                $candidateRefresh = $candidateTokens.Value.PSObject.Properties['refresh_token']
-                if ($null -ne $candidateAccess -and $null -ne $candidateRefresh -and
-                    -not [string]::IsNullOrWhiteSpace([string]$candidateAccess.Value) -and
-                    -not [string]::IsNullOrWhiteSpace([string]$candidateRefresh.Value)) {
-                    $oauthBackupPath = $candidate.FullName
-                    break
-                }
-            } catch { continue }
-        }
-        if ([string]::IsNullOrWhiteSpace($oauthBackupPath)) {
-            throw 'OAuth mode was requested, but no existing ChatGPT OAuth session or MadAPI OAuth backup was found. Sign in with ChatGPT in Codex first, then run this installer again. No files were changed.'
-        }
-        $authMutation = 'restore-oauth'
-    }
+    if ($existingAuthKind -ne 'oauth' -and $hadAuth) { $authMutation = 'clear' }
 } elseif ($requestedLoginMode -eq 'apikey') {
     $authKind = 'apikey'
     $authMutation = 'write'
@@ -434,8 +413,6 @@ try {
     [IO.File]::WriteAllText($tempKeyPath, ($apiKey + [Environment]::NewLine), $utf8NoBom)
     if ($authMutation -eq 'write') {
         [IO.File]::WriteAllText($tempAuthPath, (([ordered]@{ auth_mode = 'apikey'; OPENAI_API_KEY = $apiKey }) | ConvertTo-Json -Compress), $utf8NoBom)
-    } elseif ($authMutation -eq 'restore-oauth') {
-        [IO.File]::WriteAllBytes($tempAuthPath, [IO.File]::ReadAllBytes($oauthBackupPath))
     }
     New-Item -ItemType Directory -Path (Join-Path $tempImageSkillPath 'scripts') -Force | Out-Null
     $imageSkillSource = [string]$env:MADAPI_IMAGE_SKILL_SOURCE_DIR
@@ -547,8 +524,12 @@ try {
     Move-Item -LiteralPath $tempImageSkillPath -Destination $imageSkillPath
     $imageSkillInstalled = $true
     if ($authMutation -ne 'none') {
-        Move-Item -LiteralPath $tempAuthPath -Destination $authPath -Force
         $authChanged = $true
+        if ($authMutation -eq 'clear') {
+            if (Test-Path -LiteralPath $authPath) { Remove-Item -LiteralPath $authPath -Force }
+        } else {
+            Move-Item -LiteralPath $tempAuthPath -Destination $authPath -Force
+        }
     }
     if (-not $testMode) { [Environment]::SetEnvironmentVariable($gatewayKeyEnvName, $apiKey, 'User') }
     $env:MADAPI_API_KEY = $apiKey
@@ -598,7 +579,7 @@ Write-Host "MadAPI Codex desktop configuration installed: $configPath"
 if ($null -ne $backupPath) { Write-Host "Backup created: $backupPath" }
 if ($null -ne $authBackupPath) { Write-Host "Authentication backup created: $authBackupPath" }
 if ($null -ne $historyBackupPath) { Write-Host "History backup created: $historyBackupPath" }
-if ($requestedLoginMode -eq 'oauth' -and $existingAuthKind -ne 'oauth') { Write-Host 'Existing ChatGPT OAuth session restored from the latest MadAPI backup.' }
+if ($requestedLoginMode -eq 'oauth' -and $existingAuthKind -ne 'oauth') { Write-Host 'OAuth mode prepared. Restart Codex Desktop and sign in with ChatGPT.' }
 elseif ($requestedLoginMode -eq 'apikey') { Write-Host 'MadAPI API Key sign-in configured.' }
 elseif ($authKind -eq 'oauth') { Write-Host 'Existing ChatGPT OAuth session preserved.' }
 elseif ($authKind -eq 'apikey') { Write-Host 'Existing Codex Desktop API Key sign-in preserved.' }

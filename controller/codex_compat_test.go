@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
@@ -28,6 +30,7 @@ func TestCodexResponsesWebsocketUsesExistingResponsesRouteForEveryTurn(t *testin
 		require.Equal(t, http.MethodPost, r.Method)
 		require.Equal(t, "/responses", r.URL.Path)
 		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+		require.Equal(t, relayconvert.CodexResponsesInternalMarker(), r.Header.Get("X-MadAPI-Codex-Compat"))
 		var request struct {
 			Model  string            `json:"model"`
 			Input  []json.RawMessage `json:"input"`
@@ -100,6 +103,91 @@ func TestCodexResponsesWebsocketPrewarmDoesNotCallOrBillInnerRoute(t *testing.T)
 	}))
 	readCodexWebsocketUntilCompleted(t, conn)
 	require.Equal(t, int32(0), calls.Load())
+}
+
+func TestCodexResponsesWebsocketDoesNotAddConnectionConcurrencyLimits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}), "gpt-test")
+
+	router := gin.New()
+	router.GET("/codex/v1/responses", func(c *gin.Context) {
+		c.Set("token_id", 789)
+		CodexResponsesWebsocket(c)
+	})
+	server := httptest.NewServer(router)
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/codex/v1/responses"
+
+	const connections = 72
+	opened := make([]*websocket.Conn, 0, connections)
+	defer func() {
+		for _, conn := range opened {
+			_ = conn.Close()
+		}
+	}()
+	for index := 0; index < connections; index++ {
+		conn, response, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		require.NoError(t, err, "websocket connection %d", index)
+		opened = append(opened, conn)
+	}
+	for index, conn := range opened {
+		require.NoError(t, conn.WriteJSON(gin.H{
+			"type": "response.create", "model": "gpt-test", "input": []any{}, "generate": false,
+		}), "websocket prewarm %d", index)
+		readCodexWebsocketUntilCompleted(t, conn)
+	}
+}
+
+func TestCodexResponsesDoesNotAddRequestConcurrencyLimits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const requests = 64
+	arrived := make(chan struct{}, requests)
+	release := make(chan struct{})
+	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived <- struct{}{}
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"resp_concurrent","object":"response","status":"completed","model":"gpt-test","output":[]}`)
+	}), "gpt-test")
+
+	recorders := make([]*httptest.ResponseRecorder, requests)
+	var workers sync.WaitGroup
+	workers.Add(requests)
+	for index := 0; index < requests; index++ {
+		go func(slot int) {
+			defer workers.Done()
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","stream":false}`))
+			c.Request.Header.Set("Authorization", "Bearer concurrency-test-token")
+			c.Request.Header.Set("Content-Type", "application/json")
+			CodexResponses(c)
+			recorders[slot] = recorder
+		}(index)
+	}
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for index := 0; index < requests; index++ {
+		select {
+		case <-arrived:
+		case <-timer.C:
+			close(release)
+			workers.Wait()
+			t.Fatalf("only %d of %d concurrent requests reached NewAPI", index, requests)
+		}
+	}
+	close(release)
+	workers.Wait()
+	for index, recorder := range recorders {
+		require.NotNil(t, recorder, "request %d", index)
+		require.Equal(t, http.StatusOK, recorder.Code, "request %d: %s", index, recorder.Body.String())
+	}
 }
 
 func readCodexWebsocketUntilCompleted(t *testing.T, conn *websocket.Conn) {
@@ -414,7 +502,7 @@ func TestBuildCodexModelUsesHighEndDefaultsForUnknownModels(t *testing.T) {
 	require.Equal(t, 1000000, model["max_context_window"])
 	require.Equal(t, []string{"text"}, model["input_modalities"])
 	require.Equal(t, "high", model["default_reasoning_level"])
-	require.Equal(t, true, model["support_verbosity"])
+	require.Equal(t, false, model["support_verbosity"])
 	require.Equal(t, "medium", model["default_verbosity"])
 	require.Equal(t, false, model["supports_search_tool"])
 	require.Equal(t, true, model["prefer_websockets"])
@@ -439,17 +527,44 @@ func TestBuildCodexModelUsesOfficialCapabilitiesMissingFromCPA(t *testing.T) {
 	require.Equal(t, "high", qwenAlias["default_reasoning_level"])
 }
 
-func TestBuildCodexModelAdvertisesOnlyImplementedNativeSearch(t *testing.T) {
+func TestBuildCodexModelDerivesNativeSearchFromProviderFamily(t *testing.T) {
 	for _, modelName := range []string{
-		"gpt-5.5", "claude-opus-5", "gemini-3.6-flash", "grok-4.5",
-		"deepseek-v4-flash", "glm-5-2", "kimi-k3", "qwen3.8-max-preview",
+		"gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.7-future",
+		"claude-opus-5", "claude-opus-6-future",
+		"grok-4.5", "grok-4.6", "grok-4.7",
 	} {
 		model := buildCodexModel(dto.OpenAIModels{Id: modelName}, 0)
 		require.Equal(t, true, model["supports_search_tool"], modelName)
 	}
-	for _, modelName := range []string{"deepseek-v4-pro", "future-text-model"} {
+	for _, modelName := range []string{
+		"deepseek-v4-flash", "deepseek-v4-pro", "gemini-3.6-flash", "glm-5-2", "glm-5.3",
+		"kimi-k3", "qwen3.8-max-preview", "future-text-model",
+	} {
 		model := buildCodexModel(dto.OpenAIModels{Id: modelName}, 0)
 		require.Equal(t, false, model["supports_search_tool"], modelName)
+	}
+}
+
+func TestBuildCodexModelDerivesProtocolCapabilitiesForFutureProviderModels(t *testing.T) {
+	tests := []struct {
+		model     string
+		search    bool
+		verbosity bool
+	}{
+		{model: "gpt-5.7", search: true, verbosity: true},
+		{model: "claude-opus-6", search: true},
+		{model: "grok-4.7", search: true},
+		{model: "deepseek-v5", search: false},
+		{model: "glm-5.5", search: false},
+		{model: "gemini-3.7-flash", search: false},
+		{model: "kimi-k4", search: false},
+		{model: "qwen4-max", search: false},
+	}
+
+	for _, test := range tests {
+		model := buildCodexModel(dto.OpenAIModels{Id: test.model}, 0)
+		require.Equal(t, test.search, model["supports_search_tool"], test.model)
+		require.Equal(t, test.verbosity, model["support_verbosity"], test.model)
 	}
 }
 
@@ -562,11 +677,15 @@ func TestCodexResponsesUsesNativeRouteForResponsesAndNamespaceTools(t *testing.T
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 		tools := string(request.Tools)
 		require.Contains(t, tools, `"type":"web_search"`)
-		require.Contains(t, tools, `"name":"mcp__github__get_me"`)
-		require.Contains(t, tools, `"name":"terminal__exec"`)
-		require.NotContains(t, tools, `"type":"namespace"`)
+		require.Contains(t, tools, `"type":"namespace"`)
+		require.Contains(t, tools, `"name":"mcp__github"`)
+		require.Contains(t, tools, `"name":"get_me"`)
+		require.NotContains(t, tools, `"name":"mcp__github__get_me"`)
 		require.JSONEq(t, `true`, string(request.ParallelToolCalls))
-		require.NotContains(t, string(request.Input), "additional_tools")
+		require.Contains(t, string(request.Input), `"type":"additional_tools"`)
+		require.Contains(t, string(request.Input), `"type":"namespace"`)
+		require.Contains(t, string(request.Input), `"name":"terminal"`)
+		require.Contains(t, string(request.Input), `"name":"exec"`)
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"resp-tool","object":"response","status":"completed","model":"gpt-test","output":[{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_get_me","name":"mcp__github__get_me","arguments":"{}"}]}`)
@@ -695,6 +814,60 @@ func TestCodexResponsesPassesNativeResponsesStreamEvents(t *testing.T) {
 	require.Contains(t, body, "response.completed")
 }
 
+func TestCodexResponsesRestoresClientToolSearchAndSuppressesFunctionArgumentFrames(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"call_id\":\"call_search\",\"name\":\"tool_search\",\"arguments\":\"\",\"status\":\"in_progress\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_search\",\"output_index\":0,\"delta\":\"{\\\"query\\\":\\\"github\\\"}\"}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_search\",\"output_index\":0,\"arguments\":\"{\\\"query\\\":\\\"github\\\"}\"}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"call_id\":\"call_search\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"github\\\"}\",\"status\":\"completed\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_search\",\"type\":\"function_call\",\"call_id\":\"call_search\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"github\\\"}\",\"status\":\"completed\"}]}}\n\n")
+	}), "gpt-test")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"find tools","tools":[{"type":"tool_search"}],"stream":true}`))
+	c.Request.Header.Set("Authorization", "Bearer test-token")
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	CodexResponses(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	body := recorder.Body.String()
+	require.Contains(t, body, `"type":"tool_search_call"`)
+	require.Contains(t, body, `"execution":"client"`)
+	require.NotContains(t, body, "response.function_call_arguments")
+	require.NotContains(t, body, `"name":"tool_search"`)
+}
+
+func TestCodexResponsesRestoresClaudeHostedSearchWithoutClientFunctionCall(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_web\",\"type\":\"function_call\",\"call_id\":\"call_web\",\"name\":\"web_search\",\"arguments\":\"\",\"status\":\"in_progress\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_web\",\"output_index\":0,\"delta\":\"{\\\"query\\\":\\\"latest release\\\"}\"}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_web\",\"type\":\"function_call\",\"call_id\":\"call_web\",\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"latest release\\\"}\",\"status\":\"completed\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_web\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_web\",\"type\":\"function_call\",\"call_id\":\"call_web\",\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"latest release\\\"}\",\"status\":\"completed\"}]}}\n\n")
+	}), "claude-opus-5")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"claude-opus-5","input":"search","tools":[{"type":"web_search"}],"stream":true}`))
+	c.Request.Header.Set("Authorization", "Bearer test-token")
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	CodexResponses(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	body := recorder.Body.String()
+	require.Contains(t, body, `"type":"web_search_call"`)
+	require.Contains(t, body, `"type":"search"`)
+	require.Contains(t, body, `"latest release"`)
+	require.NotContains(t, body, "response.function_call_arguments")
+	require.NotContains(t, body, `"name":"web_search"`)
+}
+
 func TestCodexResponsesTurnsPostOutputErrorIntoOneTerminalFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -783,29 +956,29 @@ func TestCodexResponsesRejectsFixedPriceModelBeforeInnerRequest(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "not a Codex conversation model")
 }
 
-func TestCodexResponsesPreservesStatefulInputOnNativeRoute(t *testing.T) {
+func TestCodexResponsesDropsPreviousResponseWithoutInjectingServerHistory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var calls atomic.Int32
 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		require.Equal(t, "/responses", r.URL.Path)
-		var request dto.OpenAIResponsesRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-		require.Equal(t, "resp_1", request.PreviousResponseID)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.False(t, gjson.GetBytes(body, "previous_response_id").Exists())
+		require.Equal(t, "current turn", gjson.GetBytes(body, "input").String())
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"resp-stateful","object":"response","status":"completed","model":"gpt-test","output":[]}`)
+		_, _ = io.WriteString(w, `{"id":"resp_stateless","object":"response","status":"completed","model":"gpt-test","output":[]}`)
 	}), "gpt-test")
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","previous_response_id":"resp_1","stream":false}`))
-	c.Request.Header.Set("Authorization", "Bearer test-token")
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"current turn","previous_response_id":"resp_external","stream":false}`))
+	c.Request.Header.Set("Authorization", "Bearer stateless-test-token")
 	c.Request.Header.Set("Content-Type", "application/json")
-
 	CodexResponses(c)
 
-	require.Equal(t, int32(1), calls.Load())
 	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, int32(1), calls.Load())
 }
 
 func TestCodexResponsesPreservesInnerErrorWithoutCompatibilityRetry(t *testing.T) {
@@ -837,10 +1010,15 @@ func TestCodexResponsesCompactUsesTheExistingNewAPIRelay(t *testing.T) {
 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		require.Equal(t, "/responses", r.URL.Path)
+		body, readErr := io.ReadAll(r.Body)
+		require.NoError(t, readErr)
 		var request dto.OpenAIResponsesRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		require.NoError(t, json.Unmarshal(body, &request))
 		require.Equal(t, "gpt-test", request.Model)
-		require.Equal(t, "resp_previous", request.PreviousResponseID)
+		require.Empty(t, request.PreviousResponseID)
+		require.Equal(t, int64(2), gjson.GetBytes(body, "input.#").Int())
+		require.Equal(t, "conversation", gjson.GetBytes(body, "input.0.content").String())
+		require.Equal(t, "answer", gjson.GetBytes(body, "input.1.content.0.text").String())
 		var instructions string
 		require.NoError(t, json.Unmarshal(request.Instructions, &instructions))
 		require.Contains(t, instructions, codexNativeCompactInstruction)
@@ -850,7 +1028,7 @@ func TestCodexResponsesCompactUsesTheExistingNewAPIRelay(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses/compact", strings.NewReader(`{"model":"gpt-test","input":[],"previous_response_id":"resp_previous"}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses/compact", strings.NewReader(`{"model":"gpt-test","input":[{"role":"user","content":"conversation"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}],"previous_response_id":"resp_previous"}`))
 	c.Request.Header.Set("Authorization", "Bearer test-token")
 	c.Request.Header.Set("Content-Type", "application/json")
 

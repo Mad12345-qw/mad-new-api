@@ -18,7 +18,15 @@ const (
 )
 
 func PrepareOpenAIResponsesRequest(request dto.OpenAIResponsesRequest) (dto.OpenAIResponsesRequest, error) {
-	tools, err := filterGeminiResponsesTools(request.Tools)
+	return prepareOpenAIResponsesRequest(request, false)
+}
+
+func PrepareCodexOpenAIResponsesRequest(request dto.OpenAIResponsesRequest) (dto.OpenAIResponsesRequest, error) {
+	return prepareOpenAIResponsesRequest(request, true)
+}
+
+func prepareOpenAIResponsesRequest(request dto.OpenAIResponsesRequest, preserveBuiltins bool) (dto.OpenAIResponsesRequest, error) {
+	tools, err := filterGeminiResponsesTools(request.Tools, preserveBuiltins)
 	if err != nil {
 		return request, err
 	}
@@ -33,7 +41,7 @@ func PrepareOpenAIResponsesRequest(request dto.OpenAIResponsesRequest) (dto.Open
 	return request, nil
 }
 
-func filterGeminiResponsesTools(raw []byte) ([]byte, error) {
+func filterGeminiResponsesTools(raw []byte, preserveBuiltins bool) ([]byte, error) {
 	if !geminiRawJSONPresent(raw) || common.GetJsonType(raw) != "array" {
 		return raw, nil
 	}
@@ -45,10 +53,17 @@ func filterGeminiResponsesTools(raw []byte) ([]byte, error) {
 
 	filtered := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
-		if strings.TrimSpace(common.Interface2String(tool["type"])) != "function" {
+		toolType := strings.ToLower(strings.TrimSpace(common.Interface2String(tool["type"])))
+		if toolType == "function" {
+			filtered = append(filtered, tool)
 			continue
 		}
-		filtered = append(filtered, tool)
+		if preserveBuiltins {
+			switch toolType {
+			case "web_search", "web_search_preview", "google_search", "code_interpreter", "code_execution", "url_context":
+				filtered = append(filtered, tool)
+			}
+		}
 	}
 	if len(filtered) == 0 {
 		return nil, nil

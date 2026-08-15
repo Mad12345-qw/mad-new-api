@@ -913,11 +913,12 @@ func convertOAIChatStreamResponseToGeminiChat(_ *gin.Context, info *relaycommon.
 	return StreamResponseOpenAI2Gemini(chatResponse, info), canonicalUsageFromResponse(chatResponse), nil
 }
 
-func convertClaudeMessagesResponseToOAIChat(_ *gin.Context, _ *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
+func convertClaudeMessagesResponseToOAIChat(c *gin.Context, _ *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
 	claudeResponse, err := asClaudeResponse(response)
 	if err != nil {
 		return nil, nil, err
 	}
+	claudeResponse = prepareCodexClaudeNativeSearchResponse(c, claudeResponse)
 	usage := usageFromClaudeResponse(claudeResponse)
 	openAIResponse := ResponseClaude2OpenAI(claudeResponse)
 	if usage != nil {
@@ -926,17 +927,40 @@ func convertClaudeMessagesResponseToOAIChat(_ *gin.Context, _ *relaycommon.Relay
 	return openAIResponse, usage, nil
 }
 
-func convertClaudeMessagesStreamResponseToOAIChat(_ *gin.Context, _ *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
+func convertClaudeMessagesStreamResponseToOAIChat(c *gin.Context, _ *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {
 	claudeResponse, err := asClaudeResponse(response)
 	if err != nil {
 		return nil, nil, err
 	}
+	claudeResponse = prepareCodexClaudeNativeSearchResponse(c, claudeResponse)
 	openAIResponse := StreamResponseClaude2OpenAI(claudeResponse)
 	usage := usageFromClaudeResponse(claudeResponse)
 	if openAIResponse != nil && usage != nil {
 		openAIResponse.Usage = usage
 	}
 	return openAIResponse, usage, nil
+}
+
+func prepareCodexClaudeNativeSearchResponse(c *gin.Context, response *dto.ClaudeResponse) *dto.ClaudeResponse {
+	if response == nil || !isCodexCompatibilityConversion(c) {
+		return response
+	}
+
+	prepared := *response
+	if len(response.Content) > 0 {
+		prepared.Content = append([]dto.ClaudeMediaMessage(nil), response.Content...)
+		for i := range prepared.Content {
+			if prepared.Content[i].Type == "server_tool_use" && prepared.Content[i].Name == "web_search" {
+				prepared.Content[i].Type = "tool_use"
+			}
+		}
+	}
+	if response.ContentBlock != nil && response.ContentBlock.Type == "server_tool_use" && response.ContentBlock.Name == "web_search" {
+		contentBlock := *response.ContentBlock
+		contentBlock.Type = "tool_use"
+		prepared.ContentBlock = &contentBlock
+	}
+	return &prepared
 }
 
 func convertGeminiChatResponseToOAIChat(_ *gin.Context, info *relaycommon.RelayInfo, response any) (any, *dto.Usage, error) {

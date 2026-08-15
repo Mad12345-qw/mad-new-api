@@ -133,6 +133,40 @@ func TestCodexProviderMatrixUsesSelectedProviderContract(t *testing.T) {
 	})
 }
 
+func TestCodexProviderMatrixInjectsNativeSearchAfterChannelSelection(t *testing.T) {
+	raw := []byte(`{
+		"model":"gpt-5.6-luna",
+		"input":"Search the latest public information.",
+		"tools":[
+			{"type":"tool_search"},
+			{"type":"namespace","name":"mcp__demo","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+		],
+		"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"tool_search"}]},
+		"stream":false
+	}`)
+	boundaryRequest, err := relayconvert.NormalizeCodexResponsesRequest(raw)
+	require.NoError(t, err)
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal(boundaryRequest, &request))
+
+	normalized, err := relayconvert.NormalizeCodexResponsesRequestForSelectedProvider(request, appconstant.APITypeOpenAI)
+	require.NoError(t, err)
+	codexContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	codexContext.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	codexContext.Request.RemoteAddr = "127.0.0.1:12345"
+	codexContext.Request.Header.Set("X-MadAPI-Codex-Compat", relayconvert.CodexResponsesInternalMarker())
+
+	converted, err := (&openai.Adaptor{}).ConvertOpenAIResponsesRequest(codexContext, matrixInfo("gpt-5.6-luna"), normalized)
+	require.NoError(t, err)
+	payload, err := common.Marshal(converted)
+	require.NoError(t, err)
+	assert.Equal(t, "web_search", gjson.GetBytes(payload, "tools.0.type").String())
+	assert.Equal(t, "function", gjson.GetBytes(payload, "tools.1.type").String())
+	assert.Equal(t, "tool_search", gjson.GetBytes(payload, "tools.1.name").String())
+	assert.Equal(t, int64(2), gjson.GetBytes(payload, "tools.#").Int())
+	assert.Equal(t, "auto", gjson.GetBytes(payload, "tool_choice").String())
+}
+
 func TestCodexProviderSwitchConvertsOpenAIClientToolsAndDropsUnsupportedXAIToolSearchHistory(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.6-luna",

@@ -48,6 +48,139 @@ func NormalizeOpenAIResponsesRequestForContract(rawJSON []byte, contract Provide
 	}
 }
 
+// EnsureNativeSearchToolFieldsForContract exposes the selected provider's
+// hosted search capability to Codex without changing the client model catalog.
+// It intentionally parses only tools and tool_choice, not the potentially very
+// large conversation input. This runs only after NewAPI has selected a channel
+// and therefore never binds behavior to a channel ID.
+func EnsureNativeSearchToolFieldsForContract(model string, toolsJSON, toolChoiceJSON []byte, contract ProviderContract) ([]byte, []byte, error) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if !contractSupportsNativeSearchModel(contract, model) {
+		return toolsJSON, toolChoiceJSON, nil
+	}
+
+	tools := make([]any, 0)
+	if len(toolsJSON) > 0 {
+		if err := common.Unmarshal(toolsJSON, &tools); err != nil {
+			return nil, nil, err
+		}
+	}
+	if hasNativeSearchTool(tools) {
+		return toolsJSON, toolChoiceJSON, nil
+	}
+
+	searchTool := map[string]any{
+		"type":                "web_search",
+		"external_web_access": true,
+		"search_content_types": []any{
+			"text",
+			"image",
+		},
+	}
+	toolsJSON, err := common.Marshal(append([]any{searchTool}, tools...))
+	if err != nil {
+		return nil, nil, err
+	}
+	toolChoiceJSON, err = allowNativeSearchTool(toolChoiceJSON)
+	if err != nil {
+		return nil, nil, err
+	}
+	return toolsJSON, toolChoiceJSON, nil
+}
+
+func contractSupportsNativeSearchModel(contract ProviderContract, model string) bool {
+	if model == "" || isNonTextGenerationModel(model) {
+		return false
+	}
+	hasPrefix := func(prefixes ...string) bool {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(model, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch contract {
+	case ProviderContractOpenAI, ProviderContractCodex:
+		return hasPrefix("gpt-", "o1", "o3", "o4")
+	case ProviderContractXAI:
+		return hasPrefix("grok-", "xai-")
+	case ProviderContractClaude:
+		return hasPrefix("claude-", "opus", "sonnet", "haiku")
+	case ProviderContractGemini:
+		return hasPrefix("gemini-")
+	case ProviderContractDeepSeek:
+		return hasPrefix("deepseek-", "glm-")
+	case ProviderContractMoonshot:
+		return hasPrefix("kimi-", "moonshot-")
+	case ProviderContractOpenAICompat:
+		return hasPrefix(
+			"gpt-", "o1", "o3", "o4", "grok-", "xai-", "claude-", "opus",
+			"sonnet", "haiku", "gemini-", "deepseek-", "glm-", "kimi-", "moonshot-",
+		)
+	default:
+		return false
+	}
+}
+
+func isNonTextGenerationModel(model string) bool {
+	for _, marker := range []string{
+		"image", "video", "audio", "speech", "tts", "embedding", "rerank", "moderation",
+	} {
+		if strings.Contains(model, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNativeSearchTool(value any) bool {
+	var contains func(any) bool
+	contains = func(value any) bool {
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				if contains(item) {
+					return true
+				}
+			}
+		case map[string]any:
+			switch strings.ToLower(strings.TrimSpace(stringValue(typed["type"]))) {
+			case "web_search", "web_search_preview", "web_search_preview_2025_03_11", "x_search", "google_search":
+				return true
+			}
+			if contains(typed["tools"]) {
+				return true
+			}
+		}
+		return false
+	}
+	return contains(value)
+}
+
+func allowNativeSearchTool(toolChoiceJSON []byte) ([]byte, error) {
+	if len(toolChoiceJSON) == 0 {
+		return toolChoiceJSON, nil
+	}
+	var value any
+	if err := common.Unmarshal(toolChoiceJSON, &value); err != nil {
+		return nil, err
+	}
+	choice, ok := value.(map[string]any)
+	if !ok || strings.TrimSpace(stringValue(choice["type"])) != "allowed_tools" {
+		return toolChoiceJSON, nil
+	}
+	for _, value := range anySlice(choice["tools"]) {
+		tool, toolOK := value.(map[string]any)
+		if toolOK && strings.TrimSpace(stringValue(tool["type"])) == "web_search" {
+			return toolChoiceJSON, nil
+		}
+	}
+	choice["tools"] = append(anySlice(choice["tools"]), map[string]any{"type": "web_search"})
+	return common.Marshal(choice)
+}
+
 func normalizeNativeOpenAIResponsesRequest(rawJSON []byte) ([]byte, error) {
 	var root map[string]any
 	if err := common.Unmarshal(rawJSON, &root); err != nil {

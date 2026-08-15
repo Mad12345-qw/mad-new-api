@@ -32,10 +32,6 @@ func NormalizeCodexResponsesRequest(rawJSON []byte) ([]byte, error) {
 }
 
 func NormalizeCodexResponsesRequestForSelectedProvider(request dto.OpenAIResponsesRequest, apiType int) (dto.OpenAIResponsesRequest, error) {
-	rawJSON, err := common.Marshal(request)
-	if err != nil {
-		return request, err
-	}
 	contract := codexresponses.ProviderContractOpenAICompat
 	switch apiType {
 	case appconstant.APITypeOpenAI:
@@ -52,6 +48,16 @@ func NormalizeCodexResponsesRequestForSelectedProvider(request dto.OpenAIRespons
 		contract = codexresponses.ProviderContractDeepSeek
 	case appconstant.APITypeMoonshot:
 		contract = codexresponses.ProviderContractMoonshot
+	}
+	tools, toolChoice, err := codexresponses.EnsureNativeSearchToolFieldsForContract(request.Model, request.Tools, request.ToolChoice, contract)
+	if err != nil {
+		return request, err
+	}
+	request.Tools = tools
+	request.ToolChoice = toolChoice
+	rawJSON, err := common.Marshal(request)
+	if err != nil {
+		return request, err
 	}
 	normalized, err := codexresponses.NormalizeOpenAIResponsesRequestForContract(rawJSON, contract)
 	if err != nil {

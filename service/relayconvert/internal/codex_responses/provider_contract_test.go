@@ -1,13 +1,112 @@
 package codexresponses
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestEnsureNativeSearchToolForContractUsesModelFamilyAndSelectedInterface(t *testing.T) {
+	tests := []struct {
+		model    string
+		contract ProviderContract
+		want     bool
+	}{
+		{model: "gpt-5.7", contract: ProviderContractOpenAI, want: true},
+		{model: "gpt-5.6-luna", contract: ProviderContractOpenAI, want: true},
+		{model: "gpt-5.6-terra", contract: ProviderContractOpenAI, want: true},
+		{model: "grok-4.7", contract: ProviderContractXAI, want: true},
+		{model: "opus5.0", contract: ProviderContractClaude, want: true},
+		{model: "gemini-3.6-flash", contract: ProviderContractGemini, want: true},
+		{model: "deepseek-flash", contract: ProviderContractDeepSeek, want: true},
+		{model: "glm-5.4", contract: ProviderContractDeepSeek, want: true},
+		{model: "kimi-k3", contract: ProviderContractMoonshot, want: true},
+		{model: "grok-4.7", contract: ProviderContractOpenAI, want: false},
+		{model: "gpt-image-2", contract: ProviderContractOpenAI, want: false},
+		{model: "gemini-3.1-flash-image-preview", contract: ProviderContractGemini, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%s_%s", tc.model, tc.contract), func(t *testing.T) {
+			out, _, err := EnsureNativeSearchToolFieldsForContract(tc.model, []byte(`[{"type":"tool_search"}]`), nil, tc.contract)
+			require.NoError(t, err)
+			if tc.want {
+				assert.Equal(t, "web_search", gjson.GetBytes(out, "0.type").String())
+				assert.True(t, gjson.GetBytes(out, "0.external_web_access").Bool())
+				assert.Equal(t, "tool_search", gjson.GetBytes(out, "1.type").String())
+			} else {
+				assert.Equal(t, "tool_search", gjson.GetBytes(out, "0.type").String())
+				assert.False(t, gjson.GetBytes(out, `#(type=="web_search")`).Exists())
+			}
+		})
+	}
+}
+
+func TestEnsureNativeSearchToolForContractDoesNotDuplicateAndUpdatesAllowedTools(t *testing.T) {
+	explicit := []byte(`[{"type":"web_search"},{"type":"tool_search"}]`)
+	out, _, err := EnsureNativeSearchToolFieldsForContract("gpt-5.7", explicit, nil, ProviderContractOpenAI)
+	require.NoError(t, err)
+	assert.Len(t, gjson.GetBytes(out, `#(type=="web_search")#`).Array(), 1)
+
+	allowed := []byte(`{"type":"allowed_tools","mode":"auto","tools":[{"type":"tool_search"}]}`)
+	out, allowed, err = EnsureNativeSearchToolFieldsForContract("gpt-5.7", []byte(`[{"type":"tool_search"}]`), allowed, ProviderContractOpenAI)
+	require.NoError(t, err)
+	assert.Equal(t, "web_search", gjson.GetBytes(out, "0.type").String())
+	assert.Equal(t, "web_search", gjson.GetBytes(allowed, "tools.1.type").String())
+}
+
+func TestEnsureNativeSearchToolFieldsForContractConcurrent(t *testing.T) {
+	type testCase struct {
+		model    string
+		contract ProviderContract
+	}
+	cases := []testCase{
+		{model: "gpt-5.6-luna", contract: ProviderContractOpenAI},
+		{model: "grok-4.7", contract: ProviderContractXAI},
+		{model: "opus5.0", contract: ProviderContractClaude},
+		{model: "gemini-3.6-flash", contract: ProviderContractGemini},
+		{model: "deepseek-flash", contract: ProviderContractDeepSeek},
+		{model: "glm-5.4", contract: ProviderContractDeepSeek},
+		{model: "kimi-k3", contract: ProviderContractMoonshot},
+	}
+	tools := []byte(`[{"type":"tool_search"},{"type":"namespace","name":"demo","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}]`)
+	choice := []byte(`{"type":"allowed_tools","mode":"auto","tools":[{"type":"tool_search"}]}`)
+
+	const workers = 200
+	const iterations = 50
+	errors := make(chan string, workers)
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tc := cases[worker%len(cases)]
+			for iteration := 0; iteration < iterations; iteration++ {
+				outTools, outChoice, err := EnsureNativeSearchToolFieldsForContract(tc.model, tools, choice, tc.contract)
+				if err != nil {
+					errors <- fmt.Sprintf("worker %d iteration %d: %v", worker, iteration, err)
+					return
+				}
+				if gjson.GetBytes(outTools, "0.type").String() != "web_search" ||
+					gjson.GetBytes(outChoice, "tools.1.type").String() != "web_search" {
+					errors <- fmt.Sprintf("worker %d iteration %d: native search missing", worker, iteration)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+}
 
 func TestNativeCodexContractPreservesHostedToolsAndSanitizesHistoryIDs(t *testing.T) {
 	longReasoningID := "rs_" + strings.Repeat("a", 64)

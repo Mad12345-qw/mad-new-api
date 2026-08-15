@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestGeminiResponsesHandlerReturnsOpenAIResponsesJSON(t *testing.T) {
@@ -165,6 +166,105 @@ func TestGeminiResponsesStreamHandlerReturnsOpenAIResponsesSSE(t *testing.T) {
 		`event: response.output_text.done`,
 		`event: response.completed`,
 	)
+}
+
+func TestGeminiResponsesStreamHandlerReconcilesFunctionCallSnapshots(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Set(common.RequestIdKey, "gemini-responses-function-stream-test")
+
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+
+	functionSnapshot := func(arguments map[string]interface{}, finishReason *string) dto.GeminiChatResponse {
+		return dto.GeminiChatResponse{
+			Candidates: []dto.GeminiChatCandidate{
+				{
+					FinishReason: finishReason,
+					Content: dto.GeminiChatContent{
+						Role: "model",
+						Parts: []dto.GeminiPart{
+							{
+								FunctionCall: &dto.FunctionCall{
+									FunctionName: "audit__matrix_probe",
+									Arguments:    arguments,
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+	stop := "STOP"
+	frames := []dto.GeminiChatResponse{
+		functionSnapshot(map[string]interface{}{}, nil),
+		functionSnapshot(map[string]interface{}{"value": "R7-GEMINI-NONCE"}, nil),
+		{
+			Candidates: []dto.GeminiChatCandidate{
+				{
+					FinishReason: &stop,
+					Content:      dto.GeminiChatContent{Role: "model", Parts: []dto.GeminiPart{{Text: ""}}},
+				},
+			},
+		},
+	}
+	streamFrames := make([]string, 0, len(frames)+1)
+	for _, frame := range frames {
+		data, err := common.Marshal(frame)
+		require.NoError(t, err)
+		streamFrames = append(streamFrames, "data: "+string(data), "")
+	}
+	streamFrames = append(streamFrames, "data: [DONE]", "")
+
+	usage, newAPIError := GeminiResponsesStreamHandler(c, newGeminiResponsesRelayInfo(true), &http.Response{
+		Body: io.NopCloser(strings.NewReader(strings.Join(streamFrames, "\n"))),
+	})
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+
+	var added, done []gjson.Result
+	var argumentDeltas []string
+	var completedOutput []gjson.Result
+	for _, line := range strings.Split(recorder.Body.String(), "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		if payload == "" || payload == "[DONE]" || !gjson.Valid(payload) {
+			continue
+		}
+		event := gjson.Parse(payload)
+		switch event.Get("type").String() {
+		case "response.output_item.added":
+			if event.Get("item.type").String() == "function_call" {
+				added = append(added, event)
+			}
+		case "response.function_call_arguments.delta":
+			argumentDeltas = append(argumentDeltas, event.Get("delta").String())
+		case "response.output_item.done":
+			if event.Get("item.type").String() == "function_call" {
+				done = append(done, event)
+			}
+		case "response.completed":
+			for _, output := range event.Get("response.output").Array() {
+				if output.Get("type").String() == "function_call" {
+					completedOutput = append(completedOutput, output)
+				}
+			}
+		}
+	}
+
+	require.Len(t, added, 1)
+	require.Len(t, done, 1)
+	require.Len(t, completedOutput, 1)
+	require.Equal(t, []string{`{"value":"R7-GEMINI-NONCE"}`}, argumentDeltas)
+	assert.Equal(t, added[0].Get("item.call_id").String(), done[0].Get("item.call_id").String())
+	assert.JSONEq(t, `{"value":"R7-GEMINI-NONCE"}`, done[0].Get("item.arguments").String())
+	assert.JSONEq(t, `{"value":"R7-GEMINI-NONCE"}`, completedOutput[0].Get("arguments").String())
 }
 
 func newGeminiResponsesRelayInfo(isStream bool) *relaycommon.RelayInfo {

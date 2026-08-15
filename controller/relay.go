@@ -124,6 +124,25 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations || relayInfo.RelayMode == relayconstant.RelayModeImagesEdits {
+		releaseImageSlot, acquireErr := service.AcquireImageConcurrency(
+			c.Request.Context(),
+			relayInfo.OriginModelName,
+			relayInfo.RelayMode == relayconstant.RelayModeImagesEdits,
+		)
+		if acquireErr != nil {
+			c.Header("Retry-After", strconv.Itoa(service.ImageQueueRetryAfterSeconds()))
+			newAPIError = types.NewErrorWithStatusCode(
+				acquireErr,
+				types.ErrorCodeImageConcurrencyLimit,
+				http.StatusTooManyRequests,
+				types.ErrOptionWithSkipRetry(),
+			)
+			return
+		}
+		defer releaseImageSlot()
+	}
+
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.

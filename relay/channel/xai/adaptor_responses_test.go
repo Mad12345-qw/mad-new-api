@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service/relayconvert"
+	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
@@ -35,9 +37,27 @@ func TestConvertOpenAIResponsesRequestMapsCodexCustomToolForXAI(t *testing.T) {
 	if gjson.GetBytes(payload, "tools.0.format").Exists() {
 		t.Fatalf("custom format must not be forwarded to xAI: %s", payload)
 	}
-	if got := gjson.GetBytes(payload, "tool_choice.type").String(); got != "function" {
-		t.Fatalf("tool choice type = %q, want function", got)
+	if got := gjson.GetBytes(payload, "tool_choice").String(); got != "required" {
+		t.Fatalf("tool choice = %q, want required", got)
 	}
+}
+
+func TestConvertXAIResponsesRequestEnforcesNamedChoiceAtTheXAIInterfaceBoundary(t *testing.T) {
+	request := dto.OpenAIResponsesRequest{
+		Model: "grok-future",
+		Tools: json.RawMessage(`[
+			{"type":"function","name":"matrix_probe","parameters":{"type":"object"}},
+			{"type":"function","name":"other","parameters":{"type":"object"}}
+		]`),
+		ToolChoice: json.RawMessage(`{"type":"function","name":"matrix_probe"}`),
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(nil, &relaycommon.RelayInfo{}, request)
+	require.NoError(t, err)
+	got := converted.(dto.OpenAIResponsesRequest)
+	require.Equal(t, int64(1), gjson.GetBytes(got.Tools, "#").Int())
+	require.Equal(t, "matrix_probe", gjson.GetBytes(got.Tools, "0.name").String())
+	require.Equal(t, "required", gjson.ParseBytes(got.ToolChoice).String())
 }
 
 func TestConvertOpenAIResponsesRequestMapsCodexCustomHistoryForXAI(t *testing.T) {

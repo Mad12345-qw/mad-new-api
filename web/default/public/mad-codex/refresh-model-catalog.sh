@@ -100,6 +100,7 @@ sourceModels.forEach(function (item) {
   entry.visibility = 'list'
   entry.supported_in_api = true
   entry.prefer_websockets = false
+  if (entry.model_messages && typeof entry.model_messages === 'object') delete entry.model_messages.token_budget
   result.push(entry)
 })
 if (!result.length) throw new Error('MadAPI returned no Codex conversation models')

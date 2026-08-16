@@ -76,3 +76,55 @@ func TestOpenAIResponsesToGeminiPreservesNativeBuiltins(t *testing.T) {
 		t.Fatal("urlContext was not preserved")
 	}
 }
+
+func TestPrepareCodexOpenAIResponsesRequestKeepsGeminiBuiltinsWithFunctions(t *testing.T) {
+	request := dto.OpenAIResponsesRequest{
+		Model: "gemini-test",
+		Input: json.RawMessage(`"search and call"`),
+		Tools: json.RawMessage(`[
+			{"type":"web_search"},
+			{"type":"code_execution"},
+			{"type":"url_context"},
+			{"type":"function","name":"lookup","parameters":{"type":"object"}},
+			{"type":"custom","name":"unsupported_custom"}
+		]`),
+	}
+
+	prepared, err := PrepareCodexOpenAIResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tools []map[string]any
+	if err := json.Unmarshal(prepared.Tools, &tools); err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 4 {
+		t.Fatalf("tools length = %d, tools = %s", len(tools), prepared.Tools)
+	}
+	wantTypes := []string{"web_search", "code_execution", "url_context", "function"}
+	for index, want := range wantTypes {
+		if got, _ := tools[index]["type"].(string); got != want {
+			t.Fatalf("tools[%d].type = %q, want %q", index, got, want)
+		}
+	}
+}
+
+func TestPrepareOpenAIResponsesRequestKeepsOrdinaryV1Behavior(t *testing.T) {
+	request := dto.OpenAIResponsesRequest{
+		Model: "gemini-test",
+		Input: json.RawMessage(`"search and call"`),
+		Tools: json.RawMessage(`[
+			{"type":"web_search"},
+			{"type":"function","name":"lookup","parameters":{"type":"object"}},
+			{"type":"custom","name":"unsupported_custom"}
+		]`),
+	}
+
+	prepared, err := PrepareOpenAIResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(prepared.Tools), `[{"name":"lookup","parameters":{"type":"object"},"type":"function"}]`; got != want {
+		t.Fatalf("ordinary /v1 tools changed: got %s, want %s", got, want)
+	}
+}

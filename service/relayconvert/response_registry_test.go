@@ -1,14 +1,40 @@
 package relayconvert
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPrepareCodexClaudeNativeSearchResponseIsInternalOnly(t *testing.T) {
+	response := &dto.ClaudeResponse{
+		Content:      []dto.ClaudeMediaMessage{{Type: "server_tool_use", Name: "web_search", Id: "srv_1"}},
+		ContentBlock: &dto.ClaudeMediaMessage{Type: "server_tool_use", Name: "web_search", Id: "srv_2"},
+	}
+
+	internal, _ := gin.CreateTestContext(httptest.NewRecorder())
+	internal.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	internal.Request.RemoteAddr = "127.0.0.1:12345"
+	internal.Request.Header.Set("X-MadAPI-Codex-Compat", CodexResponsesInternalMarker())
+	prepared := prepareCodexClaudeNativeSearchResponse(internal, response)
+	require.NotSame(t, response, prepared)
+	assert.Equal(t, "tool_use", prepared.Content[0].Type)
+	assert.Equal(t, "tool_use", prepared.ContentBlock.Type)
+	assert.Equal(t, "server_tool_use", response.Content[0].Type)
+	assert.Equal(t, "server_tool_use", response.ContentBlock.Type)
+
+	external, _ := gin.CreateTestContext(httptest.NewRecorder())
+	external.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	external.Request.RemoteAddr = "203.0.113.10:12345"
+	external.Request.Header.Set("X-MadAPI-Codex-Compat", CodexResponsesInternalMarker())
+	assert.Same(t, response, prepareCodexClaudeNativeSearchResponse(external, response))
+}
 
 func TestLookupBuiltinResponseConverters(t *testing.T) {
 	tests := []struct {

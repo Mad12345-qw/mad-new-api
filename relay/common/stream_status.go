@@ -29,13 +29,15 @@ type StreamErrorEntry struct {
 }
 
 type StreamStatus struct {
-	EndReason  StreamEndReason
-	EndError   error
-	endOnce    sync.Once
+	EndReason StreamEndReason
+	EndError  error
+	endOnce   sync.Once
 
-	mu         sync.Mutex
-	Errors     []StreamErrorEntry
-	ErrorCount int
+	mu                     sync.Mutex
+	Errors                 []StreamErrorEntry
+	ErrorCount             int
+	requireTerminalEvent   bool
+	responsesTerminalEvent string
 }
 
 func NewStreamStatus() *StreamStatus {
@@ -85,9 +87,54 @@ func (s *StreamStatus) TotalErrorCount() int {
 	return s.ErrorCount
 }
 
+func (s *StreamStatus) SetResponsesTerminalRequirement(required bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.requireTerminalEvent = required
+	s.mu.Unlock()
+}
+
+func (s *StreamStatus) MarkResponsesTerminalEvent(eventType string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.responsesTerminalEvent == "" {
+		s.responsesTerminalEvent = eventType
+	}
+	s.mu.Unlock()
+}
+
+func (s *StreamStatus) ResponsesTerminalEvent() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.responsesTerminalEvent
+}
+
+func (s *StreamStatus) RequiresResponsesTerminalEvent() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.requireTerminalEvent
+}
+
 func (s *StreamStatus) IsNormalEnd() bool {
 	if s == nil {
 		return true
+	}
+	s.mu.Lock()
+	requireTerminalEvent := s.requireTerminalEvent
+	terminalEvent := s.responsesTerminalEvent
+	s.mu.Unlock()
+	if requireTerminalEvent && terminalEvent != "response.completed" {
+		return false
 	}
 	return s.EndReason == StreamEndReasonDone ||
 		s.EndReason == StreamEndReasonEOF ||
@@ -106,6 +153,13 @@ func (s *StreamStatus) Summary() string {
 	s.mu.Lock()
 	if s.ErrorCount > 0 {
 		fmt.Fprintf(b, " soft_errors=%d", s.ErrorCount)
+	}
+	if s.requireTerminalEvent {
+		if s.responsesTerminalEvent == "" {
+			fmt.Fprint(b, " terminal_event=missing")
+		} else {
+			fmt.Fprintf(b, " terminal_event=%s", s.responsesTerminalEvent)
+		}
 	}
 	s.mu.Unlock()
 	return b.String()

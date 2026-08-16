@@ -117,6 +117,55 @@ func TestNormalizeOpenAIResponsesRequestRepairsCodexToolSchemas(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpenAIResponsesRequestForChatProviderPreservesReasoningOwnership(t *testing.T) {
+	raw := []byte(`{
+		"input":[
+			{"type":"message","role":"assistant","phase":"commentary","reasoning_content":"message reasoning","content":"checking"},
+			{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}","reasoning_content":"call reasoning"},
+			{"type":"custom_tool_call","call_id":"call_2","name":"patch","input":"change","reasoning_content":"custom reasoning"}
+		]
+	}`)
+
+	generic, err := NormalizeOpenAIResponsesRequestForProvider(raw)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(generic, "input.0.phase").Exists())
+	require.False(t, gjson.GetBytes(generic, "input.0.reasoning_content").Exists())
+	require.False(t, gjson.GetBytes(generic, "input.1.reasoning_content").Exists())
+	require.False(t, gjson.GetBytes(generic, "input.2.reasoning_content").Exists())
+
+	chat, err := NormalizeOpenAIResponsesRequestForChatProvider(raw)
+	require.NoError(t, err)
+	require.Equal(t, "commentary", gjson.GetBytes(chat, "input.0.phase").String())
+	require.Equal(t, "message reasoning", gjson.GetBytes(chat, "input.0.reasoning_content").String())
+	require.Equal(t, "call reasoning", gjson.GetBytes(chat, "input.1.reasoning_content").String())
+	require.Equal(t, "custom reasoning", gjson.GetBytes(chat, "input.2.reasoning_content").String())
+}
+
+func TestNormalizeOpenAIResponsesRequestForChatProviderKeepsReasoningBeforeToolReplay(t *testing.T) {
+	raw := []byte(`{
+		"input":[
+			{
+				"type":"reasoning",
+				"id":"rs_040f959e93f05f58016a816b7518c88199bb517f9db4030f71",
+				"summary":[{"type":"summary_text","text":"verify before calling the tool"}],
+				"encrypted_content":"provider-owned"
+			},
+			{"type":"function_call","id":"fc_long_history_id","call_id":"call_1","name":"lookup","arguments":"{}"},
+			{"type":"function_call_output","id":"fco_long_history_id","call_id":"call_1","output":"ok"}
+		]
+	}`)
+
+	normalized, err := NormalizeOpenAIResponsesRequestForChatProvider(raw)
+	require.NoError(t, err)
+	require.Equal(t, "reasoning", gjson.GetBytes(normalized, "input.0.type").String())
+	require.Equal(t, "verify before calling the tool", gjson.GetBytes(normalized, "input.0.summary.0.text").String())
+
+	converted := ConvertCodexResponsesRequestToOpenAIChatCompletions("deepseek-v4-flash", normalized, false)
+	require.Equal(t, "verify before calling the tool", gjson.GetBytes(converted, "messages.0.reasoning_content").String())
+	require.Equal(t, "call_1", gjson.GetBytes(converted, "messages.0.tool_calls.0.id").String())
+	require.Equal(t, "call_1", gjson.GetBytes(converted, "messages.1.tool_call_id").String())
+}
+
 func TestRestoreOpenAIResponsesPayloadRestoresNamespaceAndCustomTool(t *testing.T) {
 	request := []byte(`{
 		"tools":[

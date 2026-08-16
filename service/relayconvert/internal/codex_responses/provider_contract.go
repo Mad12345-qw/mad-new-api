@@ -37,25 +37,41 @@ func NormalizeOpenAIResponsesRequestForContract(rawJSON []byte, contract Provide
 	case ProviderContractCodex:
 		return normalizeNativeOpenAIResponsesRequest(rawJSON)
 	case ProviderContractOpenAI:
-		return NormalizeOpenAIResponsesRequestForProvider(rawJSON)
+		return normalizeOpenAIResponsesRequestForOpenAIContract(rawJSON)
 	case ProviderContractXAI:
 		return normalizeXAIResponsesRequest(rawJSON)
-	case ProviderContractClaude, ProviderContractGemini, ProviderContractDeepSeek,
-		ProviderContractMoonshot, ProviderContractOpenAICompat:
+	case ProviderContractDeepSeek, ProviderContractMoonshot:
+		return NormalizeOpenAIResponsesRequestForChatProvider(rawJSON)
+	case ProviderContractClaude, ProviderContractGemini, ProviderContractOpenAICompat:
 		return NormalizeOpenAIResponsesRequestForProvider(rawJSON)
 	default:
 		return NormalizeOpenAIResponsesRequestForProvider(rawJSON)
 	}
 }
 
-// EnsureNativeSearchToolFieldsForContract exposes the selected provider's
-// hosted search capability to Codex without changing the client model catalog.
-// It intentionally parses only tools and tool_choice, not the potentially very
-// large conversation input. This runs only after NewAPI has selected a channel
-// and therefore never binds behavior to a channel ID.
-func EnsureNativeSearchToolFieldsForContract(model string, toolsJSON, toolChoiceJSON []byte, contract ProviderContract) ([]byte, []byte, error) {
+func normalizeOpenAIResponsesRequestForOpenAIContract(rawJSON []byte) ([]byte, error) {
+	normalized, err := NormalizeOpenAIResponsesRequestForProvider(rawJSON)
+	if err != nil {
+		return nil, err
+	}
+	var root map[string]any
+	if err = common.Unmarshal(normalized, &root); err != nil {
+		return nil, err
+	}
+	sanitizeCodexInputItemIDs(root)
+	return common.Marshal(root)
+}
+
+// EnsureOpenAINativeSearchToolFieldsForContract restores the hosted search
+// capability advertised by the Codex model catalog when the selected upstream
+// is an OpenAI/Codex Responses interface. Client-side tool_search remains a
+// separate deferred-tool discovery capability; it is never used as web search.
+func EnsureOpenAINativeSearchToolFieldsForContract(model string, toolsJSON, toolChoiceJSON []byte, contract ProviderContract) ([]byte, []byte, error) {
+	if contract != ProviderContractOpenAI && contract != ProviderContractCodex {
+		return toolsJSON, toolChoiceJSON, nil
+	}
 	model = strings.ToLower(strings.TrimSpace(model))
-	if !contractSupportsNativeSearchModel(contract, model) {
+	if model == "" || isNonTextGenerationModel(model) || !hasOpenAITextModelPrefix(model) {
 		return toolsJSON, toolChoiceJSON, nil
 	}
 
@@ -88,40 +104,13 @@ func EnsureNativeSearchToolFieldsForContract(model string, toolsJSON, toolChoice
 	return toolsJSON, toolChoiceJSON, nil
 }
 
-func contractSupportsNativeSearchModel(contract ProviderContract, model string) bool {
-	if model == "" || isNonTextGenerationModel(model) {
-		return false
-	}
-	hasPrefix := func(prefixes ...string) bool {
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(model, prefix) {
-				return true
-			}
+func hasOpenAITextModelPrefix(model string) bool {
+	for _, prefix := range []string{"gpt-", "o1", "o3", "o4"} {
+		if strings.HasPrefix(model, prefix) {
+			return true
 		}
-		return false
 	}
-
-	switch contract {
-	case ProviderContractOpenAI, ProviderContractCodex:
-		return hasPrefix("gpt-", "o1", "o3", "o4")
-	case ProviderContractXAI:
-		return hasPrefix("grok-", "xai-")
-	case ProviderContractClaude:
-		return hasPrefix("claude-", "opus", "sonnet", "haiku")
-	case ProviderContractGemini:
-		return hasPrefix("gemini-")
-	case ProviderContractDeepSeek:
-		return hasPrefix("deepseek-", "glm-")
-	case ProviderContractMoonshot:
-		return hasPrefix("kimi-", "moonshot-")
-	case ProviderContractOpenAICompat:
-		return hasPrefix(
-			"gpt-", "o1", "o3", "o4", "grok-", "xai-", "claude-", "opus",
-			"sonnet", "haiku", "gemini-", "deepseek-", "glm-", "kimi-", "moonshot-",
-		)
-	default:
-		return false
-	}
+	return false
 }
 
 func isNonTextGenerationModel(model string) bool {
@@ -147,7 +136,7 @@ func hasNativeSearchTool(value any) bool {
 			}
 		case map[string]any:
 			switch strings.ToLower(strings.TrimSpace(stringValue(typed["type"]))) {
-			case "web_search", "web_search_preview", "web_search_preview_2025_03_11", "x_search", "google_search":
+			case "web_search", "web_search_preview", "web_search_preview_2025_03_11":
 				return true
 			}
 			if contains(typed["tools"]) {
@@ -404,7 +393,7 @@ func normalizeXAIResponsesRequest(rawJSON []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	prepared, err = normalizeOpenAIResponsesRequestForFunctionProvider(prepared, false)
+	prepared, err = normalizeOpenAIResponsesRequestForFunctionProvider(prepared, false, false)
 	if err != nil {
 		return nil, err
 	}

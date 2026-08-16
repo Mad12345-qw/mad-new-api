@@ -27,10 +27,17 @@ func NormalizeOpenAIResponsesRequest(rawJSON []byte) ([]byte, error) {
 // declarations and history items after NewAPI has selected a non-native
 // provider adapter. OpenAI and Codex API adapters must not call this function.
 func NormalizeOpenAIResponsesRequestForProvider(rawJSON []byte) ([]byte, error) {
-	return normalizeOpenAIResponsesRequestForFunctionProvider(rawJSON, false)
+	return normalizeOpenAIResponsesRequestForFunctionProvider(rawJSON, false, false)
 }
 
-func normalizeOpenAIResponsesRequestForFunctionProvider(rawJSON []byte, preserveToolChoice bool) ([]byte, error) {
+// NormalizeOpenAIResponsesRequestForChatProvider keeps the reasoning ownership
+// fields needed when a Codex Responses history is replayed through a strict
+// thinking-mode Chat Completions provider.
+func NormalizeOpenAIResponsesRequestForChatProvider(rawJSON []byte) ([]byte, error) {
+	return normalizeOpenAIResponsesRequestForFunctionProvider(rawJSON, false, true)
+}
+
+func normalizeOpenAIResponsesRequestForFunctionProvider(rawJSON []byte, preserveToolChoice bool, preserveReasoningOwnership bool) ([]byte, error) {
 	var root map[string]any
 	if err := common.Unmarshal(rawJSON, &root); err != nil {
 		return nil, fmt.Errorf("invalid Responses request: %w", err)
@@ -59,7 +66,7 @@ func normalizeOpenAIResponsesRequestForFunctionProvider(rawJSON []byte, preserve
 				continue
 			}
 			itemType := strings.TrimSpace(stringValue(item["type"]))
-			sanitizeProviderHistoryItemFields(item, itemType)
+			sanitizeProviderHistoryItemFields(item, itemType, preserveReasoningOwnership)
 			if itemType == "reasoning" {
 				if _, exists := item["summary"]; !exists {
 					item["summary"] = []any{}
@@ -107,12 +114,10 @@ func normalizeOpenAIResponsesRequestForFunctionProvider(rawJSON []byte, preserve
 	if root["tool_choice"] == nil {
 		delete(root, "tool_choice")
 	}
-	sanitizeCodexInputItemIDs(root)
-
 	return common.Marshal(root)
 }
 
-func sanitizeProviderHistoryItemFields(item map[string]any, itemType string) {
+func sanitizeProviderHistoryItemFields(item map[string]any, itemType string, preserveReasoningOwnership bool) {
 	var allowed map[string]struct{}
 	switch itemType {
 	case "message":
@@ -138,6 +143,15 @@ func sanitizeProviderHistoryItemFields(item map[string]any, itemType string) {
 	default:
 		delete(item, "status")
 		return
+	}
+	if preserveReasoningOwnership {
+		switch itemType {
+		case "message":
+			allowed["phase"] = struct{}{}
+			allowed["reasoning_content"] = struct{}{}
+		case "function_call", "custom_tool_call":
+			allowed["reasoning_content"] = struct{}{}
+		}
 	}
 	for key := range item {
 		if _, ok := allowed[key]; !ok {

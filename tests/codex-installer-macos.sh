@@ -98,7 +98,7 @@ printf '%s' '{"auth_mode":"chatgpt","tokens":{"access_token":"oauth-access","ref
 MADAPI_CODEX_AUTH_KIND=oauth \
 MADAPI_API_KEY='sk-refresh-macos' \
 MADAPI_REFRESH_RESPONSE_FILE="$oauth_models" \
-MADAPI_CODEX_TEMPLATE_FILE="$repo_root/tests/fixtures/codex-model-templates.json" \
+MADAPI_CODEX_TEMPLATE_FILE="$asset_root/codex-model-templates.json" \
 CODEX_HOME="$codex_home" \
 /bin/sh "$refresh_path"
 oauth_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.models.length))' "$codex_home/madapi-cockpit-model-catalog.json")
@@ -106,6 +106,7 @@ oauth_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync
 grep -Fq '"slug": "grok-4.6"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth catalog is missing grok-4.6.'
 ! grep -Fq '"slug": "gpt-image-2"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth image model leaked into the conversation selector.'
 ! grep -Fq '"slug": "seedance-2.0-fast"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth video model leaked into the conversation selector.'
+! grep -Fq '"token_budget"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'Unsupported token-budget lifecycle leaked into the Codex catalog.'
 
 api_home="$root/api-codex"
 mkdir -p "$api_home/sessions"

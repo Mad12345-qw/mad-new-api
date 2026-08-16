@@ -49,7 +49,7 @@ func NormalizeCodexResponsesRequestForSelectedProvider(request dto.OpenAIRespons
 	case appconstant.APITypeMoonshot:
 		contract = codexresponses.ProviderContractMoonshot
 	}
-	tools, toolChoice, err := codexresponses.EnsureNativeSearchToolFieldsForContract(request.Model, request.Tools, request.ToolChoice, contract)
+	tools, toolChoice, err := codexresponses.EnsureOpenAINativeSearchToolFieldsForContract(request.Model, request.Tools, request.ToolChoice, contract)
 	if err != nil {
 		return request, err
 	}

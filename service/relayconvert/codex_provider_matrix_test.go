@@ -133,7 +133,7 @@ func TestCodexProviderMatrixUsesSelectedProviderContract(t *testing.T) {
 	})
 }
 
-func TestCodexProviderMatrixInjectsNativeSearchAfterChannelSelection(t *testing.T) {
+func TestCodexProviderMatrixRestoresOpenAINativeSearchAfterChannelSelection(t *testing.T) {
 	raw := []byte(`{
 		"model":"gpt-5.6-luna",
 		"input":"Search the latest public information.",
@@ -165,6 +165,44 @@ func TestCodexProviderMatrixInjectsNativeSearchAfterChannelSelection(t *testing.
 	assert.Equal(t, "tool_search", gjson.GetBytes(payload, "tools.1.name").String())
 	assert.Equal(t, int64(2), gjson.GetBytes(payload, "tools.#").Int())
 	assert.Equal(t, "auto", gjson.GetBytes(payload, "tool_choice").String())
+}
+
+func TestCodexDeepSeekReplayCarriesReasoningContentThroughSelectedProvider(t *testing.T) {
+	raw := []byte(`{
+		"model":"deepseek-v4-flash",
+		"input":[
+			{
+				"type":"reasoning",
+				"id":"rs_7c45d2c7433e4a768df56437e240ae7b",
+				"summary":[{"type":"summary_text","text":"verify before calling the tool"}],
+				"encrypted_content":"provider-owned"
+			},
+			{"type":"function_call","id":"fc_call_1","call_id":"call_1","name":"lookup","arguments":"{\"query\":\"marker\"}","status":"completed"},
+			{"type":"function_call_output","call_id":"call_1","output":"deployment_marker=r20e"}
+		],
+		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
+		"reasoning":{"effort":"high"},
+		"stream":false
+	}`)
+
+	boundaryRequest, err := relayconvert.NormalizeCodexResponsesRequest(raw)
+	require.NoError(t, err)
+	var request dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal(boundaryRequest, &request))
+	request, err = relayconvert.NormalizeCodexResponsesRequestForSelectedProvider(request, appconstant.APITypeDeepSeek)
+	require.NoError(t, err)
+
+	codexContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	codexContext.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	codexContext.Request.RemoteAddr = "127.0.0.1:12345"
+	codexContext.Request.Header.Set("X-MadAPI-Codex-Compat", relayconvert.CodexResponsesInternalMarker())
+	converted, err := (&deepseek.Adaptor{}).ConvertOpenAIResponsesRequest(codexContext, matrixInfo("deepseek-v4-flash"), request)
+	require.NoError(t, err)
+	payload, err := common.Marshal(converted)
+	require.NoError(t, err)
+	require.Equal(t, "verify before calling the tool", gjson.GetBytes(payload, "messages.0.reasoning_content").String(), string(payload))
+	require.Equal(t, "call_1", gjson.GetBytes(payload, "messages.0.tool_calls.0.id").String(), string(payload))
+	require.Equal(t, "call_1", gjson.GetBytes(payload, "messages.1.tool_call_id").String(), string(payload))
 }
 
 func TestCodexProviderSwitchConvertsOpenAIClientToolsAndDropsUnsupportedXAIToolSearchHistory(t *testing.T) {
@@ -199,6 +237,11 @@ func TestCodexProviderSwitchConvertsOpenAIClientToolsAndDropsUnsupportedXAIToolS
 	require.Equal(t, "function_call_output", gjson.GetBytes(openAIPayload, "input.3.type").String())
 	require.False(t, gjson.GetBytes(openAIPayload, "input.3.id").Exists())
 	require.Equal(t, "call_search", gjson.GetBytes(openAIPayload, "input.3.call_id").String())
+	require.Equal(t, "web_search", gjson.GetBytes(openAIPayload, "tools.0.type").String())
+	require.Equal(t, "function", gjson.GetBytes(openAIPayload, "tools.1.type").String())
+	require.Equal(t, "apply_patch", gjson.GetBytes(openAIPayload, "tools.1.name").String())
+	require.Equal(t, "function", gjson.GetBytes(openAIPayload, "tools.2.type").String())
+	require.Equal(t, "tool_search", gjson.GetBytes(openAIPayload, "tools.2.name").String())
 
 	providerRequest, err := relayconvert.NormalizeCodexResponsesRequestForSelectedProvider(request, appconstant.APITypeXai)
 	require.NoError(t, err)

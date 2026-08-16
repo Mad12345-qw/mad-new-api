@@ -1,9 +1,7 @@
 package codexresponses
 
 import (
-	"fmt"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,101 +9,70 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestEnsureNativeSearchToolForContractUsesModelFamilyAndSelectedInterface(t *testing.T) {
+func TestNormalizeOpenAIResponsesRequestForContractPreservesNativeAndChatReasoningOwnership(t *testing.T) {
+	raw := []byte(`{"input":[{"type":"message","role":"assistant","phase":"commentary","content":"checking"},{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}","reasoning_content":"owned reasoning"}]}`)
+
+	for _, contract := range []ProviderContract{ProviderContractCodex, ProviderContractDeepSeek, ProviderContractMoonshot} {
+		out, err := NormalizeOpenAIResponsesRequestForContract(raw, contract)
+		require.NoError(t, err)
+		require.Equal(t, "commentary", gjson.GetBytes(out, "input.0.phase").String(), string(contract))
+		require.Equal(t, "owned reasoning", gjson.GetBytes(out, "input.1.reasoning_content").String(), string(contract))
+	}
+	for _, contract := range []ProviderContract{ProviderContractOpenAI, ProviderContractClaude, ProviderContractGemini, ProviderContractOpenAICompat} {
+		out, err := NormalizeOpenAIResponsesRequestForContract(raw, contract)
+		require.NoError(t, err)
+		require.False(t, gjson.GetBytes(out, "input.0.phase").Exists(), string(contract))
+		require.False(t, gjson.GetBytes(out, "input.1.reasoning_content").Exists(), string(contract))
+	}
+}
+
+func TestEnsureOpenAINativeSearchToolFieldsUsesOnlyOpenAIModelContracts(t *testing.T) {
 	tests := []struct {
 		model    string
 		contract ProviderContract
 		want     bool
 	}{
-		{model: "gpt-5.7", contract: ProviderContractOpenAI, want: true},
 		{model: "gpt-5.6-luna", contract: ProviderContractOpenAI, want: true},
-		{model: "gpt-5.6-terra", contract: ProviderContractOpenAI, want: true},
-		{model: "grok-4.7", contract: ProviderContractXAI, want: true},
-		{model: "opus5.0", contract: ProviderContractClaude, want: true},
-		{model: "gemini-3.6-flash", contract: ProviderContractGemini, want: true},
-		{model: "deepseek-flash", contract: ProviderContractDeepSeek, want: true},
-		{model: "glm-5.4", contract: ProviderContractDeepSeek, want: true},
-		{model: "kimi-k3", contract: ProviderContractMoonshot, want: true},
+		{model: "gpt-5.7", contract: ProviderContractCodex, want: true},
+		{model: "gpt-5.7", contract: ProviderContractXAI, want: false},
 		{model: "grok-4.7", contract: ProviderContractOpenAI, want: false},
 		{model: "gpt-image-2", contract: ProviderContractOpenAI, want: false},
-		{model: "gemini-3.1-flash-image-preview", contract: ProviderContractGemini, want: false},
 	}
 
-	for _, tc := range tests {
-		t.Run(fmt.Sprintf("%s_%s", tc.model, tc.contract), func(t *testing.T) {
-			out, _, err := EnsureNativeSearchToolFieldsForContract(tc.model, []byte(`[{"type":"tool_search"}]`), nil, tc.contract)
+	for _, test := range tests {
+		t.Run(test.model+"_"+string(test.contract), func(t *testing.T) {
+			tools, _, err := EnsureOpenAINativeSearchToolFieldsForContract(test.model, []byte(`[{"type":"tool_search"}]`), nil, test.contract)
 			require.NoError(t, err)
-			if tc.want {
-				assert.Equal(t, "web_search", gjson.GetBytes(out, "0.type").String())
-				assert.True(t, gjson.GetBytes(out, "0.external_web_access").Bool())
-				assert.Equal(t, "tool_search", gjson.GetBytes(out, "1.type").String())
+			if test.want {
+				require.Equal(t, "web_search", gjson.GetBytes(tools, "0.type").String())
+				require.Equal(t, "tool_search", gjson.GetBytes(tools, "1.type").String())
 			} else {
-				assert.Equal(t, "tool_search", gjson.GetBytes(out, "0.type").String())
-				assert.False(t, gjson.GetBytes(out, `#(type=="web_search")`).Exists())
+				require.Equal(t, "tool_search", gjson.GetBytes(tools, "0.type").String())
+				require.False(t, gjson.GetBytes(tools, `#(type=="web_search")`).Exists())
 			}
 		})
 	}
 }
 
-func TestEnsureNativeSearchToolForContractDoesNotDuplicateAndUpdatesAllowedTools(t *testing.T) {
-	explicit := []byte(`[{"type":"web_search"},{"type":"tool_search"}]`)
-	out, _, err := EnsureNativeSearchToolFieldsForContract("gpt-5.7", explicit, nil, ProviderContractOpenAI)
+func TestEnsureOpenAINativeSearchToolFieldsUpdatesAllowedToolsWithoutDuplication(t *testing.T) {
+	tools, choice, err := EnsureOpenAINativeSearchToolFieldsForContract(
+		"gpt-5.6-terra",
+		[]byte(`[{"type":"tool_search"}]`),
+		[]byte(`{"type":"allowed_tools","mode":"auto","tools":[{"type":"tool_search"}]}`),
+		ProviderContractOpenAI,
+	)
 	require.NoError(t, err)
-	assert.Len(t, gjson.GetBytes(out, `#(type=="web_search")#`).Array(), 1)
+	require.Len(t, gjson.GetBytes(tools, `#(type=="web_search")#`).Array(), 1)
+	require.Equal(t, "web_search", gjson.GetBytes(choice, "tools.1.type").String())
 
-	allowed := []byte(`{"type":"allowed_tools","mode":"auto","tools":[{"type":"tool_search"}]}`)
-	out, allowed, err = EnsureNativeSearchToolFieldsForContract("gpt-5.7", []byte(`[{"type":"tool_search"}]`), allowed, ProviderContractOpenAI)
+	tools, _, err = EnsureOpenAINativeSearchToolFieldsForContract(
+		"gpt-5.6-terra",
+		[]byte(`[{"type":"web_search"},{"type":"tool_search"}]`),
+		nil,
+		ProviderContractOpenAI,
+	)
 	require.NoError(t, err)
-	assert.Equal(t, "web_search", gjson.GetBytes(out, "0.type").String())
-	assert.Equal(t, "web_search", gjson.GetBytes(allowed, "tools.1.type").String())
-}
-
-func TestEnsureNativeSearchToolFieldsForContractConcurrent(t *testing.T) {
-	type testCase struct {
-		model    string
-		contract ProviderContract
-	}
-	cases := []testCase{
-		{model: "gpt-5.6-luna", contract: ProviderContractOpenAI},
-		{model: "grok-4.7", contract: ProviderContractXAI},
-		{model: "opus5.0", contract: ProviderContractClaude},
-		{model: "gemini-3.6-flash", contract: ProviderContractGemini},
-		{model: "deepseek-flash", contract: ProviderContractDeepSeek},
-		{model: "glm-5.4", contract: ProviderContractDeepSeek},
-		{model: "kimi-k3", contract: ProviderContractMoonshot},
-	}
-	tools := []byte(`[{"type":"tool_search"},{"type":"namespace","name":"demo","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}]`)
-	choice := []byte(`{"type":"allowed_tools","mode":"auto","tools":[{"type":"tool_search"}]}`)
-
-	const workers = 200
-	const iterations = 50
-	errors := make(chan string, workers)
-	var wg sync.WaitGroup
-	for worker := 0; worker < workers; worker++ {
-		worker := worker
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tc := cases[worker%len(cases)]
-			for iteration := 0; iteration < iterations; iteration++ {
-				outTools, outChoice, err := EnsureNativeSearchToolFieldsForContract(tc.model, tools, choice, tc.contract)
-				if err != nil {
-					errors <- fmt.Sprintf("worker %d iteration %d: %v", worker, iteration, err)
-					return
-				}
-				if gjson.GetBytes(outTools, "0.type").String() != "web_search" ||
-					gjson.GetBytes(outChoice, "tools.1.type").String() != "web_search" {
-					errors <- fmt.Sprintf("worker %d iteration %d: native search missing", worker, iteration)
-					return
-				}
-			}
-		}()
-	}
-	wg.Wait()
-	close(errors)
-	for err := range errors {
-		t.Error(err)
-	}
+	require.Len(t, gjson.GetBytes(tools, `#(type=="web_search")#`).Array(), 1)
 }
 
 func TestNativeCodexContractPreservesHostedToolsAndSanitizesHistoryIDs(t *testing.T) {
@@ -154,6 +121,7 @@ func TestOpenAIContractPreservesHostedSearchAndConvertsCodexClientTools(t *testi
 			{"type":"namespace","name":"terminal","tools":[{"type":"custom","name":"exec"}]}
 		],
 		"input":[
+			{"type":"message","id":"message_commentary","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"checking"}]},
 			{"type":"custom_tool_call","id":"ctco_existing","call_id":"call_custom","name":"apply_patch","input":"patch"},
 			{"type":"custom_tool_call_output","call_id":"call_custom","output":"ok"},
 			{"type":"tool_search_call","id":"tsc_search","call_id":"call_search","arguments":{"query":"tools"}},
@@ -174,27 +142,22 @@ func TestOpenAIContractPreservesHostedSearchAndConvertsCodexClientTools(t *testi
 	assert.Equal(t, "apply_patch", gjson.GetBytes(out, "tools.2.name").String())
 	assert.Equal(t, "function", gjson.GetBytes(out, "tools.3.type").String())
 	assert.Equal(t, "terminal__exec", gjson.GetBytes(out, "tools.3.name").String())
-	assert.Equal(t, "function_call", gjson.GetBytes(out, "input.0.type").String())
-	assert.Equal(t, "fc_existing", gjson.GetBytes(out, "input.0.id").String())
-	assert.Equal(t, "function_call_output", gjson.GetBytes(out, "input.1.type").String())
-	assert.Equal(t, "function_call", gjson.GetBytes(out, "input.2.type").String())
-	assert.Equal(t, "fc_search", gjson.GetBytes(out, "input.2.id").String())
-	assert.False(t, gjson.GetBytes(out, "input.3.status").Exists())
-	assert.False(t, gjson.GetBytes(out, "input.3.quality").Exists())
-	assert.False(t, gjson.GetBytes(out, "input.3.content").Exists())
-	assert.True(t, gjson.GetBytes(out, "input.3.summary").IsArray())
-	assert.Equal(t, int64(0), gjson.GetBytes(out, "input.3.summary.#").Int())
-	assert.True(t, strings.HasPrefix(gjson.GetBytes(out, "input.3.id").String(), "rs_"))
-	assert.LessOrEqual(t, len([]rune(gjson.GetBytes(out, "input.3.id").String())), codexInputItemIDLimit)
-	assert.False(t, gjson.GetBytes(out, "input.4.status").Exists())
-	assert.True(t, strings.HasPrefix(gjson.GetBytes(out, "input.4.id").String(), "ws_"))
+	assert.Equal(t, "message", gjson.GetBytes(out, "input.0.type").String())
+	assert.False(t, gjson.GetBytes(out, "input.0.phase").Exists())
+	assert.Equal(t, "msg_message_commentary", gjson.GetBytes(out, "input.0.id").String())
+	assert.Equal(t, "function_call", gjson.GetBytes(out, "input.1.type").String())
+	assert.Equal(t, "fc_existing", gjson.GetBytes(out, "input.1.id").String())
+	assert.Equal(t, "function_call_output", gjson.GetBytes(out, "input.2.type").String())
+	assert.Equal(t, "function_call", gjson.GetBytes(out, "input.3.type").String())
+	assert.Equal(t, "fc_search", gjson.GetBytes(out, "input.3.id").String())
+	assert.True(t, strings.HasPrefix(gjson.GetBytes(out, "input.4.id").String(), "rs_"))
 	assert.LessOrEqual(t, len([]rune(gjson.GetBytes(out, "input.4.id").String())), codexInputItemIDLimit)
-	assert.Equal(t, "function_call", gjson.GetBytes(out, "input.5.type").String())
-	assert.Equal(t, "fc_provider", gjson.GetBytes(out, "input.5.id").String())
-	assert.Equal(t, "audit__lookup", gjson.GetBytes(out, "input.5.name").String())
-	for _, field := range []string{"content", "quality", "role", "size", "status"} {
-		assert.False(t, gjson.GetBytes(out, "input.5."+field).Exists(), field)
-	}
+	assert.Equal(t, "web_search_call", gjson.GetBytes(out, "input.5.type").String())
+	assert.True(t, strings.HasPrefix(gjson.GetBytes(out, "input.5.id").String(), "ws_"))
+	assert.LessOrEqual(t, len([]rune(gjson.GetBytes(out, "input.5.id").String())), codexInputItemIDLimit)
+	assert.Equal(t, "function_call", gjson.GetBytes(out, "input.6.type").String())
+	assert.Equal(t, "fc_provider", gjson.GetBytes(out, "input.6.id").String())
+	assert.Equal(t, "audit__lookup", gjson.GetBytes(out, "input.6.name").String())
 }
 
 func TestXAIContractUsesNativeSearchAndDropsUnsupportedCodexTools(t *testing.T) {

@@ -276,6 +276,54 @@ func TestCodexProviderMatrixDoesNotActivateOnExternalV1HeaderSpoof(t *testing.T)
 	assert.Contains(t, string(payload), `"name":"lookup"`)
 }
 
+func TestCodexOpenAIResponsesRawFastPathMatchesExistingPipeline(t *testing.T) {
+	raw := []byte(`{
+		"model":"gpt-5.6-luna",
+		"input":[
+			{"type":"custom_tool_call","id":"ctc_01a003bf-75c1-76f0-bc53-46aef06da266","call_id":"call_custom","name":"apply_patch","input":"patch"},
+			{"type":"custom_tool_call_output","id":"ctco_01a003bf-75c1-76f0-bc53-46aef06da267","call_id":"call_custom","output":"ok"},
+			{"type":"tool_search_call","id":"tsc_01a00547-dd34-7080-97b7-8c91164b78de","call_id":"call_search","execution":"client","arguments":{"query":"search"},"status":"completed"},
+			{"type":"tool_search_output","id":"tso_01a00547-dd34-7080-97b7-8c91164b78de","call_id":"call_search","status":"completed","tools":[{"type":"function","name":"loaded_tool","parameters":{"type":"object"}}]}
+		],
+		"tools":[
+			{"type":"tool_search"},
+			{"type":"custom","name":"apply_patch","format":{"type":"text"}},
+			{"type":"namespace","name":"mcp__demo","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}
+		],
+		"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"tool_search"}]},
+		"stream":true
+	}`)
+	boundary, err := relayconvert.NormalizeCodexResponsesRequest(raw)
+	require.NoError(t, err)
+
+	const mappedModel = "gpt-5.6-luna-high"
+	var legacyRequest dto.OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal(boundary, &legacyRequest))
+	legacyRequest.Model = mappedModel
+	legacyRequest, err = relayconvert.NormalizeCodexResponsesRequestForSelectedProvider(legacyRequest, appconstant.APITypeOpenAI)
+	require.NoError(t, err)
+
+	codexContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	codexContext.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	codexContext.Request.RemoteAddr = "127.0.0.1:12345"
+	codexContext.Request.Header.Set("X-MadAPI-Codex-Compat", relayconvert.CodexResponsesInternalMarker())
+	legacyConverted, err := (&openai.Adaptor{}).ConvertOpenAIResponsesRequest(codexContext, matrixInfo(mappedModel), legacyRequest)
+	require.NoError(t, err)
+	legacyPayload, err := common.Marshal(legacyConverted)
+	require.NoError(t, err)
+
+	fastPayload, effort, err := relayconvert.NormalizeCodexOpenAIResponsesRawRequest(boundary, mappedModel)
+	require.NoError(t, err)
+	require.Equal(t, "high", effort)
+	assert.JSONEq(t, string(legacyPayload), string(fastPayload))
+	assert.Equal(t, "gpt-5.6-luna", gjson.GetBytes(fastPayload, "model").String())
+	assert.Equal(t, "high", gjson.GetBytes(fastPayload, "reasoning.effort").String())
+	assert.Equal(t, "web_search", gjson.GetBytes(fastPayload, "tools.0.type").String())
+	assert.Equal(t, "function", gjson.GetBytes(fastPayload, "tools.1.type").String())
+	assert.Equal(t, "tool_search", gjson.GetBytes(fastPayload, "tools.1.name").String())
+	assert.Equal(t, "fc_01a00547-dd34-7080-97b7-8c91164b78de", gjson.GetBytes(fastPayload, "input.2.id").String())
+}
+
 func matrixInfo(model string) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
 		OriginModelName: model,

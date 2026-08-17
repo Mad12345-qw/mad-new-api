@@ -54,9 +54,18 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		)
 	}
 
-	request, err := common.DeepCopy(responsesReq)
-	if err != nil {
-		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	useCodexOpenAIFastPath := shouldUseCodexOpenAIResponsesFastPath(c, info)
+	var request *dto.OpenAIResponsesRequest
+	var err error
+	if useCodexOpenAIFastPath {
+		// ModelMappedHelper only needs the model field. Keeping the large input in
+		// BodyStorage avoids the DTO deep-copy on the OpenAI-native fast path.
+		request = &dto.OpenAIResponsesRequest{Model: responsesReq.Model}
+	} else {
+		request, err = common.DeepCopy(responsesReq)
+		if err != nil {
+			return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+		}
 	}
 
 	err = helper.ModelMappedHelper(c, info, request)
@@ -82,7 +91,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	adaptor.Init(info)
 	providerNormalizationRequired := relayconvert.IsCodexResponsesInternalRequest(c)
-	if providerNormalizationRequired {
+	if providerNormalizationRequired && !useCodexOpenAIFastPath {
 		normalized, normalizeErr := relayconvert.NormalizeCodexResponsesRequestForSelectedProvider(*request, info.ApiType)
 		if normalizeErr != nil {
 			return types.NewError(normalizeErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -97,14 +106,31 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		}
 		requestBody = common.ReaderOnly(storage)
 	} else {
-		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
-		jsonData, err := common.Marshal(convertedRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		var jsonData []byte
+		if useCodexOpenAIFastPath {
+			storage, storageErr := common.GetBodyStorage(c)
+			if storageErr != nil {
+				return types.NewError(storageErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+			}
+			rawJSON, storageErr := storage.Bytes()
+			if storageErr != nil {
+				return types.NewError(storageErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+			}
+			jsonData, info.ReasoningEffort, err = relayconvert.NormalizeCodexOpenAIResponsesRawRequest(rawJSON, request.Model)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			relaycommon.AppendRequestConversionFromRequest(info, dto.OpenAIResponsesRequest{})
+		} else {
+			convertedRequest, convertErr := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
+			if convertErr != nil {
+				return types.NewError(convertErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+			jsonData, err = common.Marshal(convertedRequest)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
 		}
 
 		// remove disabled fields for OpenAI Responses API
@@ -181,4 +207,12 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 	}
 	return nil
+}
+
+func shouldUseCodexOpenAIResponsesFastPath(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	return common.GetEnvOrDefaultBool("MADAPI_CODEX_OPENAI_RESPONSES_FAST_PATH", false) &&
+		info != nil &&
+		info.RelayMode == relayconstant.RelayModeResponses &&
+		info.ApiType == appconstant.APITypeOpenAI &&
+		relayconvert.IsCodexResponsesInternalRequest(c)
 }

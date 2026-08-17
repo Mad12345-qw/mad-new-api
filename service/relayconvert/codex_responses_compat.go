@@ -3,11 +3,13 @@ package relayconvert
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	codexresponses "github.com/QuantumNous/new-api/service/relayconvert/internal/codex_responses"
+	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/gin-gonic/gin"
 )
 
@@ -68,6 +70,57 @@ func NormalizeCodexResponsesRequestForSelectedProvider(request dto.OpenAIRespons
 		return request, err
 	}
 	return result, nil
+}
+
+// NormalizeCodexOpenAIResponsesRawRequest applies the same OpenAI provider
+// contract as NormalizeCodexResponsesRequestForSelectedProvider followed by
+// the OpenAI adaptor, while keeping a large Responses input in raw JSON form.
+// It is intentionally OpenAI-only; other provider paths retain their existing
+// conversion pipeline.
+func NormalizeCodexOpenAIResponsesRawRequest(rawJSON []byte, mappedModel string) ([]byte, string, error) {
+	var request dto.OpenAIResponsesRequest
+	if err := common.Unmarshal(rawJSON, &request); err != nil {
+		return nil, "", fmt.Errorf("invalid OpenAI Responses request: %w", err)
+	}
+	request.Model = mappedModel
+
+	tools, toolChoice, err := codexresponses.EnsureOpenAINativeSearchToolFieldsForContract(
+		request.Model,
+		request.Tools,
+		request.ToolChoice,
+		codexresponses.ProviderContractOpenAI,
+	)
+	if err != nil {
+		return nil, "", err
+	}
+	request.Tools = tools
+	request.ToolChoice = toolChoice
+
+	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model)
+	if effort != "" {
+		if request.Reasoning == nil {
+			request.Reasoning = &dto.Reasoning{Effort: effort}
+		} else {
+			request.Reasoning.Effort = effort
+		}
+		request.Model = originModel
+	}
+	if request.Reasoning != nil && request.Reasoning.Effort != "" {
+		effort = request.Reasoning.Effort
+	}
+
+	prepared, err := common.Marshal(request)
+	if err != nil {
+		return nil, "", err
+	}
+	normalized, err := codexresponses.NormalizeOpenAIResponsesRequestForContract(
+		prepared,
+		codexresponses.ProviderContractOpenAI,
+	)
+	if err != nil {
+		return nil, "", err
+	}
+	return normalized, effort, nil
 }
 
 func IsCodexResponsesInternalRequest(c *gin.Context) bool {

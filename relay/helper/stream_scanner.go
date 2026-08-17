@@ -82,6 +82,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 	// 无条件新建 StreamStatus
 	info.StreamStatus = relaycommon.NewStreamStatus()
+	info.StreamStatus.SetResponsesTerminalRequirement(info.RequireResponsesTerminalEvent)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -265,12 +266,29 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			if !strings.HasPrefix(data, "[DONE]") {
 				info.SetFirstResponseTime()
 				info.ReceivedResponseCount++
+				terminalEvent := ""
+				if info.RequireResponsesTerminalEvent {
+					var event struct {
+						Type string `json:"type"`
+					}
+					if err := common.UnmarshalJsonStr(data, &event); err == nil {
+						switch event.Type {
+						case "response.completed", "response.failed", "response.incomplete":
+							terminalEvent = event.Type
+							info.StreamStatus.MarkResponsesTerminalEvent(event.Type)
+						}
+					}
+				}
 
 				select {
 				case dataChan <- data:
 				case <-ctx.Done():
 					return
 				case <-stopChan:
+					return
+				}
+				if terminalEvent != "" {
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 					return
 				}
 			} else {

@@ -100,7 +100,11 @@ func isTemperatureOneOnlyModel(model string) bool {
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	chatRequest, err := relayconvert.ConvertCodexResponsesRequestToChatRequest(request)
+	convert := relayconvert.ConvertCodexResponsesRequestToChatRequest
+	if relayconvert.IsCodexResponsesInternalRequest(c) {
+		convert = relayconvert.ConvertInternalCodexResponsesRequestToChatRequest
+	}
+	chatRequest, err := convert(request)
 	if err != nil {
 		return nil, err
 	}

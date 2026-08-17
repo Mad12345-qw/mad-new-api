@@ -160,15 +160,40 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	chatRequest, err := relayconvert.ConvertCodexResponsesRequestToChatRequest(request)
+	convert := relayconvert.ConvertCodexResponsesRequestToChatRequest
+	if relayconvert.IsCodexResponsesInternalRequest(c) {
+		convert = relayconvert.ConvertInternalCodexResponsesRequestToChatRequest
+	}
+	chatRequest, err := convert(request)
 	if err != nil {
 		return nil, err
 	}
 	if err := applyDeepSeekV4OpenAIThinkingSuffix(info, chatRequest); err != nil {
 		return nil, err
 	}
+	applyDeepSeekV4ToolChoiceCompatibility(info, chatRequest)
 	applyGLMResponsesCompatibility(info, chatRequest)
 	return chatRequest, nil
+}
+
+// DeepSeek V4 thinking endpoints reject forced and named tool choices. Keep
+// the declared tools and reasoning mode, but let the model select from them.
+// This mirrors the auto-only compatibility policy used by mature Codex
+// protocol adapters without binding the rule to any NewAPI channel ID.
+func applyDeepSeekV4ToolChoiceCompatibility(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	if request == nil || !strings.HasPrefix(strings.ToLower(getDeepSeekUpstreamModel(info, request.Model)), "deepseek-v4-") {
+		return
+	}
+	if request.ToolChoice == nil {
+		return
+	}
+	if choice, ok := request.ToolChoice.(string); ok {
+		switch strings.ToLower(strings.TrimSpace(choice)) {
+		case "", "auto", "none":
+			return
+		}
+	}
+	request.ToolChoice = "auto"
 }
 
 func applyGLMResponsesCompatibility(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {

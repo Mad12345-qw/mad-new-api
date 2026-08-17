@@ -7,6 +7,95 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// responsesToolDeclaration is one Responses tool declaration paired with the
+// Chat Completions function name it produces. Keeping one canonical walk for
+// request conversion and reverse conversion prevents the two directions from
+// disagreeing when top-level tools and additional_tools overlap.
+type responsesToolDeclaration struct {
+	tool      gjson.Result
+	chatName  string
+	localName string
+	namespace string
+	custom    bool
+}
+
+func walkResponsesToolDeclarations(root gjson.Result, visit func(responsesToolDeclaration) bool) {
+	proceed := true
+	emit := func(tool gjson.Result, namespaceName string) {
+		if !proceed {
+			return
+		}
+		var custom bool
+		switch strings.TrimSpace(tool.Get("type").String()) {
+		case "", "function":
+		case "custom":
+			custom = true
+		default:
+			return
+		}
+		localName := responsesToolName(tool)
+		if localName == "" {
+			return
+		}
+		proceed = visit(responsesToolDeclaration{
+			tool:      tool,
+			chatName:  qualifyResponsesNamespaceToolName(namespaceName, localName),
+			localName: localName,
+			namespace: namespaceName,
+			custom:    custom,
+		})
+	}
+	scan := func(tools gjson.Result) {
+		if !proceed || !tools.Exists() || !tools.IsArray() {
+			return
+		}
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			if strings.TrimSpace(tool.Get("type").String()) == "namespace" {
+				if children := tool.Get("tools"); children.Exists() && children.IsArray() {
+					namespaceName := strings.TrimSpace(tool.Get("name").String())
+					children.ForEach(func(_, child gjson.Result) bool {
+						emit(child, namespaceName)
+						return proceed
+					})
+				}
+				return proceed
+			}
+			emit(tool, "")
+			return proceed
+		})
+	}
+
+	scan(root.Get("tools"))
+	if input := root.Get("input"); input.Exists() && input.IsArray() {
+		input.ForEach(func(_, item gjson.Result) bool {
+			if item.Get("type").String() == "additional_tools" {
+				scan(item.Get("tools"))
+			}
+			return proceed
+		})
+	}
+}
+
+func mergeResponsesRequestChatTools(root gjson.Result) [][]byte {
+	var merged [][]byte
+	seenToolNames := make(map[string]struct{})
+	walkResponsesToolDeclarations(root, func(declaration responsesToolDeclaration) bool {
+		if _, duplicate := seenToolNames[declaration.chatName]; duplicate {
+			return true
+		}
+		convert := convertResponsesFunctionToolToOpenAIChat
+		if declaration.custom {
+			convert = convertResponsesCustomToolToOpenAIChat
+		}
+		if chatTool, ok := convert(declaration.tool, declaration.chatName); ok {
+			seenToolNames[declaration.chatName] = struct{}{}
+			merged = append(merged, chatTool)
+		}
+		return true
+	})
+	return merged
+}
+
 func convertResponsesToolToOpenAIChatTools(tool gjson.Result) [][]byte {
 	toolType := strings.TrimSpace(tool.Get("type").String())
 	switch toolType {
@@ -147,43 +236,22 @@ func responsesToolOutputText(output gjson.Result) string {
 	return ""
 }
 
-// responsesCustomToolNames collects the names of freeform ("custom") tools
-// declared in the original Responses request, both in the top-level "tools"
-// field and in Codex Desktop "additional_tools" input items. Namespace child
-// names use the qualified Chat Completions form.
+// responsesCustomToolNames follows the same first-declaration-wins rule as the
+// merged Chat tool list. A discarded duplicate custom declaration therefore
+// cannot change how a surviving ordinary function call is restored.
 func responsesCustomToolNames(requestRawJSON []byte) map[string]struct{} {
 	names := make(map[string]struct{})
-	var collect func(gjson.Result, string)
-	collect = func(tools gjson.Result, namespaceName string) {
-		if !tools.Exists() || !tools.IsArray() {
-			return
+	seenToolNames := make(map[string]struct{})
+	walkResponsesToolDeclarations(gjson.ParseBytes(requestRawJSON), func(declaration responsesToolDeclaration) bool {
+		if _, duplicate := seenToolNames[declaration.chatName]; duplicate {
+			return true
 		}
-		tools.ForEach(func(_, tool gjson.Result) bool {
-			switch strings.TrimSpace(tool.Get("type").String()) {
-			case "custom":
-				name := responsesToolName(tool)
-				if namespaceName != "" {
-					name = qualifyResponsesNamespaceToolName(namespaceName, name)
-				}
-				if name != "" {
-					names[name] = struct{}{}
-				}
-			case "namespace":
-				collect(tool.Get("tools"), strings.TrimSpace(tool.Get("name").String()))
-			}
-			return true
-		})
-	}
-	root := gjson.ParseBytes(requestRawJSON)
-	collect(root.Get("tools"), "")
-	if input := root.Get("input"); input.Exists() && input.IsArray() {
-		input.ForEach(func(_, item gjson.Result) bool {
-			if item.Get("type").String() == "additional_tools" {
-				collect(item.Get("tools"), "")
-			}
-			return true
-		})
-	}
+		seenToolNames[declaration.chatName] = struct{}{}
+		if declaration.custom {
+			names[declaration.chatName] = struct{}{}
+		}
+		return true
+	})
 	return names
 }
 
@@ -193,27 +261,7 @@ func responsesSingleCustomToolName(requestRawJSON []byte) (string, bool) {
 		return "", false
 	}
 
-	toolCount := 0
-	collect := func(tools gjson.Result) {
-		if !tools.Exists() || !tools.IsArray() {
-			return
-		}
-		tools.ForEach(func(_, tool gjson.Result) bool {
-			toolCount += len(convertResponsesToolToOpenAIChatTools(tool))
-			return true
-		})
-	}
-
-	root := gjson.ParseBytes(requestRawJSON)
-	collect(root.Get("tools"))
-	if input := root.Get("input"); input.Exists() && input.IsArray() {
-		input.ForEach(func(_, item gjson.Result) bool {
-			if item.Get("type").String() == "additional_tools" {
-				collect(item.Get("tools"))
-			}
-			return true
-		})
-	}
+	toolCount := len(mergeResponsesRequestChatTools(gjson.ParseBytes(requestRawJSON)))
 	for name := range customToolNames {
 		return name, toolCount == 1
 	}
@@ -253,54 +301,22 @@ func splitResponsesQualifiedFunctionCallFromRequest(requestRawJSON []byte, quali
 		return "", ""
 	}
 
-	var bestNamespace string
-	var bestChild string
-	collect := func(tools gjson.Result) {
-		if !tools.Exists() || !tools.IsArray() {
-			return
+	var resolvedName string
+	var resolvedNamespace string
+	found := false
+	walkResponsesToolDeclarations(gjson.ParseBytes(requestRawJSON), func(declaration responsesToolDeclaration) bool {
+		if declaration.chatName != qualifiedName {
+			return true
 		}
-		tools.ForEach(func(_, tool gjson.Result) bool {
-			if strings.TrimSpace(tool.Get("type").String()) != "namespace" {
-				return true
-			}
-			namespaceName := strings.TrimSpace(tool.Get("name").String())
-			if namespaceName == "" {
-				return true
-			}
-			children := tool.Get("tools")
-			if !children.Exists() || !children.IsArray() {
-				return true
-			}
-			children.ForEach(func(_, child gjson.Result) bool {
-				childName := responsesToolName(child)
-				if childName == "" {
-					return true
-				}
-				if qualifyResponsesNamespaceToolName(namespaceName, childName) == qualifiedName {
-					bestNamespace = namespaceName
-					bestChild = childName
-				}
-				return true
-			})
-			return true
-		})
+		resolvedName = declaration.localName
+		resolvedNamespace = declaration.namespace
+		found = true
+		return false
+	})
+	if found {
+		return resolvedName, resolvedNamespace
 	}
-
-	root := gjson.ParseBytes(requestRawJSON)
-	collect(root.Get("tools"))
-	if input := root.Get("input"); input.Exists() && input.IsArray() {
-		input.ForEach(func(_, item gjson.Result) bool {
-			if item.Get("type").String() == "additional_tools" {
-				collect(item.Get("tools"))
-			}
-			return true
-		})
-	}
-
-	if bestNamespace == "" || bestChild == "" {
-		return qualifiedName, ""
-	}
-	return bestChild, bestNamespace
+	return qualifiedName, ""
 }
 
 func pickRequestJSON(originalRequestRawJSON, requestRawJSON []byte) []byte {

@@ -20,9 +20,12 @@ grep -Fq 'experimental_bearer_token' "$installer_path" || fail 'OAuth bearer con
 grep -Fq 'env_key = ' "$installer_path" || fail 'Official custom gateway env_key is missing.'
 grep -Fq 'x-openai-actor-authorization' "$installer_path" || fail 'Official gateway actor header is missing.'
 grep -Fq 'supports_websockets = false' "$installer_path" || fail 'WebSocket opt-out is missing.'
+grep -Fq 'context_window_override = 400000' "$installer_path" || fail 'Unified Codex context window is not 400000.'
 grep -Fq 'image_generation = true' "$installer_path" || fail 'Codex image generation feature is missing.'
 grep -Fq '/codex/v1' "$installer_path" || fail 'Dedicated Codex route is missing.'
 grep -Fq '/codex/cockpit/v1' "$installer_path" || fail 'API compatibility route is missing.'
+grep -Fq 'auth_mutation=clear' "$installer_path" || fail 'API-to-OAuth authentication cleanup is missing.'
+grep -Fq 'if [ "$auth_mutation" != none ]' "$installer_path" || fail 'Authentication mutation transaction is incomplete.'
 grep -Fq '/mad-codex/codex-model-templates.json' "$refresh_path" || fail 'Self-hosted Codex model template is missing.'
 ! grep -Fq 'models.router-for.me' "$refresh_path" || fail 'Codex model refresh still depends on a third-party host.'
 
@@ -96,7 +99,7 @@ printf '%s' '{"auth_mode":"chatgpt","tokens":{"access_token":"oauth-access","ref
 MADAPI_CODEX_AUTH_KIND=oauth \
 MADAPI_API_KEY='sk-refresh-macos' \
 MADAPI_REFRESH_RESPONSE_FILE="$oauth_models" \
-MADAPI_CODEX_TEMPLATE_FILE="$repo_root/tests/fixtures/codex-model-templates.json" \
+MADAPI_CODEX_TEMPLATE_FILE="$asset_root/codex-model-templates.json" \
 CODEX_HOME="$codex_home" \
 /bin/sh "$refresh_path"
 oauth_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.models.length))' "$codex_home/madapi-cockpit-model-catalog.json")
@@ -104,6 +107,7 @@ oauth_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync
 grep -Fq '"slug": "grok-4.6"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth catalog is missing grok-4.6.'
 ! grep -Fq '"slug": "gpt-image-2"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth image model leaked into the conversation selector.'
 ! grep -Fq '"slug": "seedance-2.0-fast"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'OAuth video model leaked into the conversation selector.'
+! grep -Fq '"token_budget"' "$codex_home/madapi-cockpit-model-catalog.json" || fail 'Unsupported token-budget lifecycle leaked into the Codex catalog.'
 
 api_home="$root/api-codex"
 mkdir -p "$api_home/sessions"
@@ -134,5 +138,30 @@ api_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(p
 [ "$api_count" = 8 ] || fail 'API catalog does not contain exactly eight models.'
 grep -Fq '"display_name": "grok-4.6"' "$api_home/madapi-cockpit-model-catalog.json" || fail 'API catalog is missing grok-4.6.'
 ! grep -Fq '"display_name": "grok-4.5"' "$api_home/madapi-cockpit-model-catalog.json" || fail 'API catalog still contains grok-4.5.'
+
+api_auth_hash=$(shasum -a 256 "$api_home/auth.json" | awk '{print $1}')
+CODEX_HOME="$api_home" \
+MADAPI_KEY='sk-clean-macos-oauth-test' \
+MADAPI_BASE_URL='http://127.0.0.1:13016' \
+MADAPI_CODEX_LOGIN_MODE='oauth' \
+MADAPI_INSTALL_TEST_MODE=1 \
+MADAPI_REFRESH_SCRIPT_SOURCE="$refresh_path" \
+MADAPI_HISTORY_RESTORE_SCRIPT_SOURCE="$history_path" \
+MADAPI_REFRESH_RESPONSE_FILE="$oauth_models" \
+MADAPI_CODEX_TEMPLATE_FILE="$templates" \
+MADAPI_IMAGE_SKILL_SOURCE_DIR="$asset_root/image-skill" \
+/bin/sh "$installer_path"
+[ ! -e "$api_home/auth.json" ] || fail 'OAuth mode did not exit API-key login.'
+api_auth_backup=$(find "$api_home" -maxdepth 1 -name 'auth.json.madapi-backup-*' -type f | sort | tail -n 1)
+[ -n "$api_auth_backup" ] || fail 'API authentication backup is missing.'
+[ "$(shasum -a 256 "$api_auth_backup" | awk '{print $1}')" = "$api_auth_hash" ] || fail 'API authentication backup is not exact.'
+grep -Fq 'base_url = "http://127.0.0.1:13016/codex/v1"' "$api_home/config.toml" || fail 'OAuth switch did not select the native route.'
+grep -Fq 'requires_openai_auth = true' "$api_home/config.toml" || fail 'OAuth switch auth gate is wrong.'
+grep -Fq 'experimental_bearer_token = ' "$api_home/config.toml" || fail 'OAuth switch bearer token is missing.'
+! grep -Fq 'env_key = "MADAPI_API_KEY"' "$api_home/config.toml" || fail 'OAuth switch retained API env_key.'
+grep -Fq 'localeOverride = "zh-CN"' "$api_home/config.toml" || fail 'OAuth switch lost the Chinese default.'
+grep -Fq 'image_generation = true' "$api_home/config.toml" || fail 'OAuth switch lost image generation.'
+oauth_switch_count=$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.models.length))' "$api_home/madapi-cockpit-model-catalog.json")
+[ "$oauth_switch_count" = 17 ] || fail 'OAuth switch catalog does not contain exactly 17 conversation models.'
 
 printf '%s\n' 'Codex macOS clean gateway acceptance passed.'

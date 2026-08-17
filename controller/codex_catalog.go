@@ -53,6 +53,25 @@ var (
 	codexNativeCatalog     map[string][]codexNativeModelInfo
 )
 
+type codexProviderFamily string
+
+const (
+	codexProviderUnknown  codexProviderFamily = "unknown"
+	codexProviderOpenAI   codexProviderFamily = "openai"
+	codexProviderClaude   codexProviderFamily = "claude"
+	codexProviderXAI      codexProviderFamily = "xai"
+	codexProviderDeepSeek codexProviderFamily = "deepseek"
+	codexProviderGLM      codexProviderFamily = "glm"
+	codexProviderGemini   codexProviderFamily = "gemini"
+	codexProviderMoonshot codexProviderFamily = "moonshot"
+	codexProviderQwen     codexProviderFamily = "qwen"
+)
+
+type codexProviderCapabilities struct {
+	NativeSearch bool
+	Verbosity    bool
+}
+
 var codexValidatedImageInputModels = map[string]bool{
 	"claude-fable-5":    true,
 	"claude-opus-4-8":   true,
@@ -68,31 +87,43 @@ var codexValidatedImageInputModels = map[string]bool{
 	"kimi-k3":           true,
 }
 
-var codexNativeSearchModels = map[string]bool{
-	"claude-fable-5":      true,
-	"claude-opus-4-8":     true,
-	"claude-opus-5":       true,
-	"deepseek-v4-flash":   true,
-	"gemini-3.6-flash":    true,
-	"glm-5-2":             true,
-	"gpt-5.5":             true,
-	"gpt-5.6-luna":        true,
-	"gpt-5.6-sol":         true,
-	"gpt-5.6-sol-pro":     true,
-	"gpt-5.6-terra":       true,
-	"gpt-5.6-terra-pro":   true,
-	"grok-4.5":            true,
-	"kimi-k3":             true,
-	"qwen3.8-max-preview": true,
+func codexProviderFamilyForModel(modelID string) codexProviderFamily {
+	id := strings.ToLower(strings.TrimSpace(modelID))
+	switch {
+	case strings.HasPrefix(id, "gpt-"):
+		return codexProviderOpenAI
+	case strings.HasPrefix(id, "claude-"):
+		return codexProviderClaude
+	case strings.HasPrefix(id, "grok-"):
+		return codexProviderXAI
+	case strings.HasPrefix(id, "deepseek-"):
+		return codexProviderDeepSeek
+	case strings.HasPrefix(id, "glm-"):
+		return codexProviderGLM
+	case strings.HasPrefix(id, "gemini-"):
+		return codexProviderGemini
+	case strings.HasPrefix(id, "kimi-"), strings.HasPrefix(id, "moonshot-"):
+		return codexProviderMoonshot
+	case strings.HasPrefix(id, "qwen"):
+		return codexProviderQwen
+	default:
+		return codexProviderUnknown
+	}
 }
 
-var codexNativeVerbosityModels = map[string]bool{
-	"gpt-5.5":           true,
-	"gpt-5.6-luna":      true,
-	"gpt-5.6-sol":       true,
-	"gpt-5.6-sol-pro":   true,
-	"gpt-5.6-terra":     true,
-	"gpt-5.6-terra-pro": true,
+func codexCapabilitiesForModel(modelID string) codexProviderCapabilities {
+	switch codexProviderFamilyForModel(modelID) {
+	case codexProviderOpenAI:
+		return codexProviderCapabilities{NativeSearch: true, Verbosity: true}
+	case codexProviderClaude, codexProviderXAI:
+		return codexProviderCapabilities{NativeSearch: true}
+	default:
+		return codexProviderCapabilities{}
+	}
+}
+
+func codexSupportsNativeSearch(modelID string) bool {
+	return codexCapabilitiesForModel(modelID).NativeSearch
 }
 
 // These aliases are absent from the pinned Codex capability snapshot but are documented
@@ -268,12 +299,13 @@ func codexReasoningLevels(info *codexNativeModelInfo) ([]any, string) {
 
 func applyCodexCapabilities(entry map[string]any, candidate dto.OpenAIModels) {
 	entry["comp_hash"] = "madapi-codex-native-v1"
+	providerCapabilities := codexCapabilitiesForModel(candidate.Id)
 	info := codexCatalogModel(candidate)
-	entry["supports_search_tool"] = codexNativeSearchModels[strings.ToLower(strings.TrimSpace(candidate.Id))]
+	entry["supports_search_tool"] = providerCapabilities.NativeSearch
+	entry["support_verbosity"] = providerCapabilities.Verbosity
 	if info == nil {
 		return
 	}
-	entry["support_verbosity"] = codexNativeVerbosityModels[strings.ToLower(strings.TrimSpace(candidate.Id))]
 	if value := strings.TrimSpace(info.DisplayName); value != "" {
 		entry["display_name"] = value
 	}

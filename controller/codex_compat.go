@@ -25,13 +25,11 @@ import (
 
 const (
 	defaultCodexInternalBaseURL   = "http://127.0.0.1:3000/v1"
-	codexCompatibilityLimit       = 16
 	codexNativeCompactInstruction = "Create a faithful compact state summary for continuing this coding session. Preserve user requirements, decisions, file paths, code changes, tool results, unresolved work, and safety constraints. Do not invent facts. Return only the compact summary text."
 )
 
 var (
 	codexInternalBaseURL     = defaultCodexInternalBaseURL
-	codexCompatibilitySlots  = make(chan struct{}, codexCompatibilityLimit)
 	codexTextPricingProvider = codexTextPricingModels
 	codexInternalHTTPClient  = &http.Client{
 		Transport: &http.Transport{
@@ -102,7 +100,7 @@ func CodexListModels(c *gin.Context) {
 		nil,
 		false,
 		func(id string) *codexclientmodels.ModelInfo { return metadata[id] },
-		func(id string) bool { return codexNativeSearchModels[strings.ToLower(strings.TrimSpace(id))] },
+		func(id string) bool { return codexSupportsNativeSearch(id) },
 	))
 }
 
@@ -147,14 +145,6 @@ func codexClientModelInfo(candidate dto.OpenAIModels) *codexclientmodels.ModelIn
 }
 
 func CodexResponses(c *gin.Context) {
-	select {
-	case codexCompatibilitySlots <- struct{}{}:
-		defer func() { <-codexCompatibilitySlots }()
-	default:
-		codexCompatibilityError(c, http.StatusTooManyRequests, fmt.Errorf("Codex compatibility capacity is busy; retry shortly"))
-		return
-	}
-
 	originalBody, err := readCodexRequestBody(c)
 	if err != nil {
 		codexCompatibilityError(c, http.StatusBadRequest, err)
@@ -210,14 +200,6 @@ func CodexResponses(c *gin.Context) {
 }
 
 func CodexResponsesCompact(c *gin.Context) {
-	select {
-	case codexCompatibilitySlots <- struct{}{}:
-		defer func() { <-codexCompatibilitySlots }()
-	default:
-		codexCompatibilityError(c, http.StatusTooManyRequests, fmt.Errorf("Codex compatibility capacity is busy; retry shortly"))
-		return
-	}
-
 	originalBody, err := readCodexRequestBody(c)
 	if err != nil {
 		codexCompatibilityError(c, http.StatusBadRequest, err)
@@ -239,6 +221,11 @@ func CodexResponsesCompact(c *gin.Context) {
 	}
 
 	body, err := buildCodexNativeCompactRequest(compactReq)
+	if err != nil {
+		codexCompatibilityError(c, http.StatusBadRequest, err)
+		return
+	}
+	body, err = relayconvert.NormalizeCodexResponsesRequest(body)
 	if err != nil {
 		codexCompatibilityError(c, http.StatusBadRequest, err)
 		return
@@ -282,7 +269,6 @@ func buildCodexNativeCompactRequest(compactReq dto.OpenAIResponsesCompactionRequ
 		Model:                compactReq.Model,
 		Input:                compactReq.Input,
 		Instructions:         encodedInstructions,
-		PreviousResponseID:   compactReq.PreviousResponseID,
 		ParallelToolCalls:    compactReq.ParallelToolCalls,
 		ServiceTier:          compactReq.ServiceTier,
 		PromptCacheKey:       compactReq.PromptCacheKey,
@@ -363,6 +349,7 @@ func proxyCodexNativeResponses(c *gin.Context, resp *http.Response, originalRequ
 }
 
 func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, originalRequest []byte) error {
+	const maxCodexSSEFrameBytes = 32 << 20
 	c.Status(resp.StatusCode)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 32<<20)
@@ -370,6 +357,10 @@ func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, origin
 	responseID := ""
 	started := false
 	terminal := false
+	clientToolSearchItems := make(map[string]bool)
+	hostedWebSearchItems := make(map[string]bool)
+	customToolItems := make(map[string]bool)
+	frameBytes := 0
 
 	flushFrame := func() error {
 		if len(frame) == 0 {
@@ -389,15 +380,22 @@ func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, origin
 			if bytes.HasPrefix(line, []byte("data:")) {
 				candidate := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
 				if len(candidate) > 0 && !bytes.Equal(candidate, []byte("[DONE]")) {
-					if restored, err := relayconvert.RestoreCodexResponsesPayload(originalRequest, candidate); err == nil {
-						candidate = restored
-						frame[i] = append([]byte("data: "), restored...)
+					restored, restoreErr := relayconvert.RestoreCodexResponsesPayload(originalRequest, candidate)
+					if restoreErr != nil {
+						writeCodexTerminalEvent(c, "response.failed", responseID, "invalid upstream Responses event", "protocol_error")
+						terminal = true
+						frame = frame[:0]
+						frameBytes = 0
+						return nil
 					}
+					candidate = restored
+					frame[i] = append([]byte("data: "), restored...)
 					payload = candidate
 				}
 			}
 		}
 
+		suppressFrame := false
 		if len(payload) > 0 && json.Valid(payload) {
 			var event map[string]any
 			if json.Unmarshal(payload, &event) == nil {
@@ -408,11 +406,71 @@ func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, origin
 					if id, ok := response["id"].(string); ok && id != "" {
 						responseID = id
 					}
+					if outputValue, exists := response["output"]; exists {
+						if _, ok := outputValue.([]any); !ok {
+							writeCodexTerminalEvent(c, "response.failed", responseID, "completed response contained an invalid output snapshot", "protocol_error")
+							terminal = true
+							frame = frame[:0]
+							frameBytes = 0
+							return nil
+						}
+					}
 				}
 				if id, ok := event["id"].(string); ok && id != "" && responseID == "" {
 					responseID = id
 				}
+				if item, ok := event["item"].(map[string]any); ok {
+					itemID, _ := item["id"].(string)
+					switch item["type"] {
+					case "tool_search_call":
+						clientToolSearchItems[itemID] = true
+						if strings.HasPrefix(itemID, "tsc_") {
+							clientToolSearchItems["fc_"+strings.TrimPrefix(itemID, "tsc_")] = true
+						}
+					case "web_search_call":
+						hostedWebSearchItems[itemID] = true
+						if strings.HasPrefix(itemID, "ws_") {
+							hostedWebSearchItems["fc_"+strings.TrimPrefix(itemID, "ws_")] = true
+						}
+					case "custom_tool_call":
+						customToolItems[itemID] = true
+						if strings.HasPrefix(itemID, "ctc_") {
+							customToolItems["fc_"+strings.TrimPrefix(itemID, "ctc_")] = true
+						}
+					}
+				}
+				if itemID, ok := event["item_id"].(string); ok {
+					if (clientToolSearchItems[itemID] || hostedWebSearchItems[itemID]) &&
+						(eventType == "response.function_call_arguments.delta" || eventType == "response.function_call_arguments.done") {
+						suppressFrame = true
+					}
+					if customToolItems[itemID] && eventType == "response.function_call_arguments.delta" {
+						suppressFrame = true
+					}
+					if customToolItems[itemID] && eventType == "response.function_call_arguments.done" {
+						eventType = "response.custom_tool_call_input.done"
+						event["type"] = eventType
+						event["input"] = codexCustomInputFromArguments(event["arguments"])
+						delete(event, "arguments")
+						if encoded, encodeErr := json.Marshal(event); encodeErr == nil {
+							payload = encoded
+							for lineIndex, rawLine := range frame {
+								if bytes.HasPrefix(rawLine, []byte("event:")) {
+									frame[lineIndex] = []byte("event: " + eventType)
+								}
+								if bytes.HasPrefix(rawLine, []byte("data:")) {
+									frame[lineIndex] = append([]byte("data: "), encoded...)
+								}
+							}
+						}
+					}
+				}
 			}
+		}
+		if suppressFrame {
+			frame = frame[:0]
+			frameBytes = 0
+			return nil
 		}
 
 		if eventType == "error" || eventType == "response.error" {
@@ -438,6 +496,7 @@ func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, origin
 		}
 		c.Writer.Flush()
 		frame = frame[:0]
+		frameBytes = 0
 		return nil
 	}
 
@@ -449,10 +508,15 @@ func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, origin
 			}
 			continue
 		}
+		frameBytes += len(line) + 1
+		if frameBytes > maxCodexSSEFrameBytes {
+			writeCodexTerminalEvent(c, "response.failed", responseID, "upstream Responses event exceeded the translation limit", "translation_buffer_limit")
+			return nil
+		}
 		frame = append(frame, line)
 	}
 	if err := scanner.Err(); err != nil && !terminal {
-		writeCodexTerminalEvent(c, "response.incomplete", responseID, err.Error(), "stream_error")
+		writeCodexTerminalEvent(c, "response.failed", responseID, err.Error(), "stream_error")
 		terminal = true
 	}
 	if err := flushFrame(); err != nil {
@@ -470,6 +534,25 @@ func proxyCodexNativeResponsesStream(c *gin.Context, resp *http.Response, origin
 		writeCodexTerminalEvent(c, eventType, responseID, message, code)
 	}
 	return nil
+}
+
+func codexCustomInputFromArguments(value any) string {
+	arguments, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	var wrapper map[string]any
+	if json.Unmarshal([]byte(arguments), &wrapper) == nil {
+		if input, exists := wrapper["input"]; exists {
+			if text, textOK := input.(string); textOK {
+				return text
+			}
+			if encoded, err := json.Marshal(input); err == nil {
+				return string(encoded)
+			}
+		}
+	}
+	return arguments
 }
 
 func codexUpstreamErrorMessage(resp *http.Response) string {
@@ -518,20 +601,29 @@ func writeCodexTerminalEvent(c *gin.Context, eventType string, responseID string
 		responseID = fmt.Sprintf("resp_madapi_%d", time.Now().UnixNano())
 	}
 	status := "failed"
+	response := map[string]any{
+		"id":     responseID,
+		"object": "response",
+		"status": status,
+	}
 	if eventType == "response.incomplete" {
 		status = "incomplete"
+		response["status"] = status
+		reason := code
+		if code == "stream_ended" {
+			reason = "adapter_eof"
+		}
+		response["error"] = nil
+		response["incomplete_details"] = map[string]any{"reason": reason}
+	} else {
+		response["error"] = map[string]any{
+			"code":    code,
+			"message": message,
+		}
 	}
 	payload := map[string]any{
-		"type": eventType,
-		"response": map[string]any{
-			"id":     responseID,
-			"object": "response",
-			"status": status,
-			"error": map[string]any{
-				"code":    code,
-				"message": message,
-			},
-		},
+		"type":     eventType,
+		"response": response,
 	}
 	encoded, _ := json.Marshal(payload)
 	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, encoded)
@@ -591,6 +683,7 @@ func newCodexInternalRequest(c *gin.Context, method string, path string, body io
 	if clientIP := c.ClientIP(); clientIP != "" {
 		req.Header.Set("X-Forwarded-For", clientIP)
 	}
+	req.Header.Set("X-MadAPI-Codex-Compat", relayconvert.CodexResponsesInternalMarker())
 	return req, nil
 }
 

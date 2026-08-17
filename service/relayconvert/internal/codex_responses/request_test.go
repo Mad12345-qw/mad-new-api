@@ -544,3 +544,94 @@ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesInputImag
 		t.Fatalf("messages.0.content.0.image_url.detail = %q, want high; output=%s", got, out)
 	}
 }
+
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesAssistantContentWithToolCalls(t *testing.T) {
+	raw := []byte(`{
+		"input":[
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"inspect"}]},
+			{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I will inspect it."}]},
+			{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"README.md\"}"},
+			{"type":"function_call_output","call_id":"call_1","output":"ok"}
+		]
+	}`)
+
+	out := ConvertCodexResponsesRequestToOpenAIChatCompletions("deepseek-v4-flash", raw, false)
+	if got := gjson.GetBytes(out, "messages.#").Int(); got != 2 {
+		t.Fatalf("messages count = %d, want 2; output=%s", got, out)
+	}
+	if got := gjson.GetBytes(out, "messages.0.content.0.text").String(); got != "I will inspect it." {
+		t.Fatalf("assistant content = %q; output=%s", got, out)
+	}
+	if got := gjson.GetBytes(out, "messages.0.tool_calls.0.id").String(); got != "call_1" {
+		t.Fatalf("tool call id = %q; output=%s", got, out)
+	}
+	if got := gjson.GetBytes(out, "messages.0.reasoning_content").String(); got != "inspect" {
+		t.Fatalf("reasoning content = %q; output=%s", got, out)
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesExplicitTextFormatOnly(t *testing.T) {
+	structured := []byte(`{
+		"input":"answer",
+		"text":{"format":{"type":"json_schema","name":"answer","strict":true,"schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}}}
+	}`)
+	out := ConvertCodexResponsesRequestToOpenAIChatCompletions("gpt-5.6-luna", structured, false)
+	if got := gjson.GetBytes(out, "response_format.type").String(); got != "json_schema" {
+		t.Fatalf("response_format.type = %q; output=%s", got, out)
+	}
+	if got := gjson.GetBytes(out, "response_format.json_schema.name").String(); got != "answer" {
+		t.Fatalf("schema name = %q; output=%s", got, out)
+	}
+
+	plain := ConvertCodexResponsesRequestToOpenAIChatCompletions("gpt-5.6-luna", []byte(`{"input":"answer"}`), false)
+	if gjson.GetBytes(plain, "response_format").Exists() {
+		t.Fatalf("ordinary request unexpectedly gained response_format: %s", plain)
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_PreservesCustomToolOutputImages(t *testing.T) {
+	raw := []byte(`{
+		"input":[
+			{"type":"custom_tool_call","call_id":"call_image","name":"render","input":"draw"},
+			{"type":"custom_tool_call_output","call_id":"call_image","output":[
+				{"type":"input_text","text":"created"},
+				{"type":"input_image","image_url":"https://example.com/result.png","detail":"original"}
+			]}
+		]
+	}`)
+
+	out := ConvertCodexResponsesRequestToOpenAIChatCompletions("gpt-5.6-luna", raw, false)
+	if got := gjson.GetBytes(out, "messages.1.content.0.text").String(); got != "created" {
+		t.Fatalf("tool output text = %q; output=%s", got, out)
+	}
+	if got := gjson.GetBytes(out, "messages.1.content.1.image_url.url").String(); got != "https://example.com/result.png" {
+		t.Fatalf("tool output image = %q; output=%s", got, out)
+	}
+	if got := gjson.GetBytes(out, "messages.1.content.1.image_url.detail").String(); got != "high" {
+		t.Fatalf("tool output detail = %q; output=%s", got, out)
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_DeduplicatesToolsAcrossSources(t *testing.T) {
+	raw := []byte(`{
+		"tools":[{"type":"function","name":"lookup","description":"top","parameters":{"type":"object"}}],
+		"input":[{"type":"additional_tools","tools":[
+			{"type":"custom","name":"lookup","description":"duplicate"},
+			{"type":"namespace","name":"mcp__demo","tools":[{"type":"function","name":"run","parameters":{"type":"object"}}]}
+		]}]
+	}`)
+
+	out := ConvertCodexResponsesRequestToOpenAIChatCompletions("gpt-5.6-luna", raw, false)
+	if got := gjson.GetBytes(out, "tools.#").Int(); got != 2 {
+		t.Fatalf("tool count = %d, want 2; output=%s", got, out)
+	}
+	if got := gjson.GetBytes(out, "tools.0.function.description").String(); got != "top" {
+		t.Fatalf("first declaration did not win: %q; output=%s", got, out)
+	}
+	if got := gjson.GetBytes(out, "tools.1.function.name").String(); got != "mcp__demo__run" {
+		t.Fatalf("namespace tool = %q; output=%s", got, out)
+	}
+	if _, custom := responsesCustomToolNames(raw)["lookup"]; custom {
+		t.Fatalf("discarded custom duplicate changed reverse classification")
+	}
+}

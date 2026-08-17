@@ -51,8 +51,16 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 
 	updateOpenAIImageCount(info, gjson.GetBytes(responseBody, "data.#").Int())
 
+	clientResponseBody := responseBody
+	if shouldNormalizeMadImageURL(info) {
+		clientResponseBody, err = normalizeMadImageURLResponse(c, responseBody)
+		if err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
+	}
+
 	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	service.IOCopyBytesGracefully(c, resp, clientResponseBody)
 
 	normalizeOpenAIUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)

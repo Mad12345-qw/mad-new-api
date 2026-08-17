@@ -3,6 +3,7 @@ package relayconvert
 import (
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"strings"
 	"sync"
@@ -240,7 +241,7 @@ func executeRequestSteps(c *gin.Context, info *relaycommon.RelayInfo, from types
 	steps := make([]RequestStep, 0, len(specs))
 	for _, spec := range specs {
 		var err error
-		current, err = prepareRequestForStep(current, spec, target)
+		current, err = prepareRequestForStep(c, current, spec, target)
 		if err != nil {
 			return nil, err
 		}
@@ -322,7 +323,7 @@ func executeRequestStep(c *gin.Context, info *relaycommon.RelayInfo, spec Reques
 	}, nil
 }
 
-func prepareRequestForStep(request any, spec RequestConverterSpec, finalTarget types.RelayFormat) (any, error) {
+func prepareRequestForStep(c *gin.Context, request any, spec RequestConverterSpec, finalTarget types.RelayFormat) (any, error) {
 	if spec.From != types.RelayFormatOpenAIResponses || finalTarget != types.RelayFormatGemini {
 		return request, nil
 	}
@@ -337,7 +338,13 @@ func prepareRequestForStep(request any, spec RequestConverterSpec, finalTarget t
 		return nil, fmt.Errorf("expected OpenAI responses request, got %T", request)
 	}
 
-	prepared, err := oairesponses.PrepareOpenAIResponsesRequest(*responsesRequest)
+	prepared := *responsesRequest
+	var err error
+	if isCodexCompatibilityConversion(c) {
+		prepared, err = oairesponses.PrepareCodexOpenAIResponsesRequest(*responsesRequest)
+	} else {
+		prepared, err = oairesponses.PrepareOpenAIResponsesRequest(*responsesRequest)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -478,11 +485,28 @@ func convertOpenAIResponsesRequestToGeminiChat(c *gin.Context, info *relaycommon
 		return nil, err
 	}
 
-	prepared, err := oairesponses.PrepareOpenAIResponsesRequest(*responsesRequest)
+	prepared := *responsesRequest
+	if isCodexCompatibilityConversion(c) {
+		prepared, err = oairesponses.PrepareCodexOpenAIResponsesRequest(*responsesRequest)
+	} else {
+		prepared, err = oairesponses.PrepareOpenAIResponsesRequest(*responsesRequest)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return oairesponses.OpenAIResponsesRequestToGeminiChat(c, &prepared, info)
+}
+
+func isCodexCompatibilityConversion(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.GetHeader("X-MadAPI-Codex-Compat") != codexResponsesInternalMarker {
+		return false
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(c.Request.RemoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(c.Request.RemoteAddr)
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func convertResponsesRequestToChat(_ *gin.Context, _ *relaycommon.RelayInfo, request any) (any, error) {

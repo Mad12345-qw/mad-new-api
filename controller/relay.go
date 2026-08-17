@@ -22,6 +22,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -122,6 +123,26 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
+	}
+	relayInfo.RequireResponsesTerminalEvent = relayconvert.IsCodexResponsesInternalRequest(c)
+
+	if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations || relayInfo.RelayMode == relayconstant.RelayModeImagesEdits {
+		releaseImageSlot, acquireErr := service.AcquireImageConcurrency(
+			c.Request.Context(),
+			relayInfo.OriginModelName,
+			relayInfo.RelayMode == relayconstant.RelayModeImagesEdits,
+		)
+		if acquireErr != nil {
+			c.Header("Retry-After", strconv.Itoa(service.ImageQueueRetryAfterSeconds()))
+			newAPIError = types.NewErrorWithStatusCode(
+				acquireErr,
+				types.ErrorCodeImageConcurrencyLimit,
+				http.StatusTooManyRequests,
+				types.ErrOptionWithSkipRetry(),
+			)
+			return
+		}
+		defer releaseImageSlot()
 	}
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()

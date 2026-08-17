@@ -412,6 +412,45 @@ func TestStreamScannerHandler_StreamStatus_EOFWithoutDone(t *testing.T) {
 	assert.True(t, info.StreamStatus.IsNormalEnd())
 }
 
+func TestStreamScannerHandler_CodexRequiresResponsesTerminalEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		body          string
+		terminalEvent string
+		normal        bool
+	}{
+		{
+			name:   "eof without terminal",
+			body:   "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n",
+			normal: false,
+		},
+		{
+			name:          "completed terminal",
+			body:          "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n" + "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n",
+			terminalEvent: "response.completed",
+			normal:        true,
+		},
+		{
+			name:          "incomplete terminal",
+			body:          "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\"}}\n",
+			terminalEvent: "response.incomplete",
+			normal:        false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, resp, info := setupStreamTest(t, strings.NewReader(tt.body))
+			info.RequireResponsesTerminalEvent = true
+			StreamScannerHandler(c, resp, info, func(data string, sr *StreamResult) {})
+			require.NotNil(t, info.StreamStatus)
+			assert.Equal(t, tt.terminalEvent, info.StreamStatus.ResponsesTerminalEvent())
+			assert.Equal(t, tt.normal, info.StreamStatus.IsNormalEnd())
+		})
+	}
+}
+
 func TestStreamScannerHandler_StreamStatus_HandlerStop(t *testing.T) {
 	t.Parallel()
 

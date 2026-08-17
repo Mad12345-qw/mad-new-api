@@ -10,12 +10,23 @@ import (
 )
 
 func ConvertCodexResponsesRequestToChatRequest(request dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return convertCodexResponsesRequestToChatRequest(request, false)
+}
+
+func ConvertInternalCodexResponsesRequestToChatRequest(request dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
+	return convertCodexResponsesRequestToChatRequest(request, true)
+}
+
+func convertCodexResponsesRequestToChatRequest(request dto.OpenAIResponsesRequest, internalCodex bool) (*dto.GeneralOpenAIRequest, error) {
 	raw, err := common.Marshal(&request)
 	if err != nil {
 		return nil, err
 	}
 	stream := request.Stream != nil && *request.Stream
 	converted := codexresponses.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(request.Model, raw, stream)
+	if internalCodex {
+		converted = codexresponses.ConvertCodexResponsesRequestToOpenAIChatCompletions(request.Model, raw, stream)
+	}
 	var chatRequest dto.GeneralOpenAIRequest
 	if err := common.Unmarshal(converted, &chatRequest); err != nil {
 		return nil, fmt.Errorf("Codex Responses request conversion failed: %w", err)

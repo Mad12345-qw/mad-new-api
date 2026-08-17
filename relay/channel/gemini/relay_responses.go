@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -17,6 +18,139 @@ import (
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
+
+type geminiResponsesBufferedTool struct {
+	choiceIndex int
+	toolIndex   int
+	id          string
+	name        string
+	arguments   string
+}
+
+type geminiResponsesToolBuffer struct {
+	tools   map[string]*geminiResponsesBufferedTool
+	flushed bool
+}
+
+func newGeminiResponsesToolBuffer() *geminiResponsesToolBuffer {
+	return &geminiResponsesToolBuffer{tools: make(map[string]*geminiResponsesBufferedTool)}
+}
+
+func (b *geminiResponsesToolBuffer) absorb(response *dto.ChatCompletionsStreamResponse) bool {
+	if b == nil || response == nil || b.flushed {
+		return false
+	}
+	found := false
+	for choiceIndex := range response.Choices {
+		choice := &response.Choices[choiceIndex]
+		for toolPosition := range choice.Delta.ToolCalls {
+			call := choice.Delta.ToolCalls[toolPosition]
+			key := fmt.Sprintf("%d:%d", choice.Index, toolPosition)
+			buffered := b.tools[key]
+			if buffered == nil {
+				buffered = &geminiResponsesBufferedTool{
+					choiceIndex: choice.Index,
+					toolIndex:   toolPosition,
+					id:          call.ID,
+				}
+				b.tools[key] = buffered
+			}
+			if call.ID != "" && buffered.id == "" {
+				buffered.id = call.ID
+			}
+			if call.Function.Name != "" {
+				buffered.name = call.Function.Name
+			}
+			if call.Function.Arguments != "" {
+				// Gemini streams complete functionCall snapshots. The newest snapshot is
+				// authoritative; appending it would produce invalid JSON such as
+				// {}{"value":"..."}.
+				buffered.arguments = call.Function.Arguments
+			}
+			found = true
+		}
+		choice.Delta.ToolCalls = nil
+	}
+	return found
+}
+
+func (b *geminiResponsesToolBuffer) pending() bool {
+	return b != nil && !b.flushed && len(b.tools) > 0
+}
+
+func (b *geminiResponsesToolBuffer) flush(responseID string, created int64, model string) *dto.ChatCompletionsStreamResponse {
+	if !b.pending() {
+		return nil
+	}
+	b.flushed = true
+	tools := make([]*geminiResponsesBufferedTool, 0, len(b.tools))
+	for _, tool := range b.tools {
+		tools = append(tools, tool)
+	}
+	sort.SliceStable(tools, func(i, j int) bool {
+		if tools[i].choiceIndex != tools[j].choiceIndex {
+			return tools[i].choiceIndex < tools[j].choiceIndex
+		}
+		return tools[i].toolIndex < tools[j].toolIndex
+	})
+
+	toolCalls := make([]dto.ToolCallResponse, 0, len(tools))
+	for index, tool := range tools {
+		arguments := tool.arguments
+		if arguments == "" {
+			arguments = "{}"
+		}
+		call := dto.ToolCallResponse{
+			ID:   tool.id,
+			Type: "function",
+			Function: dto.FunctionResponse{
+				Name:      tool.name,
+				Arguments: arguments,
+			},
+		}
+		call.SetIndex(index)
+		toolCalls = append(toolCalls, call)
+	}
+	finishReason := constant.FinishReasonToolCalls
+	return &dto.ChatCompletionsStreamResponse{
+		Id:      responseID,
+		Object:  "chat.completion.chunk",
+		Created: created,
+		Model:   model,
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{
+				Index: 0,
+				Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+					ToolCalls: toolCalls,
+				},
+				FinishReason: &finishReason,
+			},
+		},
+	}
+}
+
+func geminiResponsesStreamTerminal(response *dto.GeminiChatResponse) bool {
+	if response == nil {
+		return false
+	}
+	for _, candidate := range response.Candidates {
+		if candidate.FinishReason != nil && *candidate.FinishReason != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func clearGeminiResponsesToolFinish(response *dto.ChatCompletionsStreamResponse) {
+	if response == nil {
+		return
+	}
+	for index := range response.Choices {
+		if response.Choices[index].FinishReason != nil && *response.Choices[index].FinishReason == constant.FinishReasonToolCalls {
+			response.Choices[index].FinishReason = nil
+		}
+	}
+}
 
 func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
@@ -90,8 +224,7 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	finishReason := constant.FinishReasonStop
-	toolCallIndexByChoice := make(map[int]map[string]int)
-	nextToolCallIndexByChoice := make(map[int]int)
+	toolBuffer := newGeminiResponsesToolBuffer()
 	var streamErr *types.NewAPIError
 
 	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
@@ -123,39 +256,27 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	}
 
 	usage, streamAPIError := geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
+		terminal := geminiResponsesStreamTerminal(geminiResponse)
 		response, isStop := streamResponseGeminiChat2OpenAI(geminiResponse)
 		response.Id = responseID
 		response.Created = created
 		response.Model = info.UpstreamModelName
 
-		if response.IsToolCall() {
+		hasTools := toolBuffer.absorb(response)
+		if hasTools || toolBuffer.pending() {
 			finishReason = constant.FinishReasonToolCalls
 		}
-		for choiceIdx := range response.Choices {
-			choiceKey := response.Choices[choiceIdx].Index
-			for toolIdx := range response.Choices[choiceIdx].Delta.ToolCalls {
-				tool := &response.Choices[choiceIdx].Delta.ToolCalls[toolIdx]
-				if tool.ID == "" {
-					continue
-				}
-				indexByID := toolCallIndexByChoice[choiceKey]
-				if indexByID == nil {
-					indexByID = make(map[string]int)
-					toolCallIndexByChoice[choiceKey] = indexByID
-				}
-				if idx, ok := indexByID[tool.ID]; ok {
-					tool.SetIndex(idx)
-					continue
-				}
-				idx := nextToolCallIndexByChoice[choiceKey]
-				nextToolCallIndexByChoice[choiceKey] = idx + 1
-				indexByID[tool.ID] = idx
-				tool.SetIndex(idx)
-			}
+		if toolBuffer.pending() {
+			clearGeminiResponsesToolFinish(response)
 		}
 
 		if !sendChunk(response) {
 			return false
+		}
+		if terminal && toolBuffer.pending() {
+			if !sendChunk(toolBuffer.flush(responseID, created, info.UpstreamModelName)) {
+				return false
+			}
 		}
 		if isStop {
 			return sendChunk(helper.GenerateStopResponse(responseID, created, info.UpstreamModelName, finishReason))
@@ -167,6 +288,11 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	}
 	if streamErr != nil {
 		return nil, streamErr
+	}
+	if toolBuffer.pending() {
+		if !sendChunk(toolBuffer.flush(responseID, created, info.UpstreamModelName)) {
+			return nil, streamErr
+		}
 	}
 
 	if usage != nil {

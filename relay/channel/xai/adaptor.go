@@ -115,11 +115,56 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if err != nil {
 		return nil, fmt.Errorf("convert xAI Responses tool choice: %w", err)
 	}
+	request.Tools, request.ToolChoice, err = enforceXAIResponsesNamedToolChoice(request.Tools, request.ToolChoice)
+	if err != nil {
+		return nil, fmt.Errorf("enforce xAI Responses tool choice: %w", err)
+	}
 	request.Input, err = convertXAIResponsesInput(request.Input)
 	if err != nil {
 		return nil, fmt.Errorf("convert xAI Responses input: %w", err)
 	}
 	return request, nil
+}
+
+func enforceXAIResponsesNamedToolChoice(toolsRaw, choiceRaw json.RawMessage) (json.RawMessage, json.RawMessage, error) {
+	if len(choiceRaw) == 0 || string(choiceRaw) == "null" {
+		return toolsRaw, choiceRaw, nil
+	}
+	var decoded any
+	if err := json.Unmarshal(choiceRaw, &decoded); err != nil {
+		return nil, nil, err
+	}
+	choice, ok := decoded.(map[string]any)
+	if !ok {
+		return toolsRaw, choiceRaw, nil
+	}
+	if strings.TrimSpace(xaiResponsesString(choice["type"])) != "function" {
+		return toolsRaw, choiceRaw, nil
+	}
+	name := strings.TrimSpace(xaiResponsesString(choice["name"]))
+	if name == "" {
+		return nil, nil, errors.New("named function tool choice omitted its name")
+	}
+	var tools []any
+	if err := json.Unmarshal(toolsRaw, &tools); err != nil {
+		return nil, nil, err
+	}
+	filtered := make([]any, 0, 1)
+	for _, value := range tools {
+		tool, ok := value.(map[string]any)
+		if !ok || strings.TrimSpace(xaiResponsesString(tool["name"])) != name {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	if len(filtered) == 0 {
+		return nil, nil, fmt.Errorf("selected tool %q is not declared", name)
+	}
+	filteredRaw, err := json.Marshal(filtered)
+	if err != nil {
+		return nil, nil, err
+	}
+	return filteredRaw, json.RawMessage(`"required"`), nil
 }
 
 func convertXAIResponsesTools(raw json.RawMessage) (json.RawMessage, error) {

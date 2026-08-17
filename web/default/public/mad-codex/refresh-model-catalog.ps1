@@ -1,6 +1,7 @@
 param([string]$CodexHome)
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $userHome = [Environment]::GetFolderPath('UserProfile')
 if ([string]::IsNullOrWhiteSpace($CodexHome)) {
@@ -41,7 +42,14 @@ if (-not [string]::IsNullOrWhiteSpace([string]$env:MADAPI_REFRESH_RESPONSE_FILE)
 if (-not [string]::IsNullOrWhiteSpace([string]$env:MADAPI_CODEX_TEMPLATE_FILE)) {
     $templatePayload = Get-Content -LiteralPath ([string]$env:MADAPI_CODEX_TEMPLATE_FILE) -Raw -Encoding UTF8 | ConvertFrom-Json
 } else {
-    $templatePayload = Invoke-RestMethod -UseBasicParsing -Uri ($baseUrl + '/mad-codex/codex-model-templates.json') -Method Get -TimeoutSec 30
+    $templateDownloadPath = [IO.Path]::GetTempFileName()
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri ($baseUrl + '/mad-codex/codex-model-templates.json') -Method Get -TimeoutSec 30 -OutFile $templateDownloadPath
+        $templateText = [IO.File]::ReadAllText($templateDownloadPath, [Text.Encoding]::UTF8)
+        $templatePayload = $templateText | ConvertFrom-Json
+    } finally {
+        if (Test-Path -LiteralPath $templateDownloadPath) { Remove-Item -LiteralPath $templateDownloadPath -Force }
+    }
 }
 
 $templates = @($templatePayload.models)
@@ -123,6 +131,9 @@ foreach ($id in $availableIds) {
     $entry.visibility = 'list'
     $entry.supported_in_api = $true
     $entry | Add-Member -NotePropertyName prefer_websockets -NotePropertyValue $false -Force
+    if ($null -ne $entry.PSObject.Properties['model_messages'] -and $null -ne $entry.model_messages) {
+        $entry.model_messages.PSObject.Properties.Remove('token_budget')
+    }
     $result.Add($entry)
     $priority++
 }

@@ -157,6 +157,32 @@ func TestStreamStatus_IsNormalEnd_NilSafe(t *testing.T) {
 	assert.True(t, s.IsNormalEnd())
 }
 
+func TestStreamStatus_RequiredResponsesTerminalControlsNormalEnd(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		terminalEvent string
+		normal        bool
+	}{
+		{name: "missing", normal: false},
+		{name: "completed", terminalEvent: "response.completed", normal: true},
+		{name: "failed", terminalEvent: "response.failed", normal: false},
+		{name: "incomplete", terminalEvent: "response.incomplete", normal: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewStreamStatus()
+			s.SetResponsesTerminalRequirement(true)
+			if tt.terminalEvent != "" {
+				s.MarkResponsesTerminalEvent(tt.terminalEvent)
+			}
+			s.SetEndReason(StreamEndReasonEOF, nil)
+			assert.Equal(t, tt.normal, s.IsNormalEnd())
+		})
+	}
+}
+
 func TestStreamStatus_Summary(t *testing.T) {
 	t.Parallel()
 

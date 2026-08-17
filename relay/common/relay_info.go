@@ -183,6 +183,9 @@ type RelayInfo struct {
 	FinalRequestRelayFormat types.RelayFormat
 
 	StreamStatus *StreamStatus
+	// RequireResponsesTerminalEvent is enabled only for the loopback request
+	// created by /codex. Standard /v1 streams retain their existing EOF rules.
+	RequireResponsesTerminalEvent bool
 
 	ThinkingContentInfo
 	TokenCountMeta

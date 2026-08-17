@@ -16,6 +16,7 @@ $oauthModelsFixture = Join-Path $fixtureRoot 'oauth-codex-models.json'
 $templateFixture = Join-Path $fixtureRoot 'codex-model-templates.json'
 $refreshScript = Join-Path $assetRoot 'refresh-model-catalog.ps1'
 $historyScript = Join-Path $assetRoot 'restore-history.ps1'
+$productionTemplate = Join-Path $assetRoot 'codex-model-templates.json'
 
 $installer = [IO.File]::ReadAllText($InstallerPath)
 Assert-True ($installer.Contains('requires_openai_auth')) 'Login-mode authentication branch is missing.'
@@ -23,6 +24,7 @@ Assert-True ($installer.Contains('experimental_bearer_token')) 'OAuth bearer con
 Assert-True ($installer.Contains('env_key = ')) 'API key configuration is missing.'
 Assert-True ($installer.Contains('x-openai-actor-authorization')) 'Official gateway actor header is missing.'
 Assert-True ($installer.Contains('supports_websockets = false')) 'WebSocket opt-out is missing.'
+Assert-True ($installer.Contains('context_window_override = 400000')) 'Unified Codex context window is not 400000.'
 Assert-True ($installer.Contains('image_generation = true')) 'Codex image generation feature is missing.'
 Assert-True ($installer.Contains('/codex/v1')) 'Dedicated Codex route is missing.'
 Assert-True ($installer.Contains('/codex/cockpit/v1')) 'API compatibility route is missing.'
@@ -179,6 +181,7 @@ try {
 
     $env:MADAPI_CODEX_AUTH_KIND = 'oauth'
     $env:MADAPI_REFRESH_RESPONSE_FILE = $oauthModelsFixture
+    $env:MADAPI_CODEX_TEMPLATE_FILE = $productionTemplate
     & $refreshScript -CodexHome $codexHome | Out-Host
     $oauthCatalog = Get-Content -LiteralPath (Join-Path $codexHome 'madapi-cockpit-model-catalog.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $oauthSlugs = @($oauthCatalog.models | ForEach-Object { [string]$_.slug })
@@ -189,6 +192,11 @@ try {
     $oauthGrok = @($oauthCatalog.models | Where-Object { $_.slug -eq 'grok-4.6' })[0]
     $grokProfile = @($catalog.models | Where-Object { $_.display_name -eq 'grok-4.6' })[0]
     Assert-True ($oauthGrok.default_reasoning_level -eq $grokProfile.default_reasoning_level) 'OAuth grok-4.6 capability profile differs from the registered API slot.'
+    $sourceTemplates = Get-Content -LiteralPath $productionTemplate -Raw -Encoding UTF8 | ConvertFrom-Json
+    $sourceTerra = @($sourceTemplates.models | Where-Object { $_.slug -eq 'gpt-5.6-terra' })[0]
+    $oauthTerra = @($oauthCatalog.models | Where-Object { $_.slug -eq 'gpt-5.6-terra' })[0]
+    Assert-True ([string]$oauthTerra.base_instructions -ceq [string]$sourceTerra.base_instructions) 'OAuth model instructions were not preserved as UTF-8.'
+    Assert-True ($null -eq $oauthTerra.model_messages.PSObject.Properties['token_budget']) 'Unsupported token-budget lifecycle leaked into the Codex catalog.'
 
     Write-Host 'Codex Windows clean gateway acceptance passed.'
 } finally {

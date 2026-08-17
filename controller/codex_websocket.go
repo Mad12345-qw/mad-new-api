@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/dto"
@@ -18,20 +17,13 @@ import (
 )
 
 const (
-	codexWebsocketConnectionLimit = 64
-	codexWebsocketPerTokenLimit   = 4
-	codexWebsocketMessageLimit    = 16 << 20
-	codexWebsocketStateLimit      = 16 << 20
-	codexWebsocketIdleTimeout     = 10 * time.Minute
-	codexWebsocketWriteTimeout    = 30 * time.Second
+	codexWebsocketMessageLimit = 16 << 20
+	codexWebsocketStateLimit   = 16 << 20
+	codexWebsocketIdleTimeout  = 10 * time.Minute
+	codexWebsocketWriteTimeout = 30 * time.Second
 )
 
 var (
-	codexWebsocketSlots = make(chan struct{}, codexWebsocketConnectionLimit)
-	codexWebsocketUsers = struct {
-		sync.Mutex
-		active map[int]int
-	}{active: make(map[int]int)}
 	codexWebsocketUpgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
@@ -45,13 +37,6 @@ var (
 // the isolated /codex route. Every generated turn is still submitted through
 // the existing local /v1/responses route, preserving its routing and billing.
 func CodexResponsesWebsocket(c *gin.Context) {
-	release, ok := acquireCodexWebsocket(c.GetInt("token_id"))
-	if !ok {
-		codexCompatibilityError(c, http.StatusTooManyRequests, fmt.Errorf("Codex websocket connection capacity is busy; retry shortly"))
-		return
-	}
-	defer release()
-
 	conn, err := codexWebsocketUpgrader.Upgrade(c.Writer, c.Request, codexWebsocketUpgradeHeaders(c.Request))
 	if err != nil {
 		return
@@ -155,13 +140,6 @@ type codexWebsocketTurnError struct {
 }
 
 func processCodexWebsocketTurn(c *gin.Context, conn *websocket.Conn, state *relayconvert.CodexResponsesWebsocketState, requestBody []byte) *codexWebsocketTurnError {
-	select {
-	case codexCompatibilitySlots <- struct{}{}:
-		defer func() { <-codexCompatibilitySlots }()
-	default:
-		return &codexWebsocketTurnError{http.StatusTooManyRequests, "capacity_busy", fmt.Errorf("Codex generation capacity is busy; retry shortly")}
-	}
-
 	upstreamBody, err := relayconvert.NormalizeCodexResponsesRequest(requestBody)
 	if err != nil {
 		return &codexWebsocketTurnError{http.StatusBadRequest, "invalid_request_error", err}
@@ -303,34 +281,4 @@ func codexWebsocketUpgradeHeaders(request *http.Request) http.Header {
 		headers.Set("x-codex-turn-state", turnState)
 	}
 	return headers
-}
-
-func acquireCodexWebsocket(tokenID int) (func(), bool) {
-	select {
-	case codexWebsocketSlots <- struct{}{}:
-	default:
-		return nil, false
-	}
-	codexWebsocketUsers.Lock()
-	if codexWebsocketUsers.active[tokenID] >= codexWebsocketPerTokenLimit {
-		codexWebsocketUsers.Unlock()
-		<-codexWebsocketSlots
-		return nil, false
-	}
-	codexWebsocketUsers.active[tokenID]++
-	codexWebsocketUsers.Unlock()
-
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			codexWebsocketUsers.Lock()
-			if codexWebsocketUsers.active[tokenID] <= 1 {
-				delete(codexWebsocketUsers.active, tokenID)
-			} else {
-				codexWebsocketUsers.active[tokenID]--
-			}
-			codexWebsocketUsers.Unlock()
-			<-codexWebsocketSlots
-		})
-	}, true
 }

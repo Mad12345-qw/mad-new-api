@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -28,28 +26,6 @@ import (
 )
 
 type Adaptor struct {
-}
-
-var geminiImagePreviewSlots = make(chan struct{}, geminiImagePreviewConcurrency())
-
-type releaseOnClose struct {
-	io.ReadCloser
-	once    sync.Once
-	release func()
-}
-
-func (body *releaseOnClose) Close() error {
-	err := body.ReadCloser.Close()
-	body.once.Do(body.release)
-	return err
-}
-
-func geminiImagePreviewConcurrency() int {
-	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MADAPI_GEMINI_IMAGE_CONCURRENCY")))
-	if err != nil || value < 1 {
-		return 1
-	}
-	return value
 }
 
 func isGeminiImagePreviewModel(model string) bool {
@@ -528,27 +504,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	if info.RelayMode != constant.RelayModeImagesGenerations || !isGeminiImagePreviewModel(info.UpstreamModelName) {
-		return channel.DoApiRequest(a, c, info, requestBody)
-	}
-	select {
-	case geminiImagePreviewSlots <- struct{}{}:
-	case <-c.Request.Context().Done():
-		return nil, c.Request.Context().Err()
-	}
-	release := func() { <-geminiImagePreviewSlots }
-	response, err := channel.DoApiRequest(a, c, info, requestBody)
-	if err != nil {
-		release()
-		return nil, err
-	}
-	httpResponse := response
-	if httpResponse == nil || httpResponse.Body == nil {
-		release()
-		return response, nil
-	}
-	httpResponse.Body = &releaseOnClose{ReadCloser: httpResponse.Body, release: release}
-	return httpResponse, nil
+	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {

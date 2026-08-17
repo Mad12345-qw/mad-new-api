@@ -255,7 +255,7 @@ trap 'exit 1' HUP INT TERM
   printf '%s\n' 'supports_websockets = false'
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 3'
-  printf '%s\n' 'context_window_override = 1048576'
+  printf '%s\n' 'context_window_override = 400000'
 } > "$temp_path"
 
 printf '%s\n' "$api_key" > "$temp_key_path"

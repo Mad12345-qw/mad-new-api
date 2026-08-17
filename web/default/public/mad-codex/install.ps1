@@ -398,7 +398,7 @@ $configLines.Add('http_headers = { "x-openai-actor-authorization" = "madapi-gate
 $configLines.Add('supports_websockets = false')
 $configLines.Add('stream_idle_timeout_ms = 360000')
 $configLines.Add('request_max_retries = 3')
-$configLines.Add('context_window_override = 1048576')
+$configLines.Add('context_window_override = 400000')
 $configLines.Add('')
 $configLines.Add('[[skills.config]]')
 $configLines.Add('path = ' + (ConvertTo-TomlBasicString $systemImageSkillPath))

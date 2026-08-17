@@ -1,0 +1,10 @@
+FROM golang:1.26.1-alpine AS protocol
+ENV GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOEXPERIMENT=greenteagc
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN /usr/local/go/bin/go mod download
+COPY . .
+RUN /usr/local/go/bin/go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
+
+FROM madapi-v3-single-native:20260817-r22-codex-precommit-failover-test
+COPY --from=protocol /build/new-api /new-api

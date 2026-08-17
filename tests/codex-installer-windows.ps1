@@ -24,6 +24,7 @@ Assert-True ($installer.Contains('experimental_bearer_token')) 'OAuth bearer con
 Assert-True ($installer.Contains('env_key = ')) 'API key configuration is missing.'
 Assert-True ($installer.Contains('x-openai-actor-authorization')) 'Official gateway actor header is missing.'
 Assert-True ($installer.Contains('supports_websockets = false')) 'WebSocket opt-out is missing.'
+Assert-True ($installer.Contains('context_window_override = 400000')) 'Unified Codex context window is not 400000.'
 Assert-True ($installer.Contains('image_generation = true')) 'Codex image generation feature is missing.'
 Assert-True ($installer.Contains('/codex/v1')) 'Dedicated Codex route is missing.'
 Assert-True ($installer.Contains('/codex/cockpit/v1')) 'API compatibility route is missing.'

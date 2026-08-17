@@ -20,6 +20,7 @@ grep -Fq 'experimental_bearer_token' "$installer_path" || fail 'OAuth bearer con
 grep -Fq 'env_key = ' "$installer_path" || fail 'Official custom gateway env_key is missing.'
 grep -Fq 'x-openai-actor-authorization' "$installer_path" || fail 'Official gateway actor header is missing.'
 grep -Fq 'supports_websockets = false' "$installer_path" || fail 'WebSocket opt-out is missing.'
+grep -Fq 'context_window_override = 400000' "$installer_path" || fail 'Unified Codex context window is not 400000.'
 grep -Fq 'image_generation = true' "$installer_path" || fail 'Codex image generation feature is missing.'
 grep -Fq '/codex/v1' "$installer_path" || fail 'Dedicated Codex route is missing.'
 grep -Fq '/codex/cockpit/v1' "$installer_path" || fail 'API compatibility route is missing.'

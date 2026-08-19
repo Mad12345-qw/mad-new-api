@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -137,6 +139,81 @@ type geminiReferenceImage struct {
 	Data     string
 }
 
+func isGeminiMultipartReferenceField(field string) bool {
+	switch field {
+	case "image", "image[]", "images", "reference_image", "reference_images":
+		return true
+	default:
+		return (strings.HasPrefix(field, "image[") || strings.HasPrefix(field, "reference_image[")) && strings.HasSuffix(field, "]")
+	}
+}
+
+// orderedGeminiMultipartReferences reads the original multipart stream instead
+// of the multipart.Form maps. multipart.Form preserves order within one field,
+// but loses the global upload order when clients mix image, image[] and
+// image[n] field names.
+func orderedGeminiMultipartReferences(c *gin.Context) ([]geminiReferenceImage, bool, error) {
+	if c == nil || c.Request == nil {
+		return nil, false, nil
+	}
+	mediaType, parameters, err := mime.ParseMediaType(c.Request.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(mediaType, "multipart/form-data") {
+		return nil, false, nil
+	}
+	boundary := strings.TrimSpace(parameters["boundary"])
+	if boundary == "" {
+		return nil, true, fmt.Errorf("Gemini image edit multipart boundary is missing")
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, true, err
+	}
+	if _, err = storage.Seek(0, io.SeekStart); err != nil {
+		return nil, true, err
+	}
+	defer func() {
+		_, _ = storage.Seek(0, io.SeekStart)
+		c.Request.Body = io.NopCloser(storage)
+	}()
+
+	reader := multipart.NewReader(storage, boundary)
+	images := make([]geminiReferenceImage, 0, 4)
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return nil, true, nextErr
+		}
+		field := part.FormName()
+		if !isGeminiMultipartReferenceField(field) {
+			_ = part.Close()
+			continue
+		}
+		raw, readErr := io.ReadAll(part)
+		closeErr := part.Close()
+		if readErr != nil {
+			return nil, true, readErr
+		}
+		if closeErr != nil {
+			return nil, true, closeErr
+		}
+		mimeType := strings.TrimSpace(part.Header.Get("Content-Type"))
+		if mimeType == "" || strings.EqualFold(mimeType, "application/octet-stream") {
+			mimeType = http.DetectContentType(raw)
+		}
+		if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+			return nil, true, fmt.Errorf("uploaded Gemini reference is not an image")
+		}
+		images = append(images, geminiReferenceImage{
+			MimeType: mimeType,
+			Data:     base64.StdEncoding.EncodeToString(raw),
+		})
+	}
+	return images, true, nil
+}
+
 func appendGeminiReferenceValue(c *gin.Context, images []geminiReferenceImage, raw json.RawMessage) ([]geminiReferenceImage, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return images, nil
@@ -178,6 +255,11 @@ func appendGeminiReferenceAny(c *gin.Context, images []geminiReferenceImage, val
 
 func geminiReferenceImages(c *gin.Context, request dto.ImageRequest) ([]geminiReferenceImage, error) {
 	images := make([]geminiReferenceImage, 0, 4)
+	if ordered, multipartRequest, err := orderedGeminiMultipartReferences(c); err != nil {
+		return nil, err
+	} else if multipartRequest && len(ordered) > 0 {
+		return ordered, nil
+	}
 	if c != nil && c.Request != nil && c.Request.MultipartForm != nil {
 		for _, field := range []string{"image", "image[]", "images", "reference_images", "reference_image"} {
 			for _, header := range c.Request.MultipartForm.File[field] {

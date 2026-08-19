@@ -6,13 +6,48 @@ import (
 	"mime/multipart"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func geminiMultipartContext(t *testing.T, fields []string, payloads [][]byte, values map[string]string) *gin.Context {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for key, value := range values {
+		require.NoError(t, writer.WriteField(key, value))
+	}
+	for index, field := range fields {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="reference-%d.png"`, field, index+1))
+		header.Set("Content-Type", "image/png")
+		part, err := writer.CreatePart(header)
+		require.NoError(t, err)
+		_, err = part.Write(payloads[index])
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+
+	httpRequest := httptest.NewRequest("POST", "/v1/images/edits", &body)
+	httpRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httpRequest
+	form, err := common.ParseMultipartFormReusable(c)
+	require.NoError(t, err)
+	c.Request.MultipartForm = form
+	c.Request.PostForm = url.Values(form.Value)
+	t.Cleanup(func() {
+		form.RemoveAll()
+		common.CleanupBodyStorage(c)
+	})
+	return c
+}
 
 func TestConvertGeminiImagePreviewRequest(t *testing.T) {
 	request, err := convertGeminiImagePreviewRequest(nil, &relaycommon.RelayInfo{OriginModelName: "gemini-3.1-flash-image-preview"}, dto.ImageRequest{
@@ -86,6 +121,53 @@ func TestConvertGeminiImagePreviewJSONReferencesPreserveArrayOrder(t *testing.T)
 	require.Equal(t, "image/jpeg", request.Contents[0].Parts[4].InlineData.MimeType)
 	require.Contains(t, request.Contents[0].Parts[5].Text, "以图1为人物基础，以图2为服装参考")
 	require.JSONEq(t, `{"aspectRatio":"3:4","imageSize":"2K"}`, string(request.GenerationConfig.ImageConfig))
+}
+
+func TestConvertGeminiImagePreviewMultipartIndexedFieldsPreserveUploadOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c := geminiMultipartContext(t,
+		[]string{"image[0]", "image[1]"},
+		[][]byte{[]byte("first-image"), []byte("second-image")},
+		map[string]string{
+			"prompt":     "以图1为人物，以图2为服装",
+			"image_size": "4K",
+			"size":       "2448x3264",
+		},
+	)
+
+	request, err := convertGeminiImagePreviewRequest(c, &relaycommon.RelayInfo{
+		OriginModelName: "gemini-3.1-flash-image-preview",
+	}, dto.ImageRequest{
+		Prompt: c.Request.PostForm.Get("prompt"),
+		Size:   c.Request.PostForm.Get("size"),
+	})
+	require.NoError(t, err)
+	require.Len(t, request.Contents[0].Parts, 6)
+	require.Equal(t, "Zmlyc3QtaW1hZ2U=", request.Contents[0].Parts[2].InlineData.Data)
+	require.Equal(t, "c2Vjb25kLWltYWdl", request.Contents[0].Parts[4].InlineData.Data)
+	require.Contains(t, request.Contents[0].Parts[5].Text, "以图1为人物，以图2为服装")
+	require.JSONEq(t, `{"aspectRatio":"3:4","imageSize":"4K"}`, string(request.GenerationConfig.ImageConfig))
+}
+
+func TestConvertGeminiImagePreviewMultipartMixedFieldsPreserveGlobalUploadOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c := geminiMultipartContext(t,
+		[]string{"image[]", "image"},
+		[][]byte{[]byte("first-image"), []byte("second-image")},
+		map[string]string{"prompt": "use image 1, then image 2", "quality": "high", "aspect_ratio": "16:9"},
+	)
+
+	request, err := convertGeminiImagePreviewRequest(c, &relaycommon.RelayInfo{
+		OriginModelName: "gemini-3.1-flash-image-preview",
+	}, dto.ImageRequest{
+		Prompt:  c.Request.PostForm.Get("prompt"),
+		Quality: c.Request.PostForm.Get("quality"),
+	})
+	require.NoError(t, err)
+	require.Len(t, request.Contents[0].Parts, 6)
+	require.Equal(t, "Zmlyc3QtaW1hZ2U=", request.Contents[0].Parts[2].InlineData.Data)
+	require.Equal(t, "c2Vjb25kLWltYWdl", request.Contents[0].Parts[4].InlineData.Data)
+	require.JSONEq(t, `{"aspectRatio":"16:9","imageSize":"2K"}`, string(request.GenerationConfig.ImageConfig))
 }
 
 func TestGeminiImagePreviewModelMatrix(t *testing.T) {

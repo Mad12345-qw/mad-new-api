@@ -29,12 +29,7 @@ type Adaptor struct {
 }
 
 func isGeminiImagePreviewModel(model string) bool {
-	switch strings.ToLower(strings.TrimSpace(model)) {
-	case "gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview":
-		return true
-	default:
-		return false
-	}
+	return service.IsGeminiImagePreviewModel(model)
 }
 
 func geminiImageRequestValue(c *gin.Context, request dto.ImageRequest, keys ...string) string {
@@ -245,22 +240,13 @@ func convertGeminiImagePreviewRequest(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil, err
 	}
-	parts := make([]dto.GeminiPart, 0, 2+len(references)*2)
-	if len(references) == 0 {
-		parts = append(parts, dto.GeminiPart{Text: request.Prompt})
-	} else {
-		parts = append(parts, dto.GeminiPart{Text: "参考图编号规则：以下图片数据块严格按照上传顺序编号。第一个图片数据块是图1，第二个是图2，依此类推。用户提示词中的“图N”只能指代相同编号的图片，不得根据图片内容重新排序、猜测编号或互换图片。"})
+	mediaParts := make([]dto.GeminiPart, 0, len(references))
+	for _, reference := range references {
+		mediaParts = append(mediaParts, dto.GeminiPart{
+			InlineData: &dto.GeminiInlineData{MimeType: reference.MimeType, Data: reference.Data},
+		})
 	}
-	for index, reference := range references {
-		position := index + 1
-		parts = append(parts,
-			dto.GeminiPart{Text: fmt.Sprintf("图%d（第%d个上传的参考图；紧随其后的图片数据就是图%d）", position, position, position)},
-			dto.GeminiPart{InlineData: &dto.GeminiInlineData{MimeType: reference.MimeType, Data: reference.Data}},
-		)
-	}
-	if len(references) > 0 {
-		parts = append(parts, dto.GeminiPart{Text: "用户原始提示词（其中“图N”严格对应以上相同编号）：\n" + request.Prompt})
-	}
+	parts := service.BuildGeminiImageReferenceParts(request.Prompt, mediaParts)
 	return &dto.GeminiChatRequest{
 		Contents: []dto.GeminiChatContent{{
 			Role:  "user",

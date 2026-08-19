@@ -1,5 +1,7 @@
 package common
 
+import "strings"
+
 type DatabaseType string
 
 const (
@@ -41,4 +43,23 @@ func UsingLogDatabase(databaseType DatabaseType) bool {
 	return logDatabaseType == databaseType
 }
 
-var SQLitePath = "one-api.db?_busy_timeout=30000"
+// withSQLitePragmas preserves an explicitly configured SQLite path while
+// ensuring every modernc SQLite connection receives the production safety
+// pragmas. This is also applied to SQLITE_PATH during process initialization.
+func withSQLitePragmas(path string) string {
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	lowerPath := strings.ToLower(path)
+	if !strings.Contains(lowerPath, "_pragma=busy_timeout") {
+		path += separator + "_pragma=busy_timeout(30000)"
+		separator = "&"
+	}
+	if !strings.Contains(lowerPath, "_pragma=journal_mode") {
+		path += separator + "_pragma=journal_mode(WAL)"
+	}
+	return path
+}
+
+var SQLitePath = withSQLitePragmas("one-api.db")

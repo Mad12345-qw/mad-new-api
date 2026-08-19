@@ -70,6 +70,16 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
+	nativeImageReferencesNormalized := false
+	if info.ApiType == constant.APITypeGemini &&
+		(service.IsGeminiImagePreviewModel(info.OriginModelName) || service.IsGeminiImagePreviewModel(info.UpstreamModelName)) {
+		normalizedCount, normalizeErr := service.NormalizeNativeGeminiImageReferences(request)
+		if normalizeErr != nil {
+			return types.NewErrorWithStatusCode(normalizeErr, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		nativeImageReferencesNormalized = normalizedCount > 0
+	}
+
 	if model_setting.GetGeminiSettings().ThinkingAdapterEnabled {
 		if isNoThinkingRequest(request) {
 			// check is thinking
@@ -136,7 +146,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if !nativeImageReferencesNormalized && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())

@@ -37,6 +37,13 @@ var (
 	errOriginalPasswordFail = errors.New("original password is incorrect")
 )
 
+func apiDatabaseUnavailable(c *gin.Context) {
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"success": false,
+		"message": common.TranslateMessage(c, i18n.MsgDatabaseError),
+	})
+}
+
 func Login(c *gin.Context) {
 	if !common.PasswordLoginEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordLoginDisabled)
@@ -63,7 +70,7 @@ func Login(c *gin.Context) {
 		switch {
 		case errors.Is(err, model.ErrDatabase):
 			common.SysLog(fmt.Sprintf("Login database error for user %s: %v", username, err))
-			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+			apiDatabaseUnavailable(c)
 		case errors.Is(err, model.ErrUserEmptyCredentials):
 			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		default:
@@ -76,7 +83,7 @@ func Login(c *gin.Context) {
 	twoFAEnabled, err := model.IsTwoFAEnabled(user.Id)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("Login failed to load 2FA status for user %d: %v", user.Id, err))
-		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+		apiDatabaseUnavailable(c)
 		return
 	}
 	if twoFAEnabled {
@@ -473,7 +480,15 @@ func GetSelf(c *gin.Context) {
 	userRole := c.GetInt("role")
 	user, err := model.GetUserById(id, false)
 	if err != nil {
-		common.ApiError(c, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": common.TranslateMessage(c, i18n.MsgAuthNotLoggedIn),
+			})
+		} else {
+			common.SysLog(fmt.Sprintf("GetSelf database error for user %d: %v", id, err))
+			apiDatabaseUnavailable(c)
+		}
 		return
 	}
 	// Hide admin remarks: set to empty to trigger omitempty tag, ensuring the remark field is not included in JSON returned to regular users

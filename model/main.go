@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/url"
@@ -18,6 +19,22 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func configureSQLConnectionPool(sqlDB *sql.DB, databaseType common.DatabaseType) {
+	maxIdleDefault := 100
+	maxOpenDefault := 1000
+	maxLifetimeDefault := 60
+	if databaseType == common.DatabaseTypeSQLite {
+		// SQLite has one writer. A bounded pool prevents hundreds of concurrent
+		// connections from piling up behind that writer and starving auth reads.
+		maxIdleDefault = 8
+		maxOpenDefault = 16
+		maxLifetimeDefault = 0
+	}
+	sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", maxIdleDefault))
+	sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", maxOpenDefault))
+	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", maxLifetimeDefault)))
+}
 
 var commonGroupCol string
 var commonKeyCol string
@@ -200,9 +217,7 @@ func InitDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		configureSQLConnectionPool(sqlDB, dbType)
 
 		if !common.IsMasterNode {
 			return nil
@@ -244,9 +259,7 @@ func InitLogDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		configureSQLConnectionPool(sqlDB, dbType)
 
 		if !common.IsMasterNode {
 			return nil

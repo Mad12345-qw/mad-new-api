@@ -1,10 +1,61 @@
 package codexresponses
 
 import (
+	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/tidwall/gjson"
 )
+
+func TestPrepareOpenAIResponsesRequestKeepsPlainInputBuiltinsAndSummaryBytes(t *testing.T) {
+	input := json.RawMessage(`[{"type":"message","role":"user","content":[{"type":"input_text","text":"请根据参考内容总结，不要乱码。"}]}]`)
+	request := &dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: input,
+		Tools: json.RawMessage(`[
+			{"type":"web_search","search_context_size":"high"},
+			{"type":"image_generation","action":"generate","model":"gpt-image-2"}
+		]`),
+	}
+	inputAddress := &request.Input[0]
+
+	compat, err := PrepareOpenAIResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(request.Input, input) {
+		t.Fatalf("plain input changed: %s", request.Input)
+	}
+	if &request.Input[0] != inputAddress {
+		t.Fatal("plain input was reallocated")
+	}
+	if got := gjson.GetBytes(request.Tools, "0.type").String(); got != "web_search" {
+		t.Fatalf("web search tool = %q", got)
+	}
+	if got := gjson.GetBytes(request.Tools, "1.type").String(); got != "image_generation" {
+		t.Fatalf("image generation tool = %q", got)
+	}
+
+	summary := []byte(`{"type":"response.output_text.delta","delta":"中文总结保持正常"}`)
+	restored, err := compat.RestorePayload(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(restored, summary) || &restored[0] != &summary[0] {
+		t.Fatalf("plain summary event was decoded or rewritten: %s", restored)
+	}
+	image := []byte(`{"type":"response.output_item.done","item":{"type":"image_generation_call","status":"completed"}}`)
+	restored, err = compat.RestorePayload(image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(restored, image) || &restored[0] != &image[0] {
+		t.Fatalf("image event was decoded or rewritten: %s", restored)
+	}
+}
 
 func TestNormalizeOpenAIResponsesRequestKeepsNativeFieldsAndFlattensNamespaces(t *testing.T) {
 	raw := []byte(`{
@@ -150,4 +201,37 @@ func TestRestoreOpenAIResponsesPayloadMapsSingleCustomToolDelta(t *testing.T) {
 	if got := gjson.GetBytes(out, "input").String(); got != "patch" {
 		t.Fatalf("input = %q", got)
 	}
+}
+
+func BenchmarkCodexNormalizationLargePlainInput(b *testing.B) {
+	input, err := json.Marshal([]map[string]any{{
+		"type":    "message",
+		"role":    "user",
+		"content": []map[string]any{{"type": "input_text", "text": strings.Repeat("x", 4<<20)}},
+	}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	raw, err := json.Marshal(&dto.OpenAIResponsesRequest{Model: "gpt-test", Input: input})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.Run("legacy-whole-body", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, err := NormalizeOpenAIResponsesRequest(raw); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("single-layer-field-aware", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			request := &dto.OpenAIResponsesRequest{Model: "gpt-test", Input: input}
+			if _, err := PrepareOpenAIResponsesRequest(request); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

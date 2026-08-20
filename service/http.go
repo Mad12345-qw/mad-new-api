@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 
 	"github.com/gin-gonic/gin"
@@ -44,6 +45,16 @@ func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
 func IOCopyBytesGracefully(c *gin.Context, src *http.Response, data []byte) {
 	if c.Writer == nil {
 		return
+	}
+	if transformer, ok := common.GetContextKey(c, constant.ContextKeyResponsesPayloadTransformer); ok {
+		if transform, valid := transformer.(func([]byte) ([]byte, error)); valid {
+			transformed, err := transform(data)
+			if err != nil {
+				logger.LogError(c, fmt.Sprintf("failed to restore Responses payload: %s", err.Error()))
+				return
+			}
+			data = transformed
+		}
 	}
 
 	body := io.NopCloser(bytes.NewBuffer(data))

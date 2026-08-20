@@ -12,7 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
@@ -124,7 +128,9 @@ func withCodexCompatibilityTestServer(t *testing.T, handler http.Handler, textMo
 	server := httptest.NewServer(handler)
 	originalBaseURL := codexInternalBaseURL
 	originalPricingProvider := codexTextPricingProvider
+	originalLegacyResponses := codexLegacyResponsesForTests
 	codexInternalBaseURL = server.URL
+	codexLegacyResponsesForTests = true
 	codexTextPricingProvider = func() map[string]struct{} {
 		models := make(map[string]struct{}, len(textModels))
 		for _, modelName := range textModels {
@@ -136,6 +142,7 @@ func withCodexCompatibilityTestServer(t *testing.T, handler http.Handler, textMo
 		server.Close()
 		codexInternalBaseURL = originalBaseURL
 		codexTextPricingProvider = originalPricingProvider
+		codexLegacyResponsesForTests = originalLegacyResponses
 	})
 	return server.URL
 }
@@ -913,4 +920,87 @@ func TestCodexInternalRequestDoesNotPropagateLegacyRoutingHeaders(t *testing.T) 
 	require.NoError(t, err)
 	require.Empty(t, request.Header.Get("X-MadAPI-Codex-Canary"))
 	require.Empty(t, request.Header.Get("X-MadAPI-Codex-Cockpit"))
+}
+
+func TestCodexResponsesSingleLayerPreparesAndRestoresWithoutLoopback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	originalExecutor := codexRelayExecutor
+	originalPricingProvider := codexTextPricingProvider
+	originalLegacyResponses := codexLegacyResponsesForTests
+	codexLegacyResponsesForTests = false
+	codexTextPricingProvider = func() map[string]struct{} { return map[string]struct{}{"gpt-5.6-sol": {}} }
+	defer func() {
+		codexRelayExecutor = originalExecutor
+		codexTextPricingProvider = originalPricingProvider
+		codexLegacyResponsesForTests = originalLegacyResponses
+	}()
+
+	codexRelayExecutor = func(c *gin.Context, format types.RelayFormat) {
+		require.Equal(t, types.RelayFormat(types.RelayFormatOpenAIResponses), format)
+		value, ok := common.GetContextKey(c, constant.ContextKeyRelayRequestPreprocessor)
+		require.True(t, ok)
+		preprocess, ok := value.(func(dto.Request) error)
+		require.True(t, ok)
+		stream := true
+		request := &dto.OpenAIResponsesRequest{
+			Model:  "gpt-5.6-sol",
+			Stream: &stream,
+			Tools:  json.RawMessage(`[{"type":"namespace","name":"mcp","tools":[{"type":"custom","name":"apply_patch"}]}]`),
+			Input:  json.RawMessage(`[{"type":"additional_tools","tools":[{"type":"function","name":"shell","parameters":{"type":"object"}}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]`),
+		}
+		require.NoError(t, preprocess(request))
+		require.Equal(t, "mcp__apply_patch", gjson.GetBytes(request.Tools, "0.name").String())
+		require.Equal(t, "shell", gjson.GetBytes(request.Tools, "1.name").String())
+		require.Equal(t, "message", gjson.GetBytes(request.Input, "0.type").String())
+
+		require.NoError(t, helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "response.output_item.done"}, `{"type":"response.output_item.done","item":{"type":"function_call","name":"mcp__apply_patch","arguments":"{\"input\":\"patch text\"}"}}`))
+		require.NoError(t, helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "response.completed"}, `{"type":"response.completed","response":{"id":"resp-single","status":"completed"}}`))
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","input":"hello","stream":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	CodexResponses(c)
+
+	body := recorder.Body.String()
+	require.Contains(t, body, `"type":"custom_tool_call"`)
+	require.Contains(t, body, `"name":"apply_patch"`)
+	require.Contains(t, body, `"namespace":"mcp"`)
+	require.Equal(t, 1, strings.Count(body, "event: response.completed"))
+	require.NotContains(t, body, "response.incomplete")
+}
+
+func TestCodexResponsesSingleLayerPreservesEOFTerminalRepair(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	originalExecutor := codexRelayExecutor
+	originalPricingProvider := codexTextPricingProvider
+	originalLegacyResponses := codexLegacyResponsesForTests
+	codexLegacyResponsesForTests = false
+	codexTextPricingProvider = func() map[string]struct{} { return map[string]struct{}{"gpt-5.6-sol": {}} }
+	defer func() {
+		codexRelayExecutor = originalExecutor
+		codexTextPricingProvider = originalPricingProvider
+		codexLegacyResponsesForTests = originalLegacyResponses
+	}()
+
+	codexRelayExecutor = func(c *gin.Context, _ types.RelayFormat) {
+		value, _ := common.GetContextKey(c, constant.ContextKeyRelayRequestPreprocessor)
+		preprocess := value.(func(dto.Request) error)
+		stream := true
+		request := &dto.OpenAIResponsesRequest{Model: "gpt-5.6-sol", Input: json.RawMessage(`"hello"`), Stream: &stream}
+		require.NoError(t, preprocess(request))
+		require.NoError(t, helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "response.created"}, `{"type":"response.created","response":{"id":"resp-eof","status":"in_progress"}}`))
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","input":"hello","stream":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	CodexResponses(c)
+
+	body := recorder.Body.String()
+	require.Equal(t, 1, strings.Count(body, "event: response.incomplete"))
+	require.Contains(t, body, `"id":"resp-eof"`)
+	require.Contains(t, body, `"code":"stream_ended"`)
 }

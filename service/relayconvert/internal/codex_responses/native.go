@@ -1,10 +1,229 @@
 package codexresponses
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/QuantumNous/new-api/dto"
 )
+
+type nativeToolIdentity struct {
+	name      string
+	namespace string
+}
+
+// NativeCompatibility contains the small, immutable lookup tables needed to
+// restore Codex namespace/custom-tool semantics on response events. Building
+// it once avoids rescanning the complete request for every SSE event.
+type NativeCompatibility struct {
+	customTools      map[string]struct{}
+	toolIdentities   map[string]nativeToolIdentity
+	singleCustomTool bool
+}
+
+// PrepareOpenAIResponsesRequest normalizes only the Responses fields that
+// differ between Codex Desktop and provider-native Responses. The request has
+// already been decoded by NewAPI, so this does not parse or serialize the
+// complete request a second time.
+func PrepareOpenAIResponsesRequest(request *dto.OpenAIResponsesRequest) (*NativeCompatibility, error) {
+	if request == nil {
+		return nil, fmt.Errorf("nil Responses request")
+	}
+	compat := &NativeCompatibility{
+		customTools:    make(map[string]struct{}),
+		toolIdentities: make(map[string]nativeToolIdentity),
+	}
+
+	tools := make([]any, 0)
+	appendTools := func(value any) {
+		compat.collectToolMetadata(value, "")
+		for _, tool := range anySlice(value) {
+			tools = append(tools, normalizeNativeTool(tool, "")...)
+		}
+	}
+
+	if len(request.Tools) > 0 && string(request.Tools) != "null" {
+		var topLevelTools any
+		if err := json.Unmarshal(request.Tools, &topLevelTools); err != nil {
+			return nil, fmt.Errorf("invalid Responses tools: %w", err)
+		}
+		appendTools(topLevelTools)
+	}
+
+	inputNeedsNormalization := bytes.Contains(request.Input, []byte(`"additional_tools"`)) || bytes.Contains(request.Input, []byte(`"namespace"`))
+	if inputNeedsNormalization && len(request.Input) > 0 && string(request.Input) != "null" && firstJSONByte(request.Input) == '[' {
+		var input []any
+		if err := json.Unmarshal(request.Input, &input); err != nil {
+			return nil, fmt.Errorf("invalid Responses input: %w", err)
+		}
+		normalizedInput := make([]any, 0, len(input))
+		for _, value := range input {
+			item, ok := value.(map[string]any)
+			if !ok {
+				normalizedInput = append(normalizedInput, value)
+				continue
+			}
+			if strings.TrimSpace(stringValue(item["type"])) == "additional_tools" {
+				appendTools(item["tools"])
+				continue
+			}
+			normalizeNativeHistoryItem(item)
+			normalizedInput = append(normalizedInput, item)
+		}
+		encoded, err := json.Marshal(normalizedInput)
+		if err != nil {
+			return nil, err
+		}
+		request.Input = encoded
+	}
+
+	if len(tools) > 0 {
+		encoded, err := json.Marshal(tools)
+		if err != nil {
+			return nil, err
+		}
+		request.Tools = encoded
+	} else {
+		request.Tools = nil
+	}
+
+	if len(request.ToolChoice) > 0 && string(request.ToolChoice) != "null" && firstJSONByte(request.ToolChoice) == '{' {
+		var choice map[string]any
+		if err := json.Unmarshal(request.ToolChoice, &choice); err != nil {
+			return nil, fmt.Errorf("invalid Responses tool_choice: %w", err)
+		}
+		normalizeNativeToolChoice(choice)
+		encoded, err := json.Marshal(choice)
+		if err != nil {
+			return nil, err
+		}
+		request.ToolChoice = encoded
+	}
+
+	compat.singleCustomTool = len(compat.customTools) == 1 && len(compat.toolIdentities) == 1
+	return compat, nil
+}
+
+func firstJSONByte(raw []byte) byte {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\t', '\r', '\n':
+			continue
+		default:
+			return b
+		}
+	}
+	return 0
+}
+
+func (compat *NativeCompatibility) collectToolMetadata(value any, namespace string) {
+	for _, rawTool := range anySlice(value) {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolType := strings.TrimSpace(stringValue(tool["type"]))
+		if toolType == "namespace" {
+			nestedNamespace := strings.TrimSpace(stringValue(tool["name"]))
+			if namespace != "" {
+				nestedNamespace = qualifyResponsesNamespaceToolName(namespace, nestedNamespace)
+			}
+			compat.collectToolMetadata(tool["tools"], nestedNamespace)
+			continue
+		}
+		name := nativeToolName(tool)
+		if name == "" {
+			continue
+		}
+		qualified := qualifyResponsesNamespaceToolName(namespace, name)
+		compat.toolIdentities[qualified] = nativeToolIdentity{name: name, namespace: namespace}
+		if toolType == "custom" {
+			compat.customTools[qualified] = struct{}{}
+		}
+	}
+}
+
+// RestorePayload restores one provider response object or one SSE data object
+// using metadata prepared once for the request.
+func (compat *NativeCompatibility) RestorePayload(rawJSON []byte) ([]byte, error) {
+	if compat == nil {
+		return rawJSON, nil
+	}
+	// Text/reasoning deltas are the overwhelming majority of a stream. They do
+	// not carry tool identity fields, so return their original bytes without a
+	// JSON decode/encode round trip.
+	toolPayload := bytes.Contains(rawJSON, []byte(`"function_call"`)) || bytes.Contains(rawJSON, []byte(`"custom_tool_call"`))
+	customDelta := compat.singleCustomTool && bytes.Contains(rawJSON, []byte(`"response.function_call_arguments`))
+	if !toolPayload && !customDelta {
+		return rawJSON, nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(rawJSON, &root); err != nil {
+		return nil, err
+	}
+	compat.restoreResponseObject(root)
+	return json.Marshal(root)
+}
+
+func (compat *NativeCompatibility) restoreResponseObject(root map[string]any) {
+	if item, ok := root["item"].(map[string]any); ok {
+		compat.restoreResponseItem(item)
+	}
+	if output, ok := root["output"].([]any); ok {
+		for _, value := range output {
+			if item, ok := value.(map[string]any); ok {
+				compat.restoreResponseItem(item)
+			}
+		}
+	}
+	if response, ok := root["response"].(map[string]any); ok {
+		compat.restoreResponseObject(response)
+	}
+
+	if compat.singleCustomTool {
+		switch strings.TrimSpace(stringValue(root["type"])) {
+		case "response.function_call_arguments.delta":
+			root["type"] = "response.custom_tool_call_input.delta"
+		case "response.function_call_arguments.done":
+			root["type"] = "response.custom_tool_call_input.done"
+			if arguments, ok := root["arguments"]; ok {
+				root["input"] = unwrapCustomToolInput(stringValue(arguments))
+				delete(root, "arguments")
+			}
+		}
+	}
+}
+
+func (compat *NativeCompatibility) restoreResponseItem(item map[string]any) {
+	itemType := strings.TrimSpace(stringValue(item["type"]))
+	if itemType != "function_call" && itemType != "custom_tool_call" {
+		return
+	}
+	qualifiedName := strings.TrimSpace(stringValue(item["name"]))
+	if qualifiedName == "" {
+		return
+	}
+	if _, ok := compat.customTools[qualifiedName]; ok {
+		item["type"] = "custom_tool_call"
+		if arguments, exists := item["arguments"]; exists {
+			item["input"] = unwrapCustomToolInput(stringValue(arguments))
+			delete(item, "arguments")
+		}
+	}
+	identity, ok := compat.toolIdentities[qualifiedName]
+	if !ok {
+		delete(item, "namespace")
+		return
+	}
+	item["name"] = identity.name
+	if identity.namespace != "" {
+		item["namespace"] = identity.namespace
+	} else {
+		delete(item, "namespace")
+	}
+}
 
 // NormalizeOpenAIResponsesRequest keeps the Responses protocol intact while
 // flattening Codex namespace declarations into provider-safe tool names.

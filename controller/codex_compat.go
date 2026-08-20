@@ -10,17 +10,21 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/codexclientmodels"
 	"github.com/QuantumNous/new-api/service/relayconvert"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -33,7 +37,11 @@ var (
 	codexInternalBaseURL     = defaultCodexInternalBaseURL
 	codexCompatibilitySlots  = make(chan struct{}, codexCompatibilityLimit)
 	codexTextPricingProvider = codexTextPricingModels
-	codexInternalHTTPClient  = &http.Client{
+	codexRelayExecutor       = Relay
+	// Tests that exercise the historical loopback contract opt in explicitly.
+	// Production /codex/v1/responses never enables this switch.
+	codexLegacyResponsesForTests = false
+	codexInternalHTTPClient      = &http.Client{
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -147,6 +155,45 @@ func codexClientModelInfo(candidate dto.OpenAIModels) *codexclientmodels.ModelIn
 }
 
 func CodexResponses(c *gin.Context) {
+	if codexLegacyResponsesForTests {
+		codexResponsesViaInternal(c)
+		return
+	}
+	state := &codexSingleLayerStreamState{}
+	common.SetContextKey(c, constant.ContextKeyRelayRequestPreprocessor, func(request dto.Request) error {
+		responsesReq, ok := request.(*dto.OpenAIResponsesRequest)
+		if !ok {
+			return fmt.Errorf("invalid Codex Responses request type %T", request)
+		}
+		state.setStream(lo.FromPtrOr(responsesReq.Stream, false))
+		common.SetContextKey(c, constant.ContextKeyRelayErrorResponseHandler, func(relayErr *types.NewAPIError) bool {
+			return state.writeRelayError(c, relayErr)
+		})
+		if !isCodexConversationModel(dto.OpenAIModels{Id: responsesReq.Model}, codexTextPricingProvider()) {
+			return fmt.Errorf("model %q is not a Codex conversation model", responsesReq.Model)
+		}
+		restore, err := relayconvert.PrepareCodexResponsesRequest(responsesReq)
+		if err != nil {
+			return err
+		}
+		common.SetContextKey(c, constant.ContextKeyResponsesPayloadTransformer, restore)
+		common.SetContextKey(c, constant.ContextKeyResponsesStreamEventTransformer, func(eventType string, payload []byte) (string, []byte, bool, error) {
+			return state.transformEvent(restore, eventType, payload)
+		})
+		return nil
+	})
+
+	codexRelayExecutor(c, types.RelayFormatOpenAIResponses)
+	state.finish(c)
+}
+
+// CodexCockpitResponses preserves the isolated Cockpit model-shell rewrite.
+// It is not used by the standard /codex/v1/responses path.
+func CodexCockpitResponses(c *gin.Context) {
+	codexResponsesViaInternal(c)
+}
+
+func codexResponsesViaInternal(c *gin.Context) {
 	select {
 	case codexCompatibilitySlots <- struct{}{}:
 		defer func() { <-codexCompatibilitySlots }()
@@ -207,6 +254,90 @@ func CodexResponses(c *gin.Context) {
 	if err = proxyCodexNativeResponses(c, resp, originalBody, isStream); err != nil && !c.Writer.Written() {
 		codexCompatibilityError(c, http.StatusBadGateway, err)
 	}
+}
+
+type codexSingleLayerStreamState struct {
+	mu         sync.Mutex
+	stream     bool
+	started    bool
+	terminal   bool
+	responseID string
+}
+
+func (state *codexSingleLayerStreamState) setStream(stream bool) {
+	state.mu.Lock()
+	state.stream = stream
+	state.mu.Unlock()
+}
+
+func (state *codexSingleLayerStreamState) transformEvent(
+	restore func([]byte) ([]byte, error),
+	eventType string,
+	payload []byte,
+) (string, []byte, bool, error) {
+	restored, err := restore(payload)
+	if err != nil {
+		return "", nil, false, err
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if value := gjson.GetBytes(restored, "type").String(); value != "" {
+		eventType = value
+	}
+	if id := gjson.GetBytes(restored, "response.id").String(); id != "" {
+		state.responseID = id
+	}
+	if id := gjson.GetBytes(restored, "id").String(); id != "" && state.responseID == "" {
+		state.responseID = id
+	}
+	if eventType == "error" || eventType == "response.error" {
+		state.terminal = true
+		return "response.failed", buildCodexTerminalPayload("response.failed", state.responseID, codexEventErrorMessage(restored), "upstream_error"), false, nil
+	}
+	if strings.HasPrefix(eventType, "response.") {
+		state.started = true
+	}
+	if eventType == "response.completed" || eventType == "response.failed" || eventType == "response.incomplete" {
+		state.terminal = true
+	}
+	return eventType, restored, false, nil
+}
+
+func (state *codexSingleLayerStreamState) writeRelayError(c *gin.Context, relayErr *types.NewAPIError) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.stream {
+		return false
+	}
+	if state.terminal {
+		return true
+	}
+	state.terminal = true
+	helper.SetEventStreamHeaders(c)
+	c.Status(http.StatusOK)
+	writeCodexTerminalEvent(c, "response.failed", state.responseID, relayErr.Error(), "upstream_error")
+	return true
+}
+
+func (state *codexSingleLayerStreamState) finish(c *gin.Context) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.stream || state.terminal {
+		return
+	}
+	eventType := "response.failed"
+	code := "empty_stream"
+	message := "upstream stream ended before producing a complete response"
+	if state.started {
+		eventType = "response.incomplete"
+		code = "stream_ended"
+		message = "upstream stream ended before its terminal event"
+	}
+	state.terminal = true
+	helper.SetEventStreamHeaders(c)
+	c.Status(http.StatusOK)
+	writeCodexTerminalEvent(c, eventType, state.responseID, message, code)
 }
 
 func CodexResponsesCompact(c *gin.Context) {
@@ -514,6 +645,12 @@ func writeCodexFailureStream(c *gin.Context, message string, code string) {
 }
 
 func writeCodexTerminalEvent(c *gin.Context, eventType string, responseID string, message string, code string) {
+	encoded := buildCodexTerminalPayload(eventType, responseID, message, code)
+	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, encoded)
+	c.Writer.Flush()
+}
+
+func buildCodexTerminalPayload(eventType string, responseID string, message string, code string) []byte {
 	if responseID == "" {
 		responseID = fmt.Sprintf("resp_madapi_%d", time.Now().UnixNano())
 	}
@@ -534,8 +671,7 @@ func writeCodexTerminalEvent(c *gin.Context, eventType string, responseID string
 		},
 	}
 	encoded, _ := json.Marshal(payload)
-	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, encoded)
-	c.Writer.Flush()
+	return encoded
 }
 
 func copyCodexResponseHeaders(c *gin.Context, resp *http.Response) {

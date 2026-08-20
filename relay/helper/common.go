@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
@@ -87,6 +88,20 @@ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
 	if requestContextDone(c) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
+	}
+
+	if transformer, ok := common.GetContextKey(c, constant.ContextKeyResponsesStreamEventTransformer); ok {
+		if transform, valid := transformer.(func(string, []byte) (string, []byte, bool, error)); valid {
+			eventType, payload, suppress, err := transform(resp.Type, []byte(data))
+			if err != nil {
+				return err
+			}
+			if suppress {
+				return nil
+			}
+			resp.Type = eventType
+			data = string(payload)
+		}
 	}
 
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})

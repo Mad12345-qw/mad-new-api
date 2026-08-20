@@ -91,6 +91,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			if handlerValue, ok := common.GetContextKey(c, constant.ContextKeyRelayErrorResponseHandler); ok {
+				if handler, valid := handlerValue.(func(*types.NewAPIError) bool); valid && handler(newAPIError) {
+					return
+				}
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
@@ -116,6 +121,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
 		}
 		return
+	}
+	if preprocessorValue, ok := common.GetContextKey(c, constant.ContextKeyRelayRequestPreprocessor); ok {
+		if preprocess, valid := preprocessorValue.(func(dto.Request) error); valid {
+			if err = preprocess(request); err != nil {
+				newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry(), types.ErrOptionWithStatusCode(http.StatusBadRequest))
+				return
+			}
+		}
 	}
 
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)

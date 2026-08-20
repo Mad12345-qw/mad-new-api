@@ -53,12 +53,18 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		)
 	}
 
-	request, err := common.DeepCopy(responsesReq)
-	if err != nil {
-		return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	var request *dto.OpenAIResponsesRequest
+	if _, singleLayerCodex := common.GetContextKey(c, appconstant.ContextKeyRelayRequestPreprocessor); singleLayerCodex {
+		request = cloneResponsesRequestForRelay(responsesReq)
+	} else {
+		var err error
+		request, err = common.DeepCopy(responsesReq)
+		if err != nil {
+			return types.NewError(fmt.Errorf("failed to copy request to GeneralOpenAIRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+		}
 	}
 
-	err = helper.ModelMappedHelper(c, info, request)
+	err := helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
@@ -81,7 +87,8 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	adaptor.Init(info)
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	_, singleLayerCodex := common.GetContextKey(c, appconstant.ContextKeyRelayRequestPreprocessor)
+	if !singleLayerCodex && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
@@ -172,4 +179,17 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 	}
 	return nil
+}
+
+func cloneResponsesRequestForRelay(source *dto.OpenAIResponsesRequest) *dto.OpenAIResponsesRequest {
+	// Adaptors receive the request by value. RawMessage fields are immutable;
+	// only Reasoning is a mutable pointer and needs an independent copy.
+	// This removes the full recursive copy on the Codex path while preserving
+	// a pristine request for NewAPI channel retry.
+	cloned := *source
+	if source.Reasoning != nil {
+		reasoning := *source.Reasoning
+		cloned.Reasoning = &reasoning
+	}
+	return &cloned
 }

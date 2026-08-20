@@ -23,7 +23,7 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		codexRouter.GET("/models", controller.CodexListModels)
 		codexRouter.GET("/responses", controller.CodexResponsesWebsocket)
-		codexRouter.POST("/responses", controller.CodexResponses)
+		codexRouter.POST("/responses", middleware.SystemPerformanceCheck(), middleware.ModelRequestRateLimit(), middleware.Distribute(), controller.CodexResponses)
 		codexRouter.POST("/responses/compact", controller.CodexResponsesCompact)
 	}
 
@@ -34,7 +34,7 @@ func SetRelayRouter(router *gin.Engine) {
 	codexCockpitRouter.Use(middleware.TokenAuth())
 	{
 		codexCockpitRouter.GET("/models", controller.CodexCockpitListModels)
-		codexCockpitRouter.POST("/responses", controller.CodexResponses)
+		codexCockpitRouter.POST("/responses", controller.CodexCockpitResponses)
 		codexCockpitRouter.POST("/responses/compact", controller.CodexResponsesCompact)
 	}
 

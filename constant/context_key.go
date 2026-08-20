@@ -67,6 +67,15 @@ const (
 	ContextKeyLanguage ContextKey = "language"
 	ContextKeyIsStream ContextKey = "is_stream"
 
+	// Codex single-layer compatibility hooks are installed only by the
+	// /codex/v1/responses entry point. They let the normal NewAPI relay keep
+	// ownership of channel selection, retry and billing without an inner HTTP
+	// request back to /v1/responses.
+	ContextKeyRelayRequestPreprocessor        ContextKey = "relay_request_preprocessor"
+	ContextKeyResponsesPayloadTransformer     ContextKey = "responses_payload_transformer"
+	ContextKeyResponsesStreamEventTransformer ContextKey = "responses_stream_event_transformer"
+	ContextKeyRelayErrorResponseHandler       ContextKey = "relay_error_response_handler"
+
 	// ContextKeyAuditLogged marks that the current request has already recorded
 	// a manage/operation audit log inside the handler. When set, the admin-audit
 	// fallback in authHelper (finishAdminAudit) skips its record to avoid

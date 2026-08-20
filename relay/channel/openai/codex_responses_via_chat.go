@@ -69,17 +69,17 @@ func CodexChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 			if len(chunk) == 0 {
 				continue
 			}
-			if _, err := c.Writer.Write(chunk); err != nil {
+			newline := bytes.IndexByte(chunk, '\n')
+			if newline <= len("event: ") || !bytes.HasPrefix(chunk, []byte("event: ")) || !bytes.HasPrefix(chunk[newline+1:], []byte("data: ")) {
+				streamErr = types.NewOpenAIError(fmt.Errorf("Codex compatibility conversion returned an invalid Responses SSE frame"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+				return false
+			}
+			eventType := string(bytes.TrimSpace(chunk[len("event: "):newline]))
+			payload := bytes.TrimSpace(chunk[newline+1+len("data: "):])
+			if err := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: eventType}, string(payload)); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 				return false
 			}
-			if !bytes.HasSuffix(chunk, []byte("\n\n")) {
-				if _, err := c.Writer.Write([]byte("\n\n")); err != nil {
-					streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
-					return false
-				}
-			}
-			c.Writer.Flush()
 		}
 		return true
 	}

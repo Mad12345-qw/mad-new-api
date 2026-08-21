@@ -11,6 +11,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const codexCockpitPathPrefix = "/codex/cockpit/v1/"
@@ -33,7 +35,7 @@ var codexCockpitModelTargets = []struct {
 	{UpstreamModel: "gpt-5.6-sol", ClientModel: "gpt-5.6-sol"},
 	{UpstreamModel: "gpt-5.6-terra", ClientModel: "gpt-5.6-terra"},
 	{UpstreamModel: "gpt-5.6-luna", ClientModel: "gpt-5.6-luna"},
-	{UpstreamModel: "grok-4.5", ClientModel: "gpt-5.4-mini"},
+	{UpstreamModel: "grok-4.6", ClientModel: "gpt-5.4-mini"},
 	{UpstreamModel: "gpt-5.6-sol-pro", ClientModel: "gpt-5.3-codex"},
 	{UpstreamModel: "gpt-5.6-terra-pro", ClientModel: "gpt-5.2"},
 }
@@ -122,44 +124,60 @@ func CodexCockpitListModels(c *gin.Context) {
 	c.JSON(http.StatusOK, codexModelsResponse{Models: models})
 }
 
+// CodexCockpitModelRewrite resolves the small API-key model-shell catalog
+// before NewAPI's native distributor runs. It changes only the top-level model
+// field and never proxies the request back through this server's /v1 route.
+func CodexCockpitModelRewrite() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		raw, err := readCodexRequestBody(c)
+		if err == nil {
+			_, err = rewriteCodexCockpitRequestBody(c, raw)
+		}
+		if err != nil {
+			codexCompatibilityError(c, http.StatusBadRequest, err)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func rewriteCodexCockpitRequestBody(c *gin.Context, raw []byte) ([]byte, error) {
 	if c.Request == nil || c.Request.URL == nil || !strings.HasPrefix(c.Request.URL.Path, codexCockpitPathPrefix) {
 		return raw, nil
 	}
 
-	var payload map[string]json.RawMessage
-	if err := common.Unmarshal(raw, &payload); err != nil {
-		return nil, err
-	}
-	var requestedModel string
-	if err := common.Unmarshal(payload["model"], &requestedModel); err != nil {
+	requestedModel := strings.TrimSpace(gjson.GetBytes(raw, "model").String())
+	if requestedModel == "" {
 		return nil, fmt.Errorf("model is required")
 	}
 	if !isCodexCockpitModelShell(requestedModel) {
 		return raw, nil
 	}
-	slots, err := loadCodexCockpitModelSlots(c)
-	if err != nil {
-		return nil, err
-	}
 	upstreamModel := requestedModel
-	for _, slot := range slots {
-		if strings.EqualFold(slot.ClientModel, requestedModel) {
-			upstreamModel = slot.UpstreamModel
+	for _, target := range codexCockpitModelTargets {
+		if strings.EqualFold(target.ClientModel, requestedModel) {
+			upstreamModel = target.UpstreamModel
 			break
 		}
 	}
-	if strings.EqualFold(upstreamModel, requestedModel) {
+	rewritten := raw
+	if !strings.EqualFold(upstreamModel, requestedModel) {
+		var err error
+		rewritten, err = sjson.SetBytes(rewritten, "model", upstreamModel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Request.URL.Path), codexCockpitPathPrefix+"responses") {
+		var err error
+		rewritten, err = ensureCodexCockpitNativeSearch(rewritten, upstreamModel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if bytes.Equal(rewritten, raw) {
 		return raw, nil
-	}
-	modelJSON, err := common.Marshal(upstreamModel)
-	if err != nil {
-		return nil, err
-	}
-	payload["model"] = modelJSON
-	rewritten, err := common.Marshal(payload)
-	if err != nil {
-		return nil, err
 	}
 
 	common.CleanupBodyStorage(c)
@@ -167,4 +185,24 @@ func rewriteCodexCockpitRequestBody(c *gin.Context, raw []byte) ([]byte, error) 
 	c.Request.Body = io.NopCloser(bytes.NewReader(rewritten))
 	c.Request.ContentLength = int64(len(rewritten))
 	return rewritten, nil
+}
+
+func ensureCodexCockpitNativeSearch(raw []byte, upstreamModel string) ([]byte, error) {
+	if !codexNativeSearchModels[strings.ToLower(strings.TrimSpace(upstreamModel))] {
+		return raw, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(raw, "tool_choice").String()), "none") {
+		return raw, nil
+	}
+	tools := gjson.GetBytes(raw, "tools")
+	if tools.IsArray() {
+		for _, tool := range tools.Array() {
+			switch strings.ToLower(strings.TrimSpace(tool.Get("type").String())) {
+			case "web_search", "web_search_preview", "google_search", "x_search":
+				return raw, nil
+			}
+		}
+		return sjson.SetRawBytes(raw, "tools.-1", []byte(`{"type":"web_search"}`))
+	}
+	return sjson.SetRawBytes(raw, "tools", []byte(`[{"type":"web_search"}]`))
 }

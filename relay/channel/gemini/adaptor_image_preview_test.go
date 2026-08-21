@@ -10,6 +10,8 @@ import (
 
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -57,13 +59,10 @@ func TestConvertGeminiImagePreviewRequestPreservesReferenceOrderAndFourKSize(t *
 	})
 	require.NoError(t, err)
 	require.Len(t, request.Contents, 1)
-	require.Len(t, request.Contents[0].Parts, 6)
-	require.Contains(t, request.Contents[0].Parts[0].Text, "不得根据图片内容重新排序")
-	require.Equal(t, "图1（第1个上传的参考图；紧随其后的图片数据就是图1）", request.Contents[0].Parts[1].Text)
-	require.Equal(t, "Zmlyc3QtaW1hZ2U=", request.Contents[0].Parts[2].InlineData.Data)
-	require.Equal(t, "图2（第2个上传的参考图；紧随其后的图片数据就是图2）", request.Contents[0].Parts[3].Text)
-	require.Equal(t, "c2Vjb25kLWltYWdl", request.Contents[0].Parts[4].InlineData.Data)
-	require.Equal(t, "用户原始提示词（其中“图N”严格对应以上相同编号）：\nuse image 1 as the person and image 2 as the clothes", request.Contents[0].Parts[5].Text)
+	require.Len(t, request.Contents[0].Parts, 3)
+	require.Equal(t, "use image 1 as the person and image 2 as the clothes", request.Contents[0].Parts[0].Text)
+	require.Equal(t, "Zmlyc3QtaW1hZ2U=", request.Contents[0].Parts[1].InlineData.Data)
+	require.Equal(t, "c2Vjb25kLWltYWdl", request.Contents[0].Parts[2].InlineData.Data)
 	require.JSONEq(t, `{"aspectRatio":"3:4","imageSize":"4K"}`, string(request.GenerationConfig.ImageConfig))
 }
 
@@ -77,15 +76,30 @@ func TestConvertGeminiImagePreviewJSONReferencesPreserveArrayOrder(t *testing.T)
 		Quality: "2K",
 	})
 	require.NoError(t, err)
-	require.Len(t, request.Contents[0].Parts, 6)
-	require.Equal(t, "图1（第1个上传的参考图；紧随其后的图片数据就是图1）", request.Contents[0].Parts[1].Text)
-	require.Equal(t, "Zmlyc3QtaW1hZ2U=", request.Contents[0].Parts[2].InlineData.Data)
-	require.Equal(t, "image/png", request.Contents[0].Parts[2].InlineData.MimeType)
-	require.Equal(t, "图2（第2个上传的参考图；紧随其后的图片数据就是图2）", request.Contents[0].Parts[3].Text)
-	require.Equal(t, "c2Vjb25kLWltYWdl", request.Contents[0].Parts[4].InlineData.Data)
-	require.Equal(t, "image/jpeg", request.Contents[0].Parts[4].InlineData.MimeType)
-	require.Contains(t, request.Contents[0].Parts[5].Text, "以图1为人物基础，以图2为服装参考")
+	require.Len(t, request.Contents[0].Parts, 3)
+	require.Equal(t, "以图1为人物基础，以图2为服装参考", request.Contents[0].Parts[0].Text)
+	require.Equal(t, "Zmlyc3QtaW1hZ2U=", request.Contents[0].Parts[1].InlineData.Data)
+	require.Equal(t, "image/png", request.Contents[0].Parts[1].InlineData.MimeType)
+	require.Equal(t, "c2Vjb25kLWltYWdl", request.Contents[0].Parts[2].InlineData.Data)
+	require.Equal(t, "image/jpeg", request.Contents[0].Parts[2].InlineData.MimeType)
 	require.JSONEq(t, `{"aspectRatio":"3:4","imageSize":"2K"}`, string(request.GenerationConfig.ImageConfig))
+}
+
+func TestGeminiImagePreviewResponseRouting(t *testing.T) {
+	require.True(t, shouldHandleGeminiImagePreviewResponse(&relaycommon.RelayInfo{
+		RelayMode:   constant.RelayModeGemini,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gemini-3.1-flash-image-preview"},
+	}))
+	require.True(t, shouldHandleGeminiImagePreviewResponse(&relaycommon.RelayInfo{
+		RelayMode:   constant.RelayModeImagesEdits,
+		RelayFormat: types.RelayFormatOpenAIImage,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gemini-3-pro-image-preview"},
+	}))
+	require.False(t, shouldHandleGeminiImagePreviewResponse(&relaycommon.RelayInfo{
+		RelayMode:   constant.RelayModeImagesEdits,
+		RelayFormat: types.RelayFormatOpenAIImage,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "imagen-4"},
+	}))
 }
 
 func TestGeminiImagePreviewModelMatrix(t *testing.T) {

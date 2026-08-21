@@ -4,7 +4,9 @@ import "github.com/QuantumNous/new-api/dto"
 
 import codexresponses "github.com/QuantumNous/new-api/service/relayconvert/internal/codex_responses"
 
-type CodexResponsesWebsocketState = codexresponses.WebsocketState
+const CodexResponsesRestoreInstallerContextKey = "madapi_codex_responses_restore_installer"
+
+type CodexResponsesRestoreInstaller func(func([]byte) ([]byte, error))
 
 func NormalizeCodexResponsesRequest(rawJSON []byte) ([]byte, error) {
 	return codexresponses.NormalizeOpenAIResponsesRequest(rawJSON)
@@ -22,4 +24,8 @@ func PrepareCodexResponsesRequest(request *dto.OpenAIResponsesRequest) (func([]b
 		return nil, err
 	}
 	return compat.RestorePayload, nil
+}
+
+func CodexResponsesRequestNeedsNormalization(request *dto.OpenAIResponsesRequest) bool {
+	return codexresponses.OpenAIResponsesRequestNeedsNormalization(request)
 }

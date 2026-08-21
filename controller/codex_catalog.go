@@ -65,16 +65,22 @@ var codexValidatedImageInputModels = map[string]bool{
 	"gpt-5.6-terra":     true,
 	"gpt-5.6-terra-pro": true,
 	"grok-4.5":          true,
+	"grok-4.6":          true,
 	"kimi-k3":           true,
 }
 
 var codexNativeSearchModels = map[string]bool{
+	"claude-haiku-4-5":    true,
 	"claude-fable-5":      true,
 	"claude-opus-4-8":     true,
 	"claude-opus-5":       true,
+	"claude-sonnet-5":     true,
 	"deepseek-v4-flash":   true,
+	"deepseek-v4-pro":     true,
 	"gemini-3.6-flash":    true,
 	"glm-5-2":             true,
+	"glm-5.2":             true,
+	"glm-5.3":             true,
 	"gpt-5.5":             true,
 	"gpt-5.6-luna":        true,
 	"gpt-5.6-sol":         true,
@@ -82,6 +88,7 @@ var codexNativeSearchModels = map[string]bool{
 	"gpt-5.6-terra":       true,
 	"gpt-5.6-terra-pro":   true,
 	"grok-4.5":            true,
+	"grok-4.6":            true,
 	"kimi-k3":             true,
 	"qwen3.8-max-preview": true,
 }

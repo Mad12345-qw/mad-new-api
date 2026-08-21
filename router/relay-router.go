@@ -22,9 +22,8 @@ func SetRelayRouter(router *gin.Engine) {
 	codexRouter.Use(middleware.TokenAuth())
 	{
 		codexRouter.GET("/models", controller.CodexListModels)
-		codexRouter.GET("/responses", controller.CodexResponsesWebsocket)
 		codexRouter.POST("/responses", middleware.SystemPerformanceCheck(), middleware.ModelRequestRateLimit(), middleware.Distribute(), controller.CodexResponses)
-		codexRouter.POST("/responses/compact", controller.CodexResponsesCompact)
+		codexRouter.POST("/responses/compact", middleware.SystemPerformanceCheck(), middleware.ModelRequestRateLimit(), middleware.Distribute(), controller.CodexResponsesCompact)
 	}
 
 	// API-key Codex Desktop clients can opt into Cockpit-style model shells
@@ -34,8 +33,8 @@ func SetRelayRouter(router *gin.Engine) {
 	codexCockpitRouter.Use(middleware.TokenAuth())
 	{
 		codexCockpitRouter.GET("/models", controller.CodexCockpitListModels)
-		codexCockpitRouter.POST("/responses", controller.CodexCockpitResponses)
-		codexCockpitRouter.POST("/responses/compact", controller.CodexResponsesCompact)
+		codexCockpitRouter.POST("/responses", middleware.SystemPerformanceCheck(), middleware.ModelRequestRateLimit(), controller.CodexCockpitModelRewrite(), middleware.Distribute(), controller.CodexResponses)
+		codexCockpitRouter.POST("/responses/compact", middleware.SystemPerformanceCheck(), middleware.ModelRequestRateLimit(), controller.CodexCockpitModelRewrite(), middleware.Distribute(), controller.CodexResponsesCompact)
 	}
 
 	// https://platform.openai.com/docs/api-reference/introduction

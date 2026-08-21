@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/relayconvert"
@@ -49,6 +50,23 @@ func trimModelThinking(modelName string) string {
 		}
 	}
 	return modelName
+}
+
+func shouldPassThroughNativeGeminiImageRequest(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.RelayMode != relayconstant.RelayModeGemini {
+		return false
+	}
+	models := []string{info.OriginModelName}
+	if info.ChannelMeta != nil {
+		models = append(models, info.UpstreamModelName)
+	}
+	for _, model := range models {
+		model = strings.ToLower(strings.TrimSpace(model))
+		if model == "gemini-3.1-flash-image-preview" || model == "gemini-3-pro-image-preview" {
+			return true
+		}
+	}
+	return false
 }
 
 func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
@@ -136,11 +154,37 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if shouldPassThroughNativeGeminiImageRequest(info) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+		originalBody, err := storage.Bytes()
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		canonicalBody, changed, err := canonicalizeNativeGeminiImageJSON(originalBody)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if changed {
+			body, size, closer, bodyErr := relaycommon.NewOutboundJSONBody(canonicalBody)
+			if bodyErr != nil {
+				return types.NewError(bodyErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			defer closer.Close()
+			info.UpstreamRequestBodySize = size
+			requestBody = body
+		} else {
+			info.UpstreamRequestBodySize = storage.Size()
+			requestBody = common.ReaderOnly(storage)
+		}
+	} else if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		info.UpstreamRequestBodySize = storage.Size()
 		requestBody = common.ReaderOnly(storage)
 	} else {
 		// 使用 ConvertGeminiRequest 转换请求格式

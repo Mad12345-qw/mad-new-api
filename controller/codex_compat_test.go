@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -16,121 +17,21 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
-
-func TestCodexResponsesWebsocketUsesExistingResponsesRouteForEveryTurn(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var calls atomic.Int32
-	var secondInputCount atomic.Int32
-	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		call := calls.Add(1)
-		require.Equal(t, http.MethodPost, r.Method)
-		require.Equal(t, "/responses", r.URL.Path)
-		require.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
-		var request struct {
-			Model  string            `json:"model"`
-			Input  []json.RawMessage `json:"input"`
-			Stream bool              `json:"stream"`
-		}
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-		require.Equal(t, "gpt-test", request.Model)
-		require.True(t, request.Stream)
-		if call == 2 {
-			secondInputCount.Store(int32(len(request.Input)))
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-%d\",\"status\":\"in_progress\"}}\n\n", call)
-		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"id\":\"assistant-%d\",\"content\":[]}}\n\n", call)
-		_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-%d\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"id\":\"assistant-%d\",\"content\":[]}]}}\n\n", call, call)
-	}), "gpt-test")
-
-	router := gin.New()
-	router.GET("/codex/v1/responses", func(c *gin.Context) {
-		c.Set("token_id", 123)
-		CodexResponsesWebsocket(c)
-	})
-	server := httptest.NewServer(router)
-	defer server.Close()
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/codex/v1/responses"
-	header := make(http.Header)
-	header.Set("Authorization", "Bearer test-token")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	require.NoError(t, conn.WriteJSON(gin.H{
-		"type":  "response.create",
-		"model": "gpt-test",
-		"input": []any{gin.H{"type": "message", "role": "user", "id": "user-1", "content": "hello"}},
-	}))
-	readCodexWebsocketUntilCompleted(t, conn)
-	require.NoError(t, conn.WriteJSON(gin.H{
-		"type":                 "response.append",
-		"previous_response_id": "resp-1",
-		"input":                []any{gin.H{"type": "message", "role": "user", "id": "user-2", "content": "next"}},
-	}))
-	readCodexWebsocketUntilCompleted(t, conn)
-	require.Equal(t, int32(2), calls.Load())
-	require.Equal(t, int32(3), secondInputCount.Load())
-}
-
-func TestCodexResponsesWebsocketPrewarmDoesNotCallOrBillInnerRoute(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var calls atomic.Int32
-	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}), "gpt-test")
-
-	router := gin.New()
-	router.GET("/codex/v1/responses", func(c *gin.Context) {
-		c.Set("token_id", 456)
-		CodexResponsesWebsocket(c)
-	})
-	server := httptest.NewServer(router)
-	defer server.Close()
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/codex/v1/responses"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	require.NoError(t, conn.WriteJSON(gin.H{
-		"type": "response.create", "model": "gpt-test", "input": []any{}, "generate": false,
-	}))
-	readCodexWebsocketUntilCompleted(t, conn)
-	require.Equal(t, int32(0), calls.Load())
-}
-
-func readCodexWebsocketUntilCompleted(t *testing.T, conn *websocket.Conn) {
-	t.Helper()
-	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
-	for {
-		_, payload, err := conn.ReadMessage()
-		require.NoError(t, err)
-		var event struct {
-			Type string `json:"type"`
-		}
-		require.NoError(t, json.Unmarshal(payload, &event))
-		require.NotEqual(t, "error", event.Type, string(payload))
-		if event.Type == "response.completed" {
-			return
-		}
-	}
-}
 
 func withCodexCompatibilityTestServer(t *testing.T, handler http.Handler, textModels ...string) string {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	originalBaseURL := codexInternalBaseURL
 	originalPricingProvider := codexTextPricingProvider
-	originalLegacyResponses := codexLegacyResponsesForTests
+	originalRelayExecutor := codexRelayExecutor
 	codexInternalBaseURL = server.URL
-	codexLegacyResponsesForTests = true
 	codexTextPricingProvider = func() map[string]struct{} {
 		models := make(map[string]struct{}, len(textModels))
 		for _, modelName := range textModels {
@@ -138,11 +39,72 @@ func withCodexCompatibilityTestServer(t *testing.T, handler http.Handler, textMo
 		}
 		return models
 	}
+	codexRelayExecutor = func(c *gin.Context, _ types.RelayFormat) {
+		originalBody, err := io.ReadAll(c.Request.Body)
+		require.NoError(t, err)
+		var request dto.OpenAIResponsesRequest
+		require.NoError(t, json.Unmarshal(originalBody, &request))
+		if value, ok := common.GetContextKey(c, constant.ContextKeyRelayRequestPreprocessor); ok {
+			if err := value.(func(dto.Request) error)(&request); err != nil {
+				codexCompatibilityError(c, http.StatusBadRequest, err)
+				return
+			}
+		}
+		restore, err := relayconvert.PrepareCodexResponsesRequest(&request)
+		require.NoError(t, err)
+		if installerValue, ok := c.Get(relayconvert.CodexResponsesRestoreInstallerContextKey); ok {
+			installerValue.(relayconvert.CodexResponsesRestoreInstaller)(restore)
+		}
+		upstreamBody, err := json.Marshal(request)
+		require.NoError(t, err)
+		upstreamRequest, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, server.URL+"/responses", bytes.NewReader(upstreamBody))
+		require.NoError(t, err)
+		upstreamRequest.Header.Set("Authorization", c.GetHeader("Authorization"))
+		upstreamRequest.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(upstreamRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, readErr := io.ReadAll(resp.Body)
+			require.NoError(t, readErr)
+			c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+			return
+		}
+		if request.Stream == nil || !*request.Stream {
+			body, readErr := io.ReadAll(resp.Body)
+			require.NoError(t, readErr)
+			service.IOCopyBytesGracefully(c, resp, body)
+			return
+		}
+		scanner := bufio.NewScanner(resp.Body)
+		eventType := ""
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "event:") {
+				eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+				continue
+			}
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if payload == "" || payload == "[DONE]" {
+				continue
+			}
+			var event dto.ResponsesStreamResponse
+			require.NoError(t, json.Unmarshal([]byte(payload), &event))
+			if event.Type == "" {
+				event.Type = eventType
+			}
+			require.NoError(t, helper.ResponseChunkData(c, event, payload))
+		}
+		require.NoError(t, scanner.Err())
+	}
 	t.Cleanup(func() {
 		server.Close()
 		codexInternalBaseURL = originalBaseURL
 		codexTextPricingProvider = originalPricingProvider
-		codexLegacyResponsesForTests = originalLegacyResponses
+		codexRelayExecutor = originalRelayExecutor
 	})
 	return server.URL
 }
@@ -275,7 +237,7 @@ func TestCodexCockpitListModelsPublishesTheStableAPIKeySelection(t *testing.T) {
 		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
 		"claude-fable-5", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5",
 		"deepseek-v4-flash", "deepseek-v4-pro", "gemini-3.6-flash", "glm-5-2",
-		"grok-4.5", "kimi-k3", "qwen3.8-max-preview", "gpt-5.6-sol-pro", "gpt-5.6-terra-pro",
+		"grok-4.6", "kimi-k3", "qwen3.8-max-preview", "gpt-5.6-sol-pro", "gpt-5.6-terra-pro",
 	}
 	data := make([]string, 0, len(modelNames))
 	for _, modelName := range modelNames {
@@ -303,13 +265,14 @@ func TestCodexCockpitListModelsPublishesTheStableAPIKeySelection(t *testing.T) {
 	for _, entry := range payload.Models {
 		clientModelByUpstream[entry["display_name"].(string)] = entry["slug"].(string)
 		require.Equal(t, false, entry["prefer_websockets"])
+		require.Equal(t, true, entry["supports_search_tool"])
 	}
 	require.Equal(t, "gpt-5.5", clientModelByUpstream["claude-fable-5"])
 	require.Equal(t, "gpt-5.4", clientModelByUpstream["claude-opus-5"])
 	require.Equal(t, "gpt-5.6-sol", clientModelByUpstream["gpt-5.6-sol"])
 	require.Equal(t, "gpt-5.6-terra", clientModelByUpstream["gpt-5.6-terra"])
 	require.Equal(t, "gpt-5.6-luna", clientModelByUpstream["gpt-5.6-luna"])
-	require.Equal(t, "gpt-5.4-mini", clientModelByUpstream["grok-4.5"])
+	require.Equal(t, "gpt-5.4-mini", clientModelByUpstream["grok-4.6"])
 	require.Equal(t, "gpt-5.3-codex", clientModelByUpstream["gpt-5.6-sol-pro"])
 	require.Equal(t, "gpt-5.2", clientModelByUpstream["gpt-5.6-terra-pro"])
 	_, containsOverflow := clientModelByUpstream["deepseek-v4-pro"]
@@ -330,8 +293,8 @@ func TestCodexCockpitListModelsRefreshesSelectedAvailabilityWithoutServerRestart
 			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"gpt-5.6-sol","object":"model","supported_endpoint_types":["openai-response"]}]}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"gpt-5.6-sol","object":"model","supported_endpoint_types":["openai-response"]},{"id":"grok-4.5","object":"model","supported_endpoint_types":["openai-response"]},{"id":"future-model","object":"model","supported_endpoint_types":["openai-response"]}]}`)
-	}), "gpt-5.6-sol", "grok-4.5", "future-model")
+		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"gpt-5.6-sol","object":"model","supported_endpoint_types":["openai-response"]},{"id":"grok-4.6","object":"model","supported_endpoint_types":["openai-response"]},{"id":"future-model","object":"model","supported_endpoint_types":["openai-response"]}]}`)
+	}), "gpt-5.6-sol", "grok-4.6", "future-model")
 
 	wantCounts := []int{1, 2}
 	for _, wantCount := range wantCounts {
@@ -347,33 +310,6 @@ func TestCodexCockpitListModelsRefreshesSelectedAvailabilityWithoutServerRestart
 	}
 }
 
-func TestCodexCockpitResponsesRewritesOnlyTheIsolatedRoute(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/models" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"claude-fable-5","object":"model","supported_endpoint_types":["openai-response"]}]}`)
-			return
-		}
-		require.Equal(t, "/responses", r.URL.Path)
-		var request dto.OpenAIResponsesRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-		require.Equal(t, "claude-fable-5", request.Model)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"resp-test","object":"response","status":"completed","model":"claude-fable-5","output":[]}`)
-	}), "claude-fable-5")
-
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/cockpit/v1/responses", strings.NewReader(`{"model":"gpt-5.5","input":"hello","stream":false}`))
-	c.Request.Header.Set("Authorization", "Bearer test-token")
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	CodexResponses(c)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-}
-
 func TestCodexCockpitAliasDoesNotChangeEstablishedCodexRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -385,6 +321,51 @@ func TestCodexCockpitAliasDoesNotChangeEstablishedCodexRoute(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, raw, rewritten)
+}
+
+func TestCodexCockpitGrokShellRewritesToGrok46AndPreservesNativeSearch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	raw := []byte(`{"model":"gpt-5.4-mini","input":"latest facts","tools":[{"type":"web_search","search_context_size":"high"}],"stream":true}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/cockpit/v1/responses", bytes.NewReader(raw))
+
+	rewritten, err := rewriteCodexCockpitRequestBody(c, raw)
+
+	require.NoError(t, err)
+	require.Equal(t, "grok-4.6", gjson.GetBytes(rewritten, "model").String())
+	require.Equal(t, "web_search", gjson.GetBytes(rewritten, "tools.0.type").String())
+	require.Equal(t, "high", gjson.GetBytes(rewritten, "tools.0.search_context_size").String())
+	require.Equal(t, int64(1), gjson.GetBytes(rewritten, "tools.#").Int())
+	require.True(t, gjson.GetBytes(rewritten, "stream").Bool())
+}
+
+func TestCodexCockpitAddsHostedSearchForNativeProviderAdapter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	raw := []byte(`{"model":"gpt-5.4","input":"latest facts","tools":[{"type":"function","name":"shell","parameters":{"type":"object"}}],"stream":true}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/cockpit/v1/responses", bytes.NewReader(raw))
+
+	rewritten, err := rewriteCodexCockpitRequestBody(c, raw)
+
+	require.NoError(t, err)
+	require.Equal(t, "claude-opus-5", gjson.GetBytes(rewritten, "model").String())
+	require.Equal(t, "function", gjson.GetBytes(rewritten, "tools.0.type").String())
+	require.Equal(t, "web_search", gjson.GetBytes(rewritten, "tools.1.type").String())
+}
+
+func TestCodexCockpitRespectsExplicitSearchDisable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	raw := []byte(`{"model":"gpt-5.6-terra","input":"offline only","tool_choice":"none","stream":true}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/codex/cockpit/v1/responses", bytes.NewReader(raw))
+
+	rewritten, err := rewriteCodexCockpitRequestBody(c, raw)
+
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(rewritten, "tools").Exists())
 }
 
 func TestBuildCodexModelUsesPinnedCodexCapabilityMetadata(t *testing.T) {
@@ -448,13 +429,15 @@ func TestBuildCodexModelUsesOfficialCapabilitiesMissingFromCPA(t *testing.T) {
 
 func TestBuildCodexModelAdvertisesOnlyImplementedNativeSearch(t *testing.T) {
 	for _, modelName := range []string{
-		"gpt-5.5", "claude-opus-5", "gemini-3.6-flash", "grok-4.5",
-		"deepseek-v4-flash", "glm-5-2", "kimi-k3", "qwen3.8-max-preview",
+		"claude-fable-5", "claude-haiku-4-5", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5",
+		"deepseek-v4-flash", "deepseek-v4-pro", "gemini-3.6-flash", "glm-5-2", "glm-5.2", "glm-5.3",
+		"gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-sol-pro", "gpt-5.6-terra", "gpt-5.6-terra-pro",
+		"grok-4.5", "grok-4.6", "kimi-k3", "qwen3.8-max-preview",
 	} {
 		model := buildCodexModel(dto.OpenAIModels{Id: modelName}, 0)
 		require.Equal(t, true, model["supports_search_tool"], modelName)
 	}
-	for _, modelName := range []string{"deepseek-v4-pro", "future-text-model"} {
+	for _, modelName := range []string{"future-text-model"} {
 		model := buildCodexModel(dto.OpenAIModels{Id: modelName}, 0)
 		require.Equal(t, false, model["supports_search_tool"], modelName)
 	}
@@ -702,31 +685,6 @@ func TestCodexResponsesPassesNativeResponsesStreamEvents(t *testing.T) {
 	require.Contains(t, body, "response.completed")
 }
 
-func TestCodexResponsesTurnsPostOutputErrorIntoOneTerminalFailure(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-broken\",\"status\":\"in_progress\"}}\n\n")
-		_, _ = fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
-		_, _ = fmt.Fprint(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"provider disconnected\"}}\n\n")
-	}), "gpt-test")
-
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","stream":true}`))
-	c.Request.Header.Set("Authorization", "Bearer test-token")
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	CodexResponses(c)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	body := recorder.Body.String()
-	require.Contains(t, body, "partial")
-	require.NotContains(t, body, "event: error")
-	require.Equal(t, 1, strings.Count(body, "event: response.failed"))
-	require.Contains(t, body, "provider disconnected")
-}
-
 func TestCodexResponsesTurnsAbruptStreamEndIntoIncomplete(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -745,28 +703,6 @@ func TestCodexResponsesTurnsAbruptStreamEndIntoIncomplete(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: response.incomplete"))
-}
-
-func TestCodexResponsesTurnsExhaustedPreEventFailureIntoTerminalStream(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = io.WriteString(w, `{"error":{"message":"no weighted channel is currently available"}}`)
-	}), "gpt-test")
-
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-test","input":"hello","stream":true}`))
-	c.Request.Header.Set("Authorization", "Bearer test-token")
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	CodexResponses(c)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
-	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: response.failed"))
-	require.Contains(t, recorder.Body.String(), "no weighted channel")
 }
 
 func TestCodexResponsesRejectsFixedPriceModelBeforeInnerRequest(t *testing.T) {
@@ -838,75 +774,10 @@ func TestCodexResponsesPreservesInnerErrorWithoutCompatibilityRetry(t *testing.T
 	require.JSONEq(t, `{"error":{"message":"upstream unavailable","type":"upstream_error"}}`, recorder.Body.String())
 }
 
-func TestCodexResponsesCompactUsesTheExistingNewAPIRelay(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	var calls atomic.Int32
-	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		require.Equal(t, "/responses", r.URL.Path)
-		var request dto.OpenAIResponsesRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-		require.Equal(t, "gpt-test", request.Model)
-		require.Equal(t, "resp_previous", request.PreviousResponseID)
-		var instructions string
-		require.NoError(t, json.Unmarshal(request.Instructions, &instructions))
-		require.Contains(t, instructions, codexNativeCompactInstruction)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"resp_compact","object":"response","created_at":123,"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"remember ORCHID"}]}],"usage":{"input_tokens":12,"output_tokens":4,"total_tokens":16}}`)
-	}), "gpt-test")
-
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses/compact", strings.NewReader(`{"model":"gpt-test","input":[],"previous_response_id":"resp_previous"}`))
-	c.Request.Header.Set("Authorization", "Bearer test-token")
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	CodexResponsesCompact(c)
-
-	require.Equal(t, int32(1), calls.Load())
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Equal(t, "cmp_compact", gjson.GetBytes(recorder.Body.Bytes(), "id").String())
-	require.Equal(t, "response.compaction", gjson.GetBytes(recorder.Body.Bytes(), "object").String())
-	require.Equal(t, "compaction_summary", gjson.GetBytes(recorder.Body.Bytes(), "output.0.type").String())
-	require.Equal(t, "remember ORCHID", gjson.GetBytes(recorder.Body.Bytes(), "output.0.summary").String())
-}
-
-func TestCodexResponsesCompactDoesNotAddAnExactUsageGate(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	withCodexCompatibilityTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/responses", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"resp_no_usage","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"summary without usage"}]}]}`)
-	}), "gpt-test")
-
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/codex/v1/responses/compact", strings.NewReader(`{"model":"gpt-test","input":[]}`))
-	c.Request.Header.Set("Authorization", "Bearer test-token")
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	CodexResponsesCompact(c)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Equal(t, "summary without usage", gjson.GetBytes(recorder.Body.Bytes(), "output.0.summary").String())
-	require.Equal(t, "null", gjson.GetBytes(recorder.Body.Bytes(), "usage").Raw)
-}
-
 func TestCodexInternalResponseHeaderTimeoutIsLongEnoughForSlowTextModels(t *testing.T) {
 	transport, ok := codexInternalHTTPClient.Transport.(*http.Transport)
 	require.True(t, ok)
 	require.Equal(t, 360*time.Second, transport.ResponseHeaderTimeout)
-}
-
-func TestCopyCodexTraceHeaders(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	resp := &http.Response{Header: make(http.Header)}
-	resp.Header.Set("X-Oneapi-Request-Id", "req-inner-1")
-
-	copyCodexTraceHeaders(c, resp)
-
-	require.Equal(t, "req-inner-1", recorder.Header().Get("X-Oneapi-Request-Id"))
 }
 
 func TestCodexInternalRequestDoesNotPropagateLegacyRoutingHeaders(t *testing.T) {
@@ -926,17 +797,15 @@ func TestCodexResponsesSingleLayerPreparesAndRestoresWithoutLoopback(t *testing.
 	gin.SetMode(gin.TestMode)
 	originalExecutor := codexRelayExecutor
 	originalPricingProvider := codexTextPricingProvider
-	originalLegacyResponses := codexLegacyResponsesForTests
-	codexLegacyResponsesForTests = false
 	codexTextPricingProvider = func() map[string]struct{} { return map[string]struct{}{"gpt-5.6-sol": {}} }
 	defer func() {
 		codexRelayExecutor = originalExecutor
 		codexTextPricingProvider = originalPricingProvider
-		codexLegacyResponsesForTests = originalLegacyResponses
 	}()
 
 	codexRelayExecutor = func(c *gin.Context, format types.RelayFormat) {
 		require.Equal(t, types.RelayFormat(types.RelayFormatOpenAIResponses), format)
+		require.Equal(t, "/v1/responses", c.Request.URL.Path)
 		value, ok := common.GetContextKey(c, constant.ContextKeyRelayRequestPreprocessor)
 		require.True(t, ok)
 		preprocess, ok := value.(func(dto.Request) error)
@@ -948,6 +817,11 @@ func TestCodexResponsesSingleLayerPreparesAndRestoresWithoutLoopback(t *testing.
 			Tools:  json.RawMessage(`[{"type":"namespace","name":"mcp","tools":[{"type":"custom","name":"apply_patch"}]}]`),
 			Input:  json.RawMessage(`[{"type":"additional_tools","tools":[{"type":"function","name":"shell","parameters":{"type":"object"}}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]`),
 		}
+		restore, err := relayconvert.PrepareCodexResponsesRequest(request)
+		require.NoError(t, err)
+		installerValue, ok := c.Get(relayconvert.CodexResponsesRestoreInstallerContextKey)
+		require.True(t, ok)
+		installerValue.(relayconvert.CodexResponsesRestoreInstaller)(restore)
 		require.NoError(t, preprocess(request))
 		require.Equal(t, "mcp__apply_patch", gjson.GetBytes(request.Tools, "0.name").String())
 		require.Equal(t, "shell", gjson.GetBytes(request.Tools, "1.name").String())
@@ -975,13 +849,10 @@ func TestCodexResponsesSingleLayerPreservesEOFTerminalRepair(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	originalExecutor := codexRelayExecutor
 	originalPricingProvider := codexTextPricingProvider
-	originalLegacyResponses := codexLegacyResponsesForTests
-	codexLegacyResponsesForTests = false
 	codexTextPricingProvider = func() map[string]struct{} { return map[string]struct{}{"gpt-5.6-sol": {}} }
 	defer func() {
 		codexRelayExecutor = originalExecutor
 		codexTextPricingProvider = originalPricingProvider
-		codexLegacyResponsesForTests = originalLegacyResponses
 	}()
 
 	codexRelayExecutor = func(c *gin.Context, _ types.RelayFormat) {
@@ -989,6 +860,11 @@ func TestCodexResponsesSingleLayerPreservesEOFTerminalRepair(t *testing.T) {
 		preprocess := value.(func(dto.Request) error)
 		stream := true
 		request := &dto.OpenAIResponsesRequest{Model: "gpt-5.6-sol", Input: json.RawMessage(`"hello"`), Stream: &stream}
+		restore, err := relayconvert.PrepareCodexResponsesRequest(request)
+		require.NoError(t, err)
+		installerValue, ok := c.Get(relayconvert.CodexResponsesRestoreInstallerContextKey)
+		require.True(t, ok)
+		installerValue.(relayconvert.CodexResponsesRestoreInstaller)(restore)
 		require.NoError(t, preprocess(request))
 		require.NoError(t, helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: "response.created"}, `{"type":"response.created","response":{"id":"resp-eof","status":"in_progress"}}`))
 	}

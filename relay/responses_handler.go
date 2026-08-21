@@ -14,7 +14,9 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -88,13 +90,28 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	adaptor.Init(info)
 	var requestBody io.Reader
 	_, singleLayerCodex := common.GetContextKey(c, appconstant.ContextKeyRelayRequestPreprocessor)
-	if !singleLayerCodex && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
+	if singleLayerCodex && canUseCodexNativeResponsesBody(info, responsesReq, request) {
+		installCodexResponsesRestorer(c, func(payload []byte) ([]byte, error) { return payload, nil })
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		}
+		info.UpstreamRequestBodySize = storage.Size()
+		requestBody = common.ReaderOnly(storage)
+	} else if !singleLayerCodex && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
 		requestBody = common.ReaderOnly(storage)
 	} else {
+		if singleLayerCodex {
+			restore, err := relayconvert.PrepareCodexResponsesRequest(request)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			}
+			installCodexResponsesRestorer(c, restore)
+		}
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -183,13 +200,82 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 func cloneResponsesRequestForRelay(source *dto.OpenAIResponsesRequest) *dto.OpenAIResponsesRequest {
 	// Adaptors receive the request by value. RawMessage fields are immutable;
-	// only Reasoning is a mutable pointer and needs an independent copy.
-	// This removes the full recursive copy on the Codex path while preserving
-	// a pristine request for NewAPI channel retry.
+	// pointer values get a tiny independent copy so every NewAPI retry starts
+	// from the same parsed request without a recursive DeepCopy.
 	cloned := *source
 	if source.Reasoning != nil {
 		reasoning := *source.Reasoning
 		cloned.Reasoning = &reasoning
 	}
+	if source.MaxOutputTokens != nil {
+		value := *source.MaxOutputTokens
+		cloned.MaxOutputTokens = &value
+	}
+	if source.TopLogProbs != nil {
+		value := *source.TopLogProbs
+		cloned.TopLogProbs = &value
+	}
+	if source.Stream != nil {
+		value := *source.Stream
+		cloned.Stream = &value
+	}
+	if source.Temperature != nil {
+		value := *source.Temperature
+		cloned.Temperature = &value
+	}
+	if source.TopP != nil {
+		value := *source.TopP
+		cloned.TopP = &value
+	}
+	if source.MaxToolCalls != nil {
+		value := *source.MaxToolCalls
+		cloned.MaxToolCalls = &value
+	}
+	if source.StreamOptions != nil {
+		value := *source.StreamOptions
+		cloned.StreamOptions = &value
+	}
 	return &cloned
+}
+
+func installCodexResponsesRestorer(c *gin.Context, restore func([]byte) ([]byte, error)) {
+	value, ok := c.Get(relayconvert.CodexResponsesRestoreInstallerContextKey)
+	if !ok {
+		return
+	}
+	installer, ok := value.(relayconvert.CodexResponsesRestoreInstaller)
+	if ok {
+		installer(restore)
+	}
+}
+
+func canUseCodexNativeResponsesBody(info *relaycommon.RelayInfo, original, request *dto.OpenAIResponsesRequest) bool {
+	if info == nil || original == nil || request == nil || info.RelayMode != relayconstant.RelayModeResponses {
+		return false
+	}
+	switch info.ApiType {
+	case appconstant.APITypeOpenAI, appconstant.APITypeOpenRouter, appconstant.APITypeXinference:
+	default:
+		return false
+	}
+	if info.IsModelMapped || request.Model != original.Model {
+		return false
+	}
+	if effort, _ := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model); effort != "" {
+		return false
+	}
+	if relayconvert.CodexResponsesRequestNeedsNormalization(request) || len(info.ParamOverride) > 0 {
+		return false
+	}
+	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+		return true
+	}
+	settings := info.ChannelOtherSettings
+	if (!settings.AllowServiceTier && request.ServiceTier != "") ||
+		(settings.DisableStore && len(request.Store) > 0) ||
+		(!settings.AllowSafetyIdentifier && len(request.SafetyIdentifier) > 0) ||
+		(!settings.AllowIncludeObfuscation && request.StreamOptions != nil && request.StreamOptions.IncludeObfuscation) {
+		return false
+	}
+	return true
 }

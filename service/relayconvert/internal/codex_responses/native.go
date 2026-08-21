@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/tidwall/gjson"
 )
 
 type nativeToolIdentity struct {
@@ -21,6 +22,56 @@ type NativeCompatibility struct {
 	customTools      map[string]struct{}
 	toolIdentities   map[string]nativeToolIdentity
 	singleCustomTool bool
+}
+
+// OpenAIResponsesRequestNeedsNormalization reports whether a Codex request
+// contains only the provider-native Responses shapes. It inspects only the
+// small tool/control fields; the potentially huge conversation input is not
+// decoded unless it contains Codex-only namespace markers.
+func OpenAIResponsesRequestNeedsNormalization(request *dto.OpenAIResponsesRequest) bool {
+	if request == nil {
+		return false
+	}
+	if bytes.Contains(request.Input, []byte(`"additional_tools"`)) || bytes.Contains(request.Input, []byte(`"namespace"`)) {
+		return true
+	}
+	if bytes.Contains(request.ToolChoice, []byte(`"namespace"`)) {
+		return true
+	}
+	if len(request.Tools) == 0 || string(request.Tools) == "null" {
+		return false
+	}
+
+	needsNormalization := false
+	root := gjson.ParseBytes(request.Tools)
+	if !root.IsArray() {
+		return true
+	}
+	root.ForEach(func(_, tool gjson.Result) bool {
+		toolType := strings.TrimSpace(tool.Get("type").String())
+		if toolType == "namespace" || tool.Get("namespace").Exists() {
+			needsNormalization = true
+			return false
+		}
+		if toolType != "" && toolType != "function" {
+			return true
+		}
+		target := tool
+		if function := tool.Get("function"); function.Exists() {
+			target = function
+		}
+		if target.Get("parametersJsonSchema").Exists() || target.Get("input_schema").Exists() {
+			needsNormalization = true
+			return false
+		}
+		parameters := target.Get("parameters")
+		if !parameters.Exists() || !parameters.IsObject() || !strings.EqualFold(strings.TrimSpace(parameters.Get("type").String()), "object") || parameters.Get("oneOf").Exists() || parameters.Get("anyOf").Exists() {
+			needsNormalization = true
+			return false
+		}
+		return true
+	})
+	return needsNormalization
 }
 
 // PrepareOpenAIResponsesRequest normalizes only the Responses fields that

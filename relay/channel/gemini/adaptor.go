@@ -61,6 +61,19 @@ func isGeminiImagePreviewModel(model string) bool {
 	}
 }
 
+func shouldHandleGeminiImagePreviewResponse(info *relaycommon.RelayInfo) bool {
+	if info == nil || !isGeminiImagePreviewModel(info.UpstreamModelName) {
+		return false
+	}
+	if info.RelayMode == constant.RelayModeGemini {
+		return true
+	}
+	if info.RelayFormat != types.RelayFormatOpenAIImage {
+		return false
+	}
+	return info.RelayMode == constant.RelayModeImagesGenerations || info.RelayMode == constant.RelayModeImagesEdits
+}
+
 func geminiImageRequestValue(c *gin.Context, request dto.ImageRequest, keys ...string) string {
 	for _, key := range keys {
 		if c != nil && c.Request != nil {
@@ -269,21 +282,15 @@ func convertGeminiImagePreviewRequest(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil, err
 	}
-	parts := make([]dto.GeminiPart, 0, 2+len(references)*2)
-	if len(references) == 0 {
-		parts = append(parts, dto.GeminiPart{Text: request.Prompt})
-	} else {
-		parts = append(parts, dto.GeminiPart{Text: "参考图编号规则：以下图片数据块严格按照上传顺序编号。第一个图片数据块是图1，第二个是图2，依此类推。用户提示词中的“图N”只能指代相同编号的图片，不得根据图片内容重新排序、猜测编号或互换图片。"})
-	}
-	for index, reference := range references {
-		position := index + 1
-		parts = append(parts,
-			dto.GeminiPart{Text: fmt.Sprintf("图%d（第%d个上传的参考图；紧随其后的图片数据就是图%d）", position, position, position)},
-			dto.GeminiPart{InlineData: &dto.GeminiInlineData{MimeType: reference.MimeType, Data: reference.Data}},
-		)
-	}
-	if len(references) > 0 {
-		parts = append(parts, dto.GeminiPart{Text: "用户原始提示词（其中“图N”严格对应以上相同编号）：\n" + request.Prompt})
+	// Follow Google's native multi-image composition shape exactly: keep the
+	// caller's prompt unchanged first, then append uploaded media parts in their
+	// original order. Do not inject labels or rewrite the task semantics.
+	parts := make([]dto.GeminiPart, 0, len(references)+1)
+	parts = append(parts, dto.GeminiPart{Text: request.Prompt})
+	for _, reference := range references {
+		parts = append(parts, dto.GeminiPart{
+			InlineData: &dto.GeminiInlineData{MimeType: reference.MimeType, Data: reference.Data},
+		})
 	}
 	return &dto.GeminiChatRequest{
 		Contents: []dto.GeminiChatContent{{
@@ -557,6 +564,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			return GeminiResponsesStreamHandler(c, info, resp)
 		}
 		return GeminiResponsesHandler(c, info, resp)
+	}
+	if shouldHandleGeminiImagePreviewResponse(info) {
+		return GeminiImagePreviewHandler(c, info, resp)
 	}
 
 	if info.RelayMode == constant.RelayModeGemini {

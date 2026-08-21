@@ -194,7 +194,7 @@ if [ "$had_config" -eq 1 ]; then
   ' "$config_path" > "$body_path"
 else
   : > "$body_path"
-  printf '\n[sandbox_workspace_write]\nnetwork_access = true\n' > "$body_path"
+  printf '\n[features]\nimage_generation = true\n\n[sandbox_workspace_write]\nnetwork_access = true\n' > "$body_path"
 fi
 
 cleanup() {
@@ -246,15 +246,18 @@ trap 'exit 1' HUP INT TERM
   if [ "$auth_kind" = oauth ]; then
     printf '%s\n' 'requires_openai_auth = true'
     printf 'experimental_bearer_token = %s\n' "$(toml_string "$api_key")"
-  else
-    printf '%s\n' 'requires_openai_auth = false'
-    printf 'env_key = %s\n' "$(toml_string "$gateway_key_env_name")"
   fi
   printf 'http_headers = { "x-openai-actor-authorization" = "madapi-gateway", "x-madapi-codex-login-mode" = %s }\n' "$(toml_string "$auth_kind")"
   printf '%s\n' 'supports_websockets = false'
   printf '%s\n' 'stream_idle_timeout_ms = 360000'
   printf '%s\n' 'request_max_retries = 3'
   printf '%s\n' 'context_window_override = 1048576'
+  if [ "$auth_kind" = apikey ]; then
+    printf '\n[model_providers.%s.auth]\n' "$provider_id"
+    printf '%s\n' 'command = "/bin/cat"'
+    printf 'args = [%s]\n' "$(toml_string "$key_path")"
+    printf '%s\n' 'timeout_ms = 5000'
+  fi
 } > "$temp_path"
 
 printf '%s\n' "$api_key" > "$temp_key_path"

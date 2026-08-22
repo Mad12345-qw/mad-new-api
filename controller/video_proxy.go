@@ -153,6 +153,23 @@ func storedVideoResultURL(task *model.Task) string {
 	return ""
 }
 
+func resolveXaiVideoResultURL(baseURL, resultURL string) (string, error) {
+	resultURL = strings.TrimSpace(resultURL)
+	if !strings.HasPrefix(resultURL, "/") || strings.HasPrefix(resultURL, "//") {
+		return "", fmt.Errorf("xAI video result URL is not an absolute path")
+	}
+
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return "", fmt.Errorf("invalid xAI channel base URL")
+	}
+	reference, err := url.Parse(resultURL)
+	if err != nil || reference.Host != "" {
+		return "", fmt.Errorf("invalid xAI video result URL")
+	}
+	return base.ResolveReference(reference).String(), nil
+}
+
 func VideoProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
 	if taskID == "" {
@@ -214,6 +231,14 @@ func VideoProxy(c *gin.Context) {
 
 	if resultURL := storedVideoResultURL(task); resultURL != "" {
 		videoURL = resultURL
+	} else if channel.Type == constant.ChannelTypeXai {
+		videoURL, err = resolveXaiVideoResultURL(baseURL, task.GetResultURL())
+		if err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve xAI video URL for task %s: %s", taskID, err.Error()))
+			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve xAI video URL")
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	} else if task.Platform == constant.TaskPlatformApiOkSeedance {
 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
@@ -339,6 +364,9 @@ func VideoProxy(c *gin.Context) {
 	defer resp.Body.Close()
 
 	copyVideoResponseHeaders(c.Writer.Header(), resp.Header)
+	if c.Writer.Header().Get("Content-Type") == "" && channel.Type == constant.ChannelTypeXai {
+		c.Writer.Header().Set("Content-Type", "video/mp4")
+	}
 	c.Writer.Header().Set("Cache-Control", "private, no-store")
 	if c.Query("download") == "1" {
 		c.Writer.Header().Set(

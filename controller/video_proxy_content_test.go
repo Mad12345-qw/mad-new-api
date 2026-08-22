@@ -94,6 +94,25 @@ func TestStoredVideoResultURLSupportsLegacySuccessURL(t *testing.T) {
 	require.Empty(t, storedVideoResultURL(nil))
 }
 
+func TestResolveXaiVideoResultURLUsesChannelOrigin(t *testing.T) {
+	resolved, err := resolveXaiVideoResultURL(
+		"https://api.example.com/provider/",
+		"/v1/videos/task_upstream/content",
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "https://api.example.com/v1/videos/task_upstream/content", resolved)
+}
+
+func TestResolveXaiVideoResultURLRejectsProtocolRelativeHost(t *testing.T) {
+	_, err := resolveXaiVideoResultURL(
+		"https://api.example.com",
+		"//untrusted.example.com/video.mp4",
+	)
+
+	require.Error(t, err)
+}
+
 func TestExtractVideoURLFromContentResponse(t *testing.T) {
 	url := extractVideoURLFromContentResponse([]byte(`{
 		"status":"done",
